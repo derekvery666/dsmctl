@@ -21,6 +21,7 @@ const (
 	authAPI        = "SYNO.API.Auth"
 	maxBodySize    = 8 << 20
 	maxOTPAttempts = 3
+	dsmctlSession  = "DSMCTL"
 )
 
 type OTPProvider func(ctx context.Context) (string, error)
@@ -155,14 +156,17 @@ func (c *Client) loginLocked(ctx context.Context) error {
 		return err
 	}
 	info, _ := c.target.API(authAPI)
-	version := preferredVersion(info, 6)
+	// DSM 7.3 grants privileged control-plane mutations to Auth v7 sessions.
+	// preferredVersion keeps older DSM releases on their highest advertised
+	// version instead of duplicating the login implementation per release.
+	version := preferredVersion(info, 7)
 	params := url.Values{
 		"api":     {authAPI},
 		"version": {strconv.Itoa(version)},
 		"method":  {"login"},
 		"account": {c.username},
 		"passwd":  {c.password},
-		"session": {"DSMCTL"},
+		"session": {dsmctlSession},
 		"format":  {"sid"},
 	}
 	if version >= 6 {
@@ -269,6 +273,15 @@ func (c *Client) executeLocked(ctx context.Context, call compatibility.Request) 
 		return nil, fmt.Errorf("Synology API %s does not support requested version %d (available %d-%d)", call.API, version, info.MinVersion, info.MaxVersion)
 	}
 	params := cloneValues(call.Parameters)
+	var err error
+	if call.JSONParameters != nil {
+		params, err = c.encodeJSONParametersLocked(ctx, call.JSONParameters, call.EncryptedParameters)
+		if err != nil {
+			return nil, fmt.Errorf("prepare JSON parameters for %s.%s: %w", call.API, call.Method, err)
+		}
+	} else if len(call.EncryptedParameters) != 0 {
+		return nil, fmt.Errorf("encrypted parameters require typed JSON parameters")
+	}
 	params.Set("api", call.API)
 	params.Set("version", strconv.Itoa(version))
 	params.Set("method", call.Method)
@@ -354,7 +367,7 @@ func (c *Client) Close(ctx context.Context) error {
 		"api":     {authAPI},
 		"version": {strconv.Itoa(info.MaxVersion)},
 		"method":  {"logout"},
-		"session": {"DSMCTL"},
+		"session": {dsmctlSession},
 		"_sid":    {c.sid},
 	}
 	_, err := c.requestLocked(ctx, info.Path, params, authAPI, "logout")

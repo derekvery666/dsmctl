@@ -43,14 +43,14 @@ func TestShareCreateAndUpdateEncodeNestedShareInfo(t *testing.T) {
 	}
 
 	newName := "dsmctl-renamed"
-	method, parameters, resultName, err = shareRequest(ShareInput{Action: share.ActionUpdate, Change: share.ShareChange{Name: "dsmctl-data", NewName: &newName, Hidden: &hidden}})
+	method, parameters, resultName, err = shareRequest(ShareInput{Action: share.ActionUpdate, Change: share.ShareChange{Name: "dsmctl-data", NewName: &newName, Hidden: &hidden}, CurrentVolumePath: "/volume1"})
 	if err != nil || method != "set" || resultName != newName {
 		t.Fatalf("share update: method=%q result=%q err=%v", method, resultName, err)
 	}
 	if err := json.Unmarshal([]byte(parameters.Get("shareinfo")), &info); err != nil {
 		t.Fatalf("decode update shareinfo: %v", err)
 	}
-	if info["name"] != newName || info["name_org"] != "dsmctl-data" {
+	if info["name"] != newName || info["name_org"] != "dsmctl-data" || info["vol_path"] != "/volume1" {
 		t.Fatalf("update shareinfo = %#v", info)
 	}
 }
@@ -94,5 +94,13 @@ func TestShareDeleteUsesExactNameArray(t *testing.T) {
 	}
 	if len(names) != 1 || names[0] != "dsmctl-delete" {
 		t.Fatalf("names = %#v", names)
+	}
+}
+
+func TestShareUpdateRequiresObservedVolumePath(t *testing.T) {
+	hidden := true
+	_, _, _, err := shareRequest(ShareInput{Action: share.ActionUpdate, Change: share.ShareChange{Name: "dsmctl-data", Hidden: &hidden}})
+	if err == nil {
+		t.Fatal("shareRequest() accepted an update without the observed volume path")
 	}
 }

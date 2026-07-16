@@ -29,9 +29,11 @@ func decodeShares(data json.RawMessage) ([]share.SharedFolder, error) {
 			UnifiedPermissions:  boolValue(item, "unite_permission", "is_unite_permission"),
 			USB:                 boolValue(item, "is_usb_share", "usb"),
 			SnapshotSupported:   boolValue(item, "support_snapshot", "snapshot_supported"),
-			QuotaBytes:          uint64Value(item, "quota_value"),
-			QuotaUsedBytes:      uint64Value(item, "share_quota_used", "share_quota_logical_size"),
-			Permissions:         make([]share.Permission, 0),
+			// DSM reports configured share quota in MiB, while usage fields are
+			// byte counts. Normalize the public domain model to bytes.
+			QuotaBytes:     uint64Value(item, "quota_value") * 1024 * 1024,
+			QuotaUsedBytes: uint64Value(item, "share_quota_used", "share_quota_logical_size"),
+			Permissions:    make([]share.Permission, 0),
 		})
 	}
 	return shares, nil

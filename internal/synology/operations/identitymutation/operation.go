@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"strconv"
 	"strings"
 
 	"github.com/ychiu1211/dsmctl/internal/domain/identity"
@@ -52,7 +51,17 @@ var userOperation = compatibility.Operation[UserInput, Result]{
 				if err != nil {
 					return Result{}, err
 				}
-				if _, err := executor.Execute(ctx, compatibility.Request{API: UserAPIName, Version: 1, Method: method, Parameters: parameters}); err != nil {
+				encrypted := make([]string, 0, 1)
+				if _, hasPassword := parameters["password"]; hasPassword {
+					encrypted = append(encrypted, "password")
+				}
+				if _, err := executor.Execute(ctx, compatibility.Request{
+					API:                 UserAPIName,
+					Version:             1,
+					Method:              method,
+					JSONParameters:      parameters,
+					EncryptedParameters: encrypted,
+				}); err != nil {
 					return Result{}, fmt.Errorf("call %s.%s v1: %w", UserAPIName, method, err)
 				}
 				return Result{Resource: identity.ResourceUser, Action: input.Action, Name: resultName}, nil
@@ -108,48 +117,47 @@ func ExecuteGroup(ctx context.Context, target compatibility.Target, executor com
 	return groupOperation.Run(ctx, target, executor, input)
 }
 
-func userRequest(input UserInput) (string, url.Values, string, error) {
+func userRequest(input UserInput) (string, map[string]any, string, error) {
 	change := input.Change
-	parameters := make(url.Values)
+	parameters := make(map[string]any)
 	resultName := change.Name
 	switch input.Action {
 	case identity.ActionCreate:
 		if input.Password == "" {
 			return "", nil, "", fmt.Errorf("password is required to create user %q", change.Name)
 		}
-		parameters.Set("name", change.Name)
-		parameters.Set("password", input.Password)
-		parameters.Set("notify_by_email", "false")
+		parameters["name"] = change.Name
+		parameters["password"] = input.Password
+		parameters["notify_by_email"] = false
 		setUserFields(parameters, change)
 		return "create", parameters, resultName, nil
 	case identity.ActionUpdate:
-		parameters.Set("name", change.Name)
+		parameters["name"] = change.Name
 		if change.NewName != nil {
 			resultName = strings.TrimSpace(*change.NewName)
-			parameters.Set("new_name", resultName)
+			parameters["new_name"] = resultName
 		} else {
-			parameters.Set("new_name", change.Name)
+			parameters["new_name"] = change.Name
 		}
 		if input.Password != "" {
-			parameters.Set("password", input.Password)
+			parameters["password"] = input.Password
 		}
 		setUserFields(parameters, change)
 		return "set", parameters, resultName, nil
 	case identity.ActionDelete:
-		names, _ := json.Marshal([]string{change.Name})
-		parameters.Set("name", string(names))
+		parameters["name"] = []string{change.Name}
 		return "delete", parameters, resultName, nil
 	default:
 		return "", nil, "", fmt.Errorf("unsupported user action %q", input.Action)
 	}
 }
 
-func setUserFields(parameters url.Values, change identity.UserChange) {
-	setOptionalString(parameters, "description", change.Description)
-	setOptionalString(parameters, "email", change.Email)
-	setOptionalString(parameters, "expired", change.Expired)
-	setOptionalBool(parameters, "cannot_chg_passwd", change.CannotChangePassword)
-	setOptionalBool(parameters, "passwd_never_expire", change.PasswordNeverExpires)
+func setUserFields(parameters map[string]any, change identity.UserChange) {
+	setOptionalJSON(parameters, "description", change.Description)
+	setOptionalJSON(parameters, "email", change.Email)
+	setOptionalJSON(parameters, "expired", change.Expired)
+	setOptionalJSON(parameters, "cannot_chg_passwd", change.CannotChangePassword)
+	setOptionalJSON(parameters, "passwd_never_expire", change.PasswordNeverExpires)
 }
 
 func groupRequest(input GroupInput) (string, url.Values, string, error) {
@@ -186,8 +194,8 @@ func setOptionalString(parameters url.Values, key string, value *string) {
 	}
 }
 
-func setOptionalBool(parameters url.Values, key string, value *bool) {
+func setOptionalJSON[T any](parameters map[string]any, key string, value *T) {
 	if value != nil {
-		parameters.Set(key, strconv.FormatBool(*value))
+		parameters[key] = *value
 	}
 }

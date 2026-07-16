@@ -95,7 +95,7 @@ Create supports common reversible DSM settings:
 }
 ```
 
-Update accepts the same optional settings plus `new_name`; moving an existing share between volumes is rejected. A quota of zero disables the quota. Delete accepts only the current name and is bound to the UUID observed during planning.
+Update accepts the same optional settings plus `new_name`; moving an existing share between volumes is rejected. DSM requires the current `vol_path` even for an in-place update, so dsmctl reads and supplies that value internally rather than exposing it as repeated user intent. `quota_mib` maps to DSM's MiB setting, while inventory normalizes configured quota and usage to bytes. A quota of zero disables the quota. Delete accepts only the current name and is bound to the UUID observed during planning.
 
 Encrypted shares, encryption-key storage, WORM, and custom Windows ACLs are deliberately deferred because they need separate irreversible-action and key-lifecycle policies.
 

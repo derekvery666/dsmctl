@@ -15,6 +15,12 @@ type Request struct {
 	Version    int
 	Method     string
 	Parameters url.Values
+	// JSONParameters preserves DSM WebUI types before form encoding. When it
+	// is set, it replaces Parameters.
+	JSONParameters map[string]any
+	// EncryptedParameters names secret JSON fields that DSM's legacy non-TLS
+	// parameter envelope must protect.
+	EncryptedParameters []string
 }
 
 type Executor interface {

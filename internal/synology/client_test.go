@@ -25,6 +25,12 @@ func TestClientSystemInfoLoginAndLogout(t *testing.T) {
 			fmt.Fprint(w, `{"success":true,"data":{"SYNO.API.Auth":{"path":"entry.cgi","minVersion":1,"maxVersion":7},"SYNO.Core.System":{"path":"entry.cgi","minVersion":1,"maxVersion":3}}}`)
 		case "SYNO.API.Auth.login":
 			loginCount++
+			if got := r.Form.Get("version"); got != "7" {
+				t.Errorf("auth version = %q, want 7", got)
+			}
+			if got := r.Form.Get("session"); got != dsmctlSession {
+				t.Errorf("auth session = %q, want %q", got, dsmctlSession)
+			}
 			if got := r.Form.Get("passwd"); got != "secret" {
 				t.Errorf("passwd = %q", got)
 			}
@@ -76,6 +82,24 @@ func TestClientSystemInfoLoginAndLogout(t *testing.T) {
 	}
 }
 
+func TestPreferredVersionClampsToAdvertisedRange(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		info APIInfo
+		want int
+	}{
+		{name: "current DSM", info: APIInfo{MinVersion: 1, MaxVersion: 7}, want: 7},
+		{name: "older DSM", info: APIInfo{MinVersion: 1, MaxVersion: 6}, want: 6},
+		{name: "newer minimum", info: APIInfo{MinVersion: 8, MaxVersion: 9}, want: 8},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := preferredVersion(test.info, 7); got != test.want {
+				t.Fatalf("preferredVersion() = %d, want %d", got, test.want)
+			}
+		})
+	}
+}
+
 func TestClientOTPChallengeSavesTrustedDevice(t *testing.T) {
 	var loginCount, otpCount int
 	var savedDeviceID string
@@ -89,8 +113,11 @@ func TestClientOTPChallengeSavesTrustedDevice(t *testing.T) {
 			fmt.Fprint(w, `{"success":true,"data":{"SYNO.API.Auth":{"path":"entry.cgi","minVersion":1,"maxVersion":7},"SYNO.Core.System":{"path":"entry.cgi","minVersion":1,"maxVersion":3}}}`)
 		case "SYNO.API.Auth.login":
 			loginCount++
-			if got := r.Form.Get("version"); got != "6" {
-				t.Errorf("auth version = %q, want 6", got)
+			if got := r.Form.Get("version"); got != "7" {
+				t.Errorf("auth version = %q, want 7", got)
+			}
+			if got := r.Form.Get("session"); got != dsmctlSession {
+				t.Errorf("auth session = %q, want %q", got, dsmctlSession)
 			}
 			if got := r.Form.Get("passwd"); got != "secret" {
 				t.Errorf("passwd = %q", got)

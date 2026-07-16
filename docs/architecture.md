@@ -91,7 +91,9 @@ Password from OS keyring (or environment fallback)
 
 The returned `did` and its `device_name` are stored per profile in the OS credential store. Later CLI and MCP processes reuse that pair. MCP never accepts password or OTP inputs; if the trusted device is absent or expired, the user completes `dsmctl auth login` in a terminal.
 
-The client prefers `SYNO.API.Auth` v6, clamped to the versions reported by API discovery. Version 6 supplies SynoToken and trusted-device support. OTP-only login remains possible with older supported Auth versions, but a trusted device requires v6 or newer.
+The client prefers `SYNO.API.Auth` v7, clamped to the versions reported by API discovery. DSM 7.3 requires the v7 session for privileged Control Panel mutations such as local-user writes; the same client automatically falls back to v6 or an older advertised version instead of maintaining a separate DSM client. SynoToken and trusted-device support require v6 or newer.
+
+WebAPI parameter shape remains operation-specific. User mutations use typed JSON parameters, and passwords are resolved only at apply time. HTTPS carries the value inside TLS; non-TLS legacy targets use DSM's advertised RSA/AES parameter envelope. This transport behavior stays in the common executor, so CLI and MCP share it without adding DSM-version branches.
 
 ## Session model
 

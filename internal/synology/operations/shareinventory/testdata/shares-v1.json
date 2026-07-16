@@ -13,7 +13,7 @@
       "unite_permission": true,
       "is_usb_share": false,
       "support_snapshot": true,
-      "quota_value": "1099511627776",
+      "quota_value": "1048576",
       "share_quota_used": "274877906944"
     },
     {

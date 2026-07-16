@@ -22,8 +22,9 @@ const (
 )
 
 type ShareInput struct {
-	Action string
-	Change share.ShareChange
+	Action            string
+	Change            share.ShareChange
+	CurrentVolumePath string
 }
 
 type PermissionInput struct {
@@ -112,7 +113,7 @@ func shareRequest(input ShareInput) (string, url.Values, string, error) {
 	resultName := change.Name
 	switch input.Action {
 	case share.ActionCreate:
-		shareInfo := shareInfoValues(change, change.Name, false)
+		shareInfo := shareInfoValues(change, change.Name, "", false)
 		encoded, err := json.Marshal(shareInfo)
 		if err != nil {
 			return "", nil, "", fmt.Errorf("encode shared-folder settings: %w", err)
@@ -124,7 +125,10 @@ func shareRequest(input ShareInput) (string, url.Values, string, error) {
 		if change.NewName != nil {
 			resultName = strings.TrimSpace(*change.NewName)
 		}
-		shareInfo := shareInfoValues(change, resultName, true)
+		if input.CurrentVolumePath == "" {
+			return "", nil, "", fmt.Errorf("current volume path is required to update shared folder %q", change.Name)
+		}
+		shareInfo := shareInfoValues(change, resultName, input.CurrentVolumePath, true)
 		encoded, err := json.Marshal(shareInfo)
 		if err != nil {
 			return "", nil, "", fmt.Errorf("encode shared-folder settings: %w", err)
@@ -141,10 +145,11 @@ func shareRequest(input ShareInput) (string, url.Values, string, error) {
 	}
 }
 
-func shareInfoValues(change share.ShareChange, resultName string, update bool) map[string]any {
+func shareInfoValues(change share.ShareChange, resultName, currentVolumePath string, update bool) map[string]any {
 	values := map[string]any{"name": resultName}
 	if update {
 		values["name_org"] = change.Name
+		values["vol_path"] = currentVolumePath
 	}
 	if change.VolumePath != "" {
 		values["vol_path"] = change.VolumePath

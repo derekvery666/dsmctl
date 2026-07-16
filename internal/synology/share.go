@@ -3,6 +3,7 @@ package synology
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/ychiu1211/dsmctl/internal/domain/share"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/identityinventory"
@@ -111,7 +112,23 @@ func (c *Client) ApplyShareChange(ctx context.Context, request share.ChangeReque
 		if request.Share == nil {
 			return ShareMutationResult{}, fmt.Errorf("shared-folder change is required")
 		}
-		result, _, err := sharemutation.ExecuteShare(ctx, c.target, lockedExecutor{client: c}, sharemutation.ShareInput{Action: request.Action, Change: *request.Share})
+		input := sharemutation.ShareInput{Action: request.Action, Change: *request.Share}
+		if request.Action == share.ActionUpdate {
+			state, _, inventoryErr := shareinventory.Execute(ctx, c.target, lockedExecutor{client: c}, shareinventory.Input{})
+			if inventoryErr != nil {
+				return ShareMutationResult{}, fmt.Errorf("load current shared-folder settings: %w", inventoryErr)
+			}
+			for _, folder := range state.Shares {
+				if strings.EqualFold(folder.Name, request.Share.Name) {
+					input.CurrentVolumePath = folder.VolumePath
+					break
+				}
+			}
+			if input.CurrentVolumePath == "" {
+				return ShareMutationResult{}, fmt.Errorf("shared folder %q no longer exists", request.Share.Name)
+			}
+		}
+		result, _, err := sharemutation.ExecuteShare(ctx, c.target, lockedExecutor{client: c}, input)
 		if err != nil {
 			return ShareMutationResult{}, fmt.Errorf("apply shared-folder change: %w", err)
 		}
