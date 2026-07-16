@@ -4,7 +4,7 @@
     {
       "name": "projects",
       "share_path": "/volume1/projects",
-      "inherit": false,
+      "inherit": "rw",
       "is_aclmode": true,
       "is_custom": false,
       "is_deny": false,
@@ -15,7 +15,7 @@
     {
       "name": "archive",
       "share_path": "/volume2/archive",
-      "inherit": true,
+      "inherit": "na",
       "is_aclmode": false,
       "is_custom": false,
       "is_deny": true,

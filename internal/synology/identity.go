@@ -39,6 +39,25 @@ func (c *Client) IdentityState(ctx context.Context, queries ...identity.StateQue
 	return state, nil
 }
 
+// ApplicationPrivilegePreview asks DSM for the final application privilege
+// after direct, group, everyone/default, and built-in account policy. It is
+// kept separate from explicit Rule.get evidence so explanations can show both
+// why DSM reached a result and the authoritative aggregate decision.
+func (c *Client) ApplicationPrivilegePreview(ctx context.Context, principalType, principal string) (identity.ApplicationPrivilegeAssignment, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.prepareCompatibilityTargetLocked(ctx, identityappprivilege.APINames()...); err != nil {
+		return identity.ApplicationPrivilegeAssignment{}, fmt.Errorf("prepare application privilege preview target: %w", err)
+	}
+	preview, _, err := identityappprivilege.ExecutePreview(ctx, c.target, lockedExecutor{client: c}, identityappprivilege.PrincipalInput{PrincipalType: principalType, Principal: principal})
+	if err != nil {
+		return identity.ApplicationPrivilegeAssignment{}, fmt.Errorf("preview application privileges for %s %q: %w", principalType, principal, err)
+	}
+	c.target.AddCapability(identityappprivilege.PreviewCapabilityName)
+	return preview, nil
+}
+
 func (c *Client) identityStateLocked(ctx context.Context, query identity.StateQuery) (IdentityState, []compatibility.Selection, error) {
 	state, selections, err := identityinventory.Execute(ctx, c.target, lockedExecutor{client: c})
 	if err != nil {
@@ -80,7 +99,7 @@ func (c *Client) identityStateLocked(ctx context.Context, query identity.StateQu
 			return IdentityState{}, selections, fmt.Errorf("get application inventory: %w", err)
 		}
 		state.Applications = applications
-		targets, err := identityPrincipals(state, query.PrincipalType, query.Principal)
+		targets, err := applicationPrivilegePrincipals(state, query)
 		if err != nil {
 			return IdentityState{}, selections, err
 		}
@@ -95,6 +114,45 @@ func (c *Client) identityStateLocked(ctx context.Context, query identity.StateQu
 		c.target.AddCapability(identityappprivilege.ReadCapabilityName)
 	}
 	return state, selections, nil
+}
+
+func applicationPrivilegePrincipals(state IdentityState, query identity.StateQuery) ([]identityPrincipal, error) {
+	targets, err := identityPrincipals(state, query.PrincipalType, query.Principal)
+	if err != nil {
+		return nil, err
+	}
+	if !query.IncludeRelatedGroupApplicationPrivileges {
+		return targets, nil
+	}
+	if query.PrincipalType != identity.PrincipalUser || strings.TrimSpace(query.Principal) == "" {
+		return nil, fmt.Errorf("related group application privileges require one selected user")
+	}
+	membership, found := membershipForUser(state.Memberships, query.Principal)
+	if !found {
+		return nil, fmt.Errorf("membership state for user %q was not returned", query.Principal)
+	}
+	seen := make(map[string]struct{}, len(targets)+len(membership.Groups))
+	for _, target := range targets {
+		seen[target.kind+"\x00"+strings.ToLower(target.name)] = struct{}{}
+	}
+	for _, group := range membership.Groups {
+		key := identity.PrincipalGroup + "\x00" + strings.ToLower(group)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		targets = append(targets, identityPrincipal{kind: identity.PrincipalGroup, name: group})
+	}
+	return targets, nil
+}
+
+func membershipForUser(memberships []identity.Membership, user string) (identity.Membership, bool) {
+	for _, membership := range memberships {
+		if strings.EqualFold(membership.User, user) {
+			return membership, true
+		}
+	}
+	return identity.Membership{}, false
 }
 
 func (c *Client) IdentityCapabilities(ctx context.Context) (IdentityCapabilities, CompatibilityReport, error) {
@@ -146,21 +204,23 @@ func (c *Client) IdentityCapabilities(ctx context.Context) (IdentityCapabilities
 	}
 	appPrivilegeRead := selectionSupported(appPrivilegeSelections, 0) && selectionSupported(appPrivilegeSelections, 1)
 	appPrivilegeSet := selectionSupported(appPrivilegeSelections, 2)
+	appPrivilegePreview := selectionSupported(appPrivilegeSelections, 3)
 	capabilities := IdentityCapabilities{
-		InventoryRead:            supported,
-		UserCreate:               userMutations,
-		UserUpdate:               userMutations,
-		UserDelete:               userMutations,
-		GroupCreate:              groupMutations,
-		GroupUpdate:              groupMutations,
-		GroupDelete:              groupMutations,
-		MembershipRead:           membershipRead,
-		MembershipSet:            membershipSet,
-		QuotaRead:                quotaRead,
-		QuotaSet:                 quotaSet,
-		ApplicationPrivilegeRead: appPrivilegeRead,
-		ApplicationPrivilegeSet:  appPrivilegeSet,
-		Mutations:                userMutations || groupMutations || membershipSet || quotaSet || appPrivilegeSet,
+		InventoryRead:               supported,
+		UserCreate:                  userMutations,
+		UserUpdate:                  userMutations,
+		UserDelete:                  userMutations,
+		GroupCreate:                 groupMutations,
+		GroupUpdate:                 groupMutations,
+		GroupDelete:                 groupMutations,
+		MembershipRead:              membershipRead,
+		MembershipSet:               membershipSet,
+		QuotaRead:                   quotaRead,
+		QuotaSet:                    quotaSet,
+		ApplicationPrivilegeRead:    appPrivilegeRead,
+		ApplicationPrivilegeSet:     appPrivilegeSet,
+		ApplicationPrivilegePreview: appPrivilegePreview,
+		Mutations:                   userMutations || groupMutations || membershipSet || quotaSet || appPrivilegeSet,
 	}
 	if membershipRead {
 		c.target.AddCapability(identitymembership.ReadCapabilityName)
@@ -179,6 +239,9 @@ func (c *Client) IdentityCapabilities(ctx context.Context) (IdentityCapabilities
 	}
 	if appPrivilegeSet {
 		c.target.AddCapability(identityappprivilege.SetCapabilityName)
+	}
+	if appPrivilegePreview {
+		c.target.AddCapability(identityappprivilege.PreviewCapabilityName)
 	}
 	c.updateDerivedCapabilitiesLocked()
 	selections = append(selections, mutationSelections...)

@@ -49,6 +49,50 @@ func (c *Client) ShareState(ctx context.Context, includePermissions bool) (Share
 	return state, nil
 }
 
+// ShareStateForPrincipals reads the share inventory and expands permissions
+// only for the selected principals. Effective-access explanations use this
+// path so their DSM request count scales with one user and that user's groups,
+// not every local account on the NAS.
+func (c *Client) ShareStateForPrincipals(ctx context.Context, principals []share.Principal) (ShareState, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if len(principals) == 0 {
+		return ShareState{}, fmt.Errorf("at least one share permission principal is required")
+	}
+	if err := c.prepareCompatibilityTargetLocked(ctx, shareinventory.APINames()...); err != nil {
+		return ShareState{}, fmt.Errorf("prepare focused shared-folder inventory target: %w", err)
+	}
+	input := shareinventory.Input{IncludePermissions: true}
+	seen := make(map[string]struct{}, len(principals))
+	for _, principal := range principals {
+		name := strings.TrimSpace(principal.Name)
+		key := principal.Type + "\x00" + strings.ToLower(name)
+		if name == "" {
+			return ShareState{}, fmt.Errorf("share permission principal name is required")
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		switch principal.Type {
+		case share.PrincipalUser:
+			input.Users = append(input.Users, identity.User{Name: name})
+		case share.PrincipalGroup:
+			input.Groups = append(input.Groups, identity.Group{Name: name})
+		default:
+			return ShareState{}, fmt.Errorf("unsupported share permission principal type %q", principal.Type)
+		}
+	}
+	state, _, err := shareinventory.Execute(ctx, c.target, lockedExecutor{client: c}, input)
+	if err != nil {
+		return ShareState{}, fmt.Errorf("get focused shared-folder permissions: %w", err)
+	}
+	c.target.AddCapability(shareinventory.InventoryCapabilityName)
+	c.target.AddCapability(shareinventory.PermissionCapabilityName)
+	return state, nil
+}
+
 func (c *Client) ShareCapabilities(ctx context.Context) (ShareCapabilities, CompatibilityReport, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

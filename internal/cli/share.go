@@ -165,12 +165,12 @@ func writeShareInventory(cmd *cobra.Command, result application.ShareStateResult
 	}
 	if result.Shares.PermissionsIncluded {
 		fmt.Fprintln(writer, "\nPERMISSIONS")
-		fmt.Fprintln(writer, "SHARE\tTYPE\tPRINCIPAL\tACCESS\tINHERITED\tCUSTOM\tMASKED\tACL")
+		fmt.Fprintln(writer, "SHARE\tTYPE\tPRINCIPAL\tDIRECT ACCESS\tINHERITED ACCESS\tCUSTOM\tMASKED\tACL")
 		for _, folder := range result.Shares.Shares {
 			for _, permission := range folder.Permissions {
 				fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 					folder.Name, permission.PrincipalType, permission.Principal, permission.Access,
-					yesNo(permission.Inherited), yesNo(permission.Custom), yesNo(permission.Masked), yesNo(permission.ACLMode),
+					valueOrDash(permission.InheritedAccess), yesNo(permission.Custom), yesNo(permission.Masked), yesNo(permission.ACLMode),
 				)
 			}
 		}

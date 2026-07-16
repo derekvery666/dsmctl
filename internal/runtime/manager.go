@@ -14,6 +14,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/config"
 	"github.com/ychiu1211/dsmctl/internal/credentials"
 	"github.com/ychiu1211/dsmctl/internal/domain/identity"
+	"github.com/ychiu1211/dsmctl/internal/domain/share"
 	"github.com/ychiu1211/dsmctl/internal/synology"
 )
 
@@ -21,14 +22,22 @@ type Client interface {
 	Authenticate(ctx context.Context) error
 	SystemInfo(ctx context.Context) (synology.SystemInfo, error)
 	Compatibility(ctx context.Context) (synology.CompatibilityReport, error)
+	ControlPanelTimeState(ctx context.Context) (synology.ControlPanelTimeState, error)
+	ControlPanelTimeCapabilities(ctx context.Context) (synology.ControlPanelTimeCapabilities, synology.CompatibilityReport, error)
 	StorageState(ctx context.Context) (synology.StorageState, error)
 	StorageCapabilities(ctx context.Context) (synology.StorageCapabilities, synology.CompatibilityReport, error)
+	ApplyStorageChange(ctx context.Context, input synology.StorageMutationInput) (synology.StorageMutationResult, error)
 	IdentityState(ctx context.Context, queries ...identity.StateQuery) (synology.IdentityState, error)
+	ApplicationPrivilegePreview(ctx context.Context, principalType, principal string) (identity.ApplicationPrivilegeAssignment, error)
 	IdentityCapabilities(ctx context.Context) (synology.IdentityCapabilities, synology.CompatibilityReport, error)
 	ApplyIdentityChange(ctx context.Context, request synology.IdentityChangeRequest, password string) (synology.IdentityMutationResult, error)
 	ShareState(ctx context.Context, includePermissions bool) (synology.ShareState, error)
+	ShareStateForPrincipals(ctx context.Context, principals []share.Principal) (synology.ShareState, error)
 	ShareCapabilities(ctx context.Context) (synology.ShareCapabilities, synology.CompatibilityReport, error)
 	ApplyShareChange(ctx context.Context, request synology.ShareChangeRequest) (synology.ShareMutationResult, error)
+	SANState(ctx context.Context) (synology.SANState, error)
+	SANCapabilities(ctx context.Context) (synology.SANCapabilities, synology.CompatibilityReport, error)
+	ApplySANChange(ctx context.Context, input synology.SANMutationInput) (synology.SANMutationResult, error)
 }
 
 type OTPProvider func(ctx context.Context, profileName string) (string, error)

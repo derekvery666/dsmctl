@@ -13,6 +13,8 @@ The first release proves one complete path shared by both products:
 7. Read a normalized disk, storage-pool, RAID, volume, capacity, and health inventory through the same application service.
 8. Read normalized local users, groups, memberships, quotas, application privileges, shared folders, and opt-in permission bindings without exposing authentication material.
 9. Plan and apply guarded local identity and shared-folder changes through identical CLI and MCP use cases.
+10. Plan and apply guarded storage-pool, volume, and SAN target/LUN/mapping changes through operation-scoped DSM backends.
+11. Explain focused share/application access and read the first focused Control Panel time/NTP module.
 
 ## Dependency direction
 
@@ -50,6 +52,20 @@ The highest-priority matching variant is selected. Shared HTTP, session, retry, 
 
 `storage.inventory` follows the same operation-scoped pattern. Its first backend uses `SYNO.Storage.CGI.Storage` v1 and normalizes the aggregate response into the stable `internal/domain/storage` model. Future DSM-specific field or endpoint differences can add a higher-priority variant without changing the CLI, MCP schemas, or application use case.
 
+Storage mutation manifests and hash-bound plans are also versioned at the
+application boundary. Pool create owns its complete initial RAID/disk topology;
+pool update is patch-only disk addition. Three independently selected
+`SYNO.Storage.CGI.Pool` v1 variants implement create, add-disk expansion, and
+delete. Plans bind stable DSM IDs, a non-volatile topology fingerprint, and a
+separate disk/pool safety fingerprint. Volume mutation and RAID migration have
+no registered backend and therefore fail closed before any DSM write. See
+[`docs/storage-management.md`](storage-management.md) for schemas and examples.
+
+SAN inventory and mutations use the same operation-scoped design. Target,
+LUN, and mapping operations select independently; the application layer binds
+stable target IDs, LUN UUIDs, mapping edges, active sessions, and backing-volume
+capacity into a guarded plan. See [`docs/san-management.md`](san-management.md).
+
 Identity and share support is split into independently selectable operations:
 
 ```text
@@ -63,6 +79,7 @@ identity.quotas.get         SYNO.Core.Quota v1
 identity.quotas.set         SYNO.Core.Quota v1
 identity.applications.list  SYNO.Core.AppPriv.App v2
 identity.application_privileges.get  SYNO.Core.AppPriv.Rule v1
+identity.application_privileges.preview  SYNO.Core.AppPriv.App v2
 identity.application_privileges.set  SYNO.Core.AppPriv.Rule v1
 shares.list                 SYNO.Core.Share v1
 shares.permissions.list     SYNO.Core.Share.Permission v1
@@ -122,6 +139,14 @@ dsmctl auth login [--nas <name>]
 dsmctl system info [--nas <name>] [--json]
 dsmctl storage capabilities [--nas <name>] [--json]
 dsmctl storage inventory [--nas <name>] [--json]
+dsmctl storage plan [--nas <name>] --file <request.json> [--output <plan.json>]
+dsmctl storage apply --file <plan.json> --approve <sha256>
+dsmctl san capabilities [--nas <name>] [--json]
+dsmctl san inventory [--nas <name>] [--json]
+dsmctl san plan [--nas <name>] --file <request.json> [--output <plan.json>]
+dsmctl san apply --file <plan.json> --approve <sha256>
+dsmctl control-panel time capabilities [--nas <name>] [--json]
+dsmctl control-panel time state [--nas <name>] [--json]
 dsmctl account capabilities [--nas <name>] [--json]
 dsmctl account inventory [--nas <name>] [--memberships] [--quotas] [--application-privileges] [--principal-type user|group --principal <name>] [--json]
 dsmctl account plan [--nas <name>] --file <request.json> [--output <plan.json>]
@@ -130,6 +155,7 @@ dsmctl share capabilities [--nas <name>] [--json]
 dsmctl share inventory [--nas <name>] [--include-permissions] [--json]
 dsmctl share plan [--nas <name>] --file <request.json> [--output <plan.json>]
 dsmctl share apply --file <plan.json> --approve <sha256>
+dsmctl access explain [--nas <name>] --principal-type user|group --principal <name> --resource-type share|application --resource <id> [--json]
 ```
 
 MCP:
@@ -140,6 +166,14 @@ get_system_info { nas?: string }
 get_capabilities { nas?: string }
 get_storage_capabilities { nas?: string }
 get_storage_state { nas?: string }
+plan_storage_change { nas?: string, request: StorageChangeRequest }
+apply_storage_plan { plan: StoragePlan, approval_hash: string }
+get_san_capabilities { nas?: string }
+get_san_state { nas?: string }
+plan_san_change { nas?: string, request: SANChangeRequest }
+apply_san_plan { plan: SANPlan, approval_hash: string }
+get_control_panel_time_capabilities { nas?: string }
+get_control_panel_time_state { nas?: string }
 get_account_capabilities { nas?: string }
 get_account_state { nas?: string, include_memberships?: boolean, include_quotas?: boolean, include_application_privileges?: boolean, principal_type?: "user"|"group", principal?: string }
 plan_account_change { nas?: string, request: IdentityChangeRequest }
@@ -148,6 +182,7 @@ get_share_capabilities { nas?: string }
 get_share_state { nas?: string, include_permissions?: boolean }
 plan_share_change { nas?: string, request: ShareChangeRequest }
 apply_share_plan { plan: SharePlan, approval_hash: string }
+explain_effective_access { nas?: string, principal_type: "user"|"group", principal: string, resource_type: "share"|"application", resource: string }
 ```
 
 ## Extension rule
@@ -165,11 +200,6 @@ Planning and inventory MCP tools declare read-only annotations. Apply tools decl
 
 ## Planned follow-ups
 
-- Credential removal, status, and trusted-device rotation commands.
-- DSM error descriptions and structured application errors.
-- Versioned storage manifests plus plan/apply and plan-hash preconditions.
-- Guarded storage-pool and volume creation after write APIs are modeled per DSM version.
-- Effective permission explanation across group membership, share ACLs, and application inheritance.
-- Encrypted shared-folder key lifecycle, WORM policy, and custom Windows ACL safeguards.
-- Control Panel read operations, followed by plan/apply mutations.
-- SAN inventory, followed by guarded LUN and target mutations.
+Incomplete work, dependencies, ownership, and acceptance criteria are maintained
+in the [specification roadmap](../spec/roadmap.md). This document describes the
+architecture implemented today.

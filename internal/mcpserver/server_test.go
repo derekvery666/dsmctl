@@ -42,22 +42,31 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools() error = %v", err)
 	}
-	if len(tools.Tools) != 13 {
-		t.Fatalf("ListTools() returned %d tools, want 13", len(tools.Tools))
+	if len(tools.Tools) != 22 {
+		t.Fatalf("ListTools() returned %d tools, want 22", len(tools.Tools))
 	}
 	readOnlyTools := map[string]bool{
-		"get_account_capabilities": false,
-		"get_account_state":        false,
-		"get_share_capabilities":   false,
-		"get_share_state":          false,
-		"get_storage_capabilities": false,
-		"get_storage_state":        false,
-		"plan_account_change":      false,
-		"plan_share_change":        false,
+		"explain_effective_access":            false,
+		"get_account_capabilities":            false,
+		"get_account_state":                   false,
+		"get_control_panel_time_capabilities": false,
+		"get_control_panel_time_state":        false,
+		"get_san_capabilities":                false,
+		"get_san_state":                       false,
+		"get_share_capabilities":              false,
+		"get_share_state":                     false,
+		"get_storage_capabilities":            false,
+		"get_storage_state":                   false,
+		"plan_account_change":                 false,
+		"plan_san_change":                     false,
+		"plan_share_change":                   false,
+		"plan_storage_change":                 false,
 	}
 	mutationTools := map[string]bool{
 		"apply_account_plan": false,
+		"apply_san_plan":     false,
 		"apply_share_plan":   false,
+		"apply_storage_plan": false,
 	}
 	for _, tool := range tools.Tools {
 		if _, ok := mutationTools[tool.Name]; ok {

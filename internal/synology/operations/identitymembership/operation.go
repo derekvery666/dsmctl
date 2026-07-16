@@ -119,18 +119,35 @@ func changeGroup(ctx context.Context, executor compatibility.Executor, group str
 
 func decodeMemberNames(data json.RawMessage) ([]string, error) {
 	var response struct {
-		Users []struct {
-			Name string `json:"name"`
-		} `json:"users"`
+		Users json.RawMessage `json:"users"`
 	}
 	if err := json.Unmarshal(data, &response); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decode group members: %w", err)
 	}
-	result := make([]string, 0, len(response.Users))
-	for _, user := range response.Users {
-		if user.Name != "" {
-			result = append(result, user.Name)
+	if response.Users == nil {
+		return nil, fmt.Errorf("decode group members: required field %q is missing", "users")
+	}
+	var users []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(response.Users, &users); err != nil {
+		return nil, fmt.Errorf("decode group members field %q: %w", "users", err)
+	}
+	if users == nil {
+		return nil, fmt.Errorf("decode group members: field %q must be an array", "users")
+	}
+	result := make([]string, 0, len(users))
+	seen := make(map[string]struct{}, len(users))
+	for index, user := range users {
+		if strings.TrimSpace(user.Name) == "" {
+			return nil, fmt.Errorf("decode group members: users[%d] has no name", index)
 		}
+		key := strings.ToLower(user.Name)
+		if _, exists := seen[key]; exists {
+			return nil, fmt.Errorf("decode group members: duplicate user %q", user.Name)
+		}
+		seen[key] = struct{}{}
+		result = append(result, user.Name)
 	}
 	return result, nil
 }

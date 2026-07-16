@@ -14,6 +14,9 @@ type appPrivilegeExecutor struct{ requests []compatibility.Request }
 func (executor *appPrivilegeExecutor) Execute(_ context.Context, request compatibility.Request) (json.RawMessage, error) {
 	executor.requests = append(executor.requests, request)
 	if request.API == AppAPIName {
+		if request.Method == "preview" {
+			return json.RawMessage(`{"applications":[{"app_id":"SYNO.Desktop","privilelge":"deny"},{"app_id":"custom","privilelge":"custom"}]}`), nil
+		}
 		return json.RawMessage(`{"applications":[{"app_id":"SYNO.Desktop","name":["DSM"],"grant_type":["local"],"supportIP":true}]}`), nil
 	}
 	if request.Method == "get" {
@@ -35,6 +38,14 @@ func TestApplicationInventoryRulesAndPartialSet(t *testing.T) {
 	if err != nil || len(assignment.Permissions) != 2 || assignment.Permissions[0].Access != identity.ApplicationAccessDeny || assignment.Permissions[1].Access != identity.ApplicationAccessCustom {
 		t.Fatalf("assignment=%#v err=%v", assignment, err)
 	}
+	preview, selection, err := ExecutePreview(context.Background(), target, executor, PrincipalInput{PrincipalType: identity.PrincipalUser, Principal: "alice"})
+	if err != nil || !selection.Supported || len(preview.Permissions) != 2 || preview.Permissions[0].Access != identity.ApplicationAccessDeny {
+		t.Fatalf("preview=%#v selection=%#v err=%v", preview, selection, err)
+	}
+	previewRequest := executor.requests[len(executor.requests)-1]
+	if previewRequest.Method != "preview" || previewRequest.JSONParameters["username"] != "alice" {
+		t.Fatalf("preview request = %#v", previewRequest)
+	}
 	executor.requests = nil
 	_, _, err = ExecuteSet(context.Background(), target, executor, SetInput{PrincipalType: identity.PrincipalUser, Principal: "alice", Permissions: []identity.ApplicationPermissionChange{
 		{ApplicationID: "old", Access: identity.ApplicationAccessInherit}, {ApplicationID: "SYNO.Desktop", Access: identity.ApplicationAccessAllow},
@@ -53,5 +64,36 @@ func TestApplicationInventoryRulesAndPartialSet(t *testing.T) {
 	deny := rules[0]["deny_ip"].([]string)
 	if len(allow) != 1 || allow[0] != "0.0.0.0" || len(deny) != 0 {
 		t.Fatalf("allow=%v deny=%v", allow, deny)
+	}
+}
+
+func TestDecodePreviewRejectsMalformedOrUnknownResults(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		data string
+	}{
+		{name: "missing array", data: `{}`},
+		{name: "missing app id", data: `{"applications":[{"privilelge":"allow"}]}`},
+		{name: "correctly spelled field is not accepted", data: `{"applications":[{"app_id":"app","privilege":"allow"}]}`},
+		{name: "unknown privilege", data: `{"applications":[{"app_id":"app","privilelge":"maybe"}]}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := decodePreview(json.RawMessage(test.data)); err == nil {
+				t.Fatal("decodePreview() succeeded, want error")
+			}
+		})
+	}
+}
+
+func TestPrivilegeDecodersRejectMissingCollectionsAndFields(t *testing.T) {
+	for _, data := range []string{`{}`, `{"rules":null}`, `{"rules":[{"allow_ip":[],"deny_ip":[]}]}`, `{"rules":[{"app_id":"app","deny_ip":[]}]}`, `{"rules":[{"app_id":"app","allow_ip":[1],"deny_ip":[]}]}`} {
+		if _, err := decodePermissions(json.RawMessage(data)); err == nil {
+			t.Fatalf("decodePermissions(%s) succeeded, want error", data)
+		}
+	}
+	for _, data := range []string{`{}`, `{"applications":null}`, `{"applications":[{"name":"missing id"}]}`} {
+		if _, err := decodeApplications(json.RawMessage(data)); err == nil {
+			t.Fatalf("decodeApplications(%s) succeeded, want error", data)
+		}
 	}
 }

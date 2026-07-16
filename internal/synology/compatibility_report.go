@@ -5,15 +5,21 @@ import (
 	"fmt"
 
 	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
+	"github.com/ychiu1211/dsmctl/internal/synology/operations/controlpaneltime"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/identityappprivilege"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/identityinventory"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/identitymembership"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/identitymutation"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/identityquota"
+	"github.com/ychiu1211/dsmctl/internal/synology/operations/saninventory"
+	"github.com/ychiu1211/dsmctl/internal/synology/operations/sanmutation"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/shareinventory"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/sharemutation"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/storageinventory"
+	"github.com/ychiu1211/dsmctl/internal/synology/operations/storagemodelconstraints"
+	"github.com/ychiu1211/dsmctl/internal/synology/operations/storagepoolmutation"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/systeminfo"
+	"github.com/ychiu1211/dsmctl/internal/synology/operations/volumemutation"
 )
 
 const (
@@ -30,6 +36,9 @@ func (c *Client) Compatibility(ctx context.Context) (CompatibilityReport, error)
 	defer c.mu.Unlock()
 
 	apiNames := append([]string{authAPI}, storageinventory.APINames()...)
+	apiNames = append(apiNames, storagemodelconstraints.APINames()...)
+	apiNames = append(apiNames, storagepoolmutation.APINames()...)
+	apiNames = append(apiNames, volumemutation.APINames()...)
 	apiNames = append(apiNames, identityinventory.APINames()...)
 	apiNames = append(apiNames, identitymutation.APINames()...)
 	apiNames = append(apiNames, identitymembership.APINames()...)
@@ -37,6 +46,9 @@ func (c *Client) Compatibility(ctx context.Context) (CompatibilityReport, error)
 	apiNames = append(apiNames, identityappprivilege.APINames()...)
 	apiNames = append(apiNames, shareinventory.APINames()...)
 	apiNames = append(apiNames, sharemutation.APINames()...)
+	apiNames = append(apiNames, controlpaneltime.APINames()...)
+	apiNames = append(apiNames, saninventory.APINames()...)
+	apiNames = append(apiNames, sanmutation.APINames()...)
 	if err := c.prepareCompatibilityTargetLocked(ctx, apiNames...); err != nil {
 		return CompatibilityReport{}, fmt.Errorf("discover compatibility target: %w", err)
 	}
@@ -47,6 +59,18 @@ func (c *Client) Compatibility(ctx context.Context) (CompatibilityReport, error)
 	}
 	storageSelection, selectionErr := storageinventory.Select(c.target)
 	if selectionErr != nil && !compatibility.IsUnsupported(selectionErr) {
+		return CompatibilityReport{}, selectionErr
+	}
+	storageMutationSelections, selectionErr := storagepoolmutation.Select(c.target)
+	if selectionErr != nil {
+		return CompatibilityReport{}, selectionErr
+	}
+	storageModelSelection, selectionErr := storagemodelconstraints.Select(c.target)
+	if selectionErr != nil && !compatibility.IsUnsupported(selectionErr) {
+		return CompatibilityReport{}, selectionErr
+	}
+	volumeMutationSelections, selectionErr := volumemutation.Select(c.target)
+	if selectionErr != nil {
 		return CompatibilityReport{}, selectionErr
 	}
 	identitySelections, selectionErr := identityinventory.Select(c.target)
@@ -77,8 +101,22 @@ func (c *Client) Compatibility(ctx context.Context) (CompatibilityReport, error)
 	if selectionErr != nil {
 		return CompatibilityReport{}, selectionErr
 	}
+	controlPanelTimeSelection, selectionErr := controlpaneltime.Select(c.target)
+	if selectionErr != nil && !compatibility.IsUnsupported(selectionErr) {
+		return CompatibilityReport{}, selectionErr
+	}
+	sanSelections, selectionErr := saninventory.Select(c.target)
+	if selectionErr != nil {
+		return CompatibilityReport{}, selectionErr
+	}
+	sanMutationSelections, selectionErr := sanmutation.Select(c.target)
+	if selectionErr != nil {
+		return CompatibilityReport{}, selectionErr
+	}
 	c.updateDerivedCapabilitiesLocked()
-	selections := []compatibility.Selection{systemSelection, storageSelection}
+	selections := []compatibility.Selection{systemSelection, storageSelection, storageModelSelection}
+	selections = append(selections, storageMutationSelections...)
+	selections = append(selections, volumeMutationSelections...)
 	selections = append(selections, identitySelections...)
 	selections = append(selections, shareSelections...)
 	selections = append(selections, identityMutationSelections...)
@@ -86,6 +124,9 @@ func (c *Client) Compatibility(ctx context.Context) (CompatibilityReport, error)
 	selections = append(selections, quotaSelections...)
 	selections = append(selections, appPrivilegeSelections...)
 	selections = append(selections, shareMutationSelections...)
+	selections = append(selections, controlPanelTimeSelection)
+	selections = append(selections, sanSelections...)
+	selections = append(selections, sanMutationSelections...)
 	return c.target.Report(selections...), nil
 }
 
@@ -119,6 +160,31 @@ func (c *Client) updateDerivedCapabilitiesLocked() {
 	}
 	if _, err := storageinventory.Select(c.target); err == nil {
 		c.target.AddCapability(storageinventory.CapabilityName)
+	}
+	if selection, err := storagemodelconstraints.Select(c.target); err == nil && selection.Supported {
+		c.target.AddCapability(storagemodelconstraints.CapabilityName)
+	}
+	if selections, err := storagepoolmutation.Select(c.target); err == nil {
+		for index, capability := range []string{
+			storagepoolmutation.CreateCapabilityName,
+			storagepoolmutation.ExpandCapabilityName,
+			storagepoolmutation.DeleteCapabilityName,
+		} {
+			if storagepoolmutation.Supported(selections, index) {
+				c.target.AddCapability(capability)
+			}
+		}
+	}
+	if selections, err := volumemutation.Select(c.target); err == nil {
+		for index, capability := range []string{
+			volumemutation.CreateCapabilityName,
+			volumemutation.ExpandCapabilityName,
+			volumemutation.DeleteCapabilityName,
+		} {
+			if volumemutation.Supported(selections, index) {
+				c.target.AddCapability(capability)
+			}
+		}
 	}
 	identitySupported := false
 	if selections, err := identityinventory.Select(c.target); err == nil && identityinventory.Supported(selections) {
@@ -164,6 +230,9 @@ func (c *Client) updateDerivedCapabilitiesLocked() {
 		if selectionSupported(selections, 2) {
 			c.target.AddCapability(identityappprivilege.SetCapabilityName)
 		}
+		if selectionSupported(selections, 3) {
+			c.target.AddCapability(identityappprivilege.PreviewCapabilityName)
+		}
 	}
 	if selections, err := sharemutation.Select(c.target); err == nil {
 		if len(selections) > 0 && selections[0].Supported {
@@ -172,6 +241,15 @@ func (c *Client) updateDerivedCapabilitiesLocked() {
 		if len(selections) > 1 && selections[1].Supported {
 			c.target.AddCapability(sharemutation.PermissionCapabilityName)
 		}
+	}
+	if _, err := controlpaneltime.Select(c.target); err == nil {
+		c.target.AddCapability(controlpaneltime.CapabilityName)
+	}
+	if selections, err := saninventory.Select(c.target); err == nil {
+		c.addSANCapabilitiesLocked(selections)
+	}
+	if selections, err := sanmutation.Select(c.target); err == nil {
+		c.addSANMutationCapabilitiesLocked(selections)
 	}
 	// Sending session credentials in both documented parameters and the web UI
 	// cookie/header locations is safe across tested DSM versions and fixes Core

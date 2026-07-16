@@ -1,0 +1,12 @@
+{
+  "luns": [
+    {
+      "lun_id": "5",
+      "uuid": "legacy-lun-uuid",
+      "name": "legacy-lun",
+      "location": "/volume1",
+      "size": "10737418240",
+      "type": "3"
+    }
+  ]
+}

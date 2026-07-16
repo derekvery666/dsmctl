@@ -6,10 +6,45 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
 )
+
+func TestRequestScriptUsesCookieAndHeaderWithoutCredentialQuery(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/webapi/entry.cgi" {
+			t.Errorf("request = %s %s", request.Method, request.URL.Path)
+		}
+		query := request.URL.Query()
+		if query.Get("api") != "SYNO.Core.Desktop.Defs" || query.Get("method") != "getjs" {
+			t.Errorf("query = %#v", query)
+		}
+		if query.Get("_sid") != "" || query.Get("SynoToken") != "" {
+			t.Errorf("session credentials leaked into query: %#v", query)
+		}
+		cookie, err := request.Cookie("id")
+		if err != nil || cookie.Value != "session-secret" || request.Header.Get("X-SYNO-TOKEN") != "token-secret" {
+			t.Errorf("cookie=%#v token=%q err=%v", cookie, request.Header.Get("X-SYNO-TOKEN"), err)
+		}
+		fmt.Fprint(w, `var _SYNOINFODEF={"supportext4":"yes"};`)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(Options{BaseURL: server.URL, Username: "test", Password: "secret", HTTPClient: server.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.sid = "session-secret"
+	client.synoToken = "token-secret"
+	body, err := client.requestScriptLocked(context.Background(), "entry.cgi", url.Values{
+		"api": {"SYNO.Core.Desktop.Defs"}, "version": {"1"}, "method": {"getjs"},
+	}, "SYNO.Core.Desktop.Defs")
+	if err != nil || len(body) == 0 {
+		t.Fatalf("body=%q err=%v", body, err)
+	}
+}
 
 func TestClientSystemInfoLoginAndLogout(t *testing.T) {
 	var loginCount, logoutCount, infoCount int

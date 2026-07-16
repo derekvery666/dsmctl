@@ -25,9 +25,12 @@ func New(version string) *cobra.Command {
 	root.PersistentFlags().StringVar(&opts.configPath, "config", config.DefaultPath(), "configuration file path")
 	root.PersistentFlags().StringVar(&opts.nas, "nas", "", "NAS profile name (defaults to the configured default)")
 	root.AddCommand(
+		newAccessCommand(opts),
 		newAccountCommand(opts),
 		newAuthCommand(opts),
+		newControlPanelCommand(opts),
 		newNASCommand(opts),
+		newSANCommand(opts),
 		newShareCommand(opts),
 		newStorageCommand(opts),
 		newSystemCommand(opts),

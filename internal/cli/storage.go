@@ -11,14 +11,74 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ychiu1211/dsmctl/internal/application"
+	"github.com/ychiu1211/dsmctl/internal/domain/storage"
 )
 
 func newStorageCommand(opts *options) *cobra.Command {
-	command := &cobra.Command{Use: "storage", Short: "Inspect DSM storage resources"}
+	command := &cobra.Command{Use: "storage", Short: "Inspect and plan DSM storage resources"}
 	command.AddCommand(
 		newStorageCapabilitiesCommand(opts),
 		newStorageInventoryCommand(opts),
+		newStoragePlanCommand(opts),
+		newStorageApplyCommand(opts),
 	)
+	return command
+}
+
+func newStoragePlanCommand(opts *options) *cobra.Command {
+	var inputPath, outputPath string
+	command := &cobra.Command{
+		Use:   "plan",
+		Short: "Plan a guarded storage pool or volume change",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var request storage.ChangeRequest
+			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
+				return fmt.Errorf("decode storage change request: %w", err)
+			}
+			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			plan, err := service.PlanStorageChange(cmd.Context(), opts.nas, request)
+			if err != nil {
+				return err
+			}
+			return encodeJSONOutput(cmd, outputPath, plan)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "storage change request JSON file, or - for stdin")
+	command.Flags().StringVarP(&outputPath, "output", "o", "", "write the plan JSON to this file instead of stdout")
+	return command
+}
+
+func newStorageApplyCommand(opts *options) *cobra.Command {
+	var inputPath, approveHash string
+	command := &cobra.Command{
+		Use:   "apply",
+		Short: "Apply and verify an approved storage plan",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var plan application.StoragePlan
+			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
+				return fmt.Errorf("decode storage plan: %w", err)
+			}
+			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.ApplyStoragePlan(cmd.Context(), plan, approveHash)
+			if err != nil {
+				return err
+			}
+			return encodeIndentedJSON(cmd.OutOrStdout(), result)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "storage plan JSON file, or - for stdin")
+	command.Flags().StringVar(&approveHash, "approve", "", "exact SHA-256 hash printed by storage plan")
+	_ = command.MarkFlagRequired("approve")
 	return command
 }
 
@@ -93,6 +153,8 @@ func writeStorageCapabilities(cmd *cobra.Command, result application.StorageCapa
 	fmt.Fprintf(writer, "Disk status:\t%s\n", yesNo(result.Capabilities.DiskStatus))
 	fmt.Fprintf(writer, "Pool status:\t%s\n", yesNo(result.Capabilities.PoolStatus))
 	fmt.Fprintf(writer, "Volume status:\t%s\n", yesNo(result.Capabilities.VolumeStatus))
+	fmt.Fprintf(writer, "Pool create/expand/delete:\t%s/%s/%s\n", yesNo(result.Capabilities.PoolCreate), yesNo(result.Capabilities.PoolUpdate), yesNo(result.Capabilities.PoolDelete))
+	fmt.Fprintf(writer, "Volume create/update/delete:\t%s/%s/%s\n", yesNo(result.Capabilities.VolumeCreate), yesNo(result.Capabilities.VolumeUpdate), yesNo(result.Capabilities.VolumeDelete))
 	fmt.Fprintf(writer, "Mutations:\t%s\n", yesNo(result.Capabilities.Mutations))
 	for _, operation := range result.Report.Operations {
 		fmt.Fprintf(writer, "Backend:\t%s\n", valueOrDash(operation.Backend))

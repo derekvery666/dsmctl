@@ -1,0 +1,31 @@
+{
+  "luns": [
+    {
+      "lun_id": 12,
+      "uuid": "3a43f95a-beb7-4da5-8ea5-f9db46ba30fa",
+      "name": "database",
+      "description": "Primary database LUN",
+      "location": "/volume1",
+      "size": 1099511627776,
+      "allocated_size": 274877906944,
+      "block_size": 512,
+      "type": 261,
+      "type_str": "BLUN",
+      "status": "normal",
+      "is_mapped": true
+    },
+    {
+      "lun_id": 13,
+      "uuid": "ebc36bda-3bd5-4251-baa8-8c754177f968",
+      "name": "archive",
+      "location": "/volume2",
+      "size": 549755813888,
+      "allocated_size": 549755813888,
+      "block_size": 4096,
+      "type": 3,
+      "type_str": "FILE",
+      "status": "soft_limit_reach",
+      "is_mapped": false
+    }
+  ]
+}

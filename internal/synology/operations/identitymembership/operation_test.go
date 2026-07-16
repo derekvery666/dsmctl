@@ -52,3 +52,11 @@ func TestReadBuildsSortedMembershipsAndChangeUsesTypedArrays(t *testing.T) {
 		t.Fatalf("remove_member = %#v", executor.requests[1].JSONParameters["remove_member"])
 	}
 }
+
+func TestDecodeMemberNamesRejectsMalformedResponses(t *testing.T) {
+	for _, data := range []string{`{}`, `{"users":null}`, `{"users":[{}]}`, `{"users":[{"name":"alice"},{"name":"ALICE"}]}`} {
+		if _, err := decodeMemberNames(json.RawMessage(data)); err == nil {
+			t.Fatalf("decodeMemberNames(%s) succeeded, want error", data)
+		}
+	}
+}

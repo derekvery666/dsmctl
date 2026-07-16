@@ -19,6 +19,10 @@ func (executor lockedExecutor) Execute(ctx context.Context, request compatibilit
 	return executor.client.executeLocked(ctx, request)
 }
 
+func (executor lockedExecutor) ExecuteScript(ctx context.Context, request compatibility.Request) ([]byte, error) {
+	return executor.client.executeScriptLocked(ctx, request)
+}
+
 func (c *Client) SystemInfo(ctx context.Context) (SystemInfo, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

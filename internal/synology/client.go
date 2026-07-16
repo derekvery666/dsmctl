@@ -307,6 +307,65 @@ func (c *Client) executeLocked(ctx context.Context, call compatibility.Request) 
 	return data, err
 }
 
+func (c *Client) executeScriptLocked(ctx context.Context, call compatibility.Request) ([]byte, error) {
+	if err := c.ensureAPIsLocked(ctx, call.API); err != nil {
+		return nil, err
+	}
+	if err := c.loginLocked(ctx); err != nil {
+		return nil, err
+	}
+	info, _ := c.target.API(call.API)
+	version := call.Version
+	if version == 0 {
+		version = info.MaxVersion
+	}
+	if !info.Supports(version) {
+		return nil, fmt.Errorf("Synology API %s does not support requested version %d (available %d-%d)", call.API, version, info.MinVersion, info.MaxVersion)
+	}
+	params := cloneValues(call.Parameters)
+	params.Set("api", call.API)
+	params.Set("version", strconv.Itoa(version))
+	params.Set("method", call.Method)
+	return c.requestScriptLocked(ctx, info.Path, params, call.API)
+}
+
+func (c *Client) requestScriptLocked(ctx context.Context, apiPath string, params url.Values, api string) ([]byte, error) {
+	endpoint := *c.baseURL
+	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/webapi/" + strings.TrimLeft(apiPath, "/")
+	endpoint.RawQuery = params.Encode()
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Accept", "application/javascript, text/javascript, */*;q=0.1")
+	request.Header.Set("User-Agent", "dsmctl/0.1")
+	if c.sid != "" {
+		request.AddCookie(&http.Cookie{Name: "id", Value: c.sid})
+	}
+	if c.synoToken != "" {
+		request.Header.Set("X-SYNO-TOKEN", c.synoToken)
+	}
+
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("request %s: %w", endpoint.Redacted(), err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+		return nil, fmt.Errorf("request %s returned HTTP %s", endpoint.Redacted(), response.Status)
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxBodySize+1))
+	if err != nil {
+		return nil, fmt.Errorf("read %s script response: %w", api, err)
+	}
+	if len(body) > maxBodySize {
+		return nil, fmt.Errorf("%s script response exceeds %d bytes", api, maxBodySize)
+	}
+	return body, nil
+}
+
 func (c *Client) requestLocked(ctx context.Context, apiPath string, params url.Values, api, method string) (json.RawMessage, error) {
 	endpoint := *c.baseURL
 	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/webapi/" + strings.TrimLeft(apiPath, "/")

@@ -205,6 +205,7 @@ func writeAccountCapabilities(cmd *cobra.Command, result application.IdentityCap
 	fmt.Fprintf(writer, "Membership read/set:\t%s/%s\n", yesNo(result.Capabilities.MembershipRead), yesNo(result.Capabilities.MembershipSet))
 	fmt.Fprintf(writer, "Quota read/set:\t%s/%s\n", yesNo(result.Capabilities.QuotaRead), yesNo(result.Capabilities.QuotaSet))
 	fmt.Fprintf(writer, "Application privilege read/set:\t%s/%s\n", yesNo(result.Capabilities.ApplicationPrivilegeRead), yesNo(result.Capabilities.ApplicationPrivilegeSet))
+	fmt.Fprintf(writer, "Application privilege preview:\t%s\n", yesNo(result.Capabilities.ApplicationPrivilegePreview))
 	fmt.Fprintf(writer, "Mutations:\t%s\n", yesNo(result.Capabilities.Mutations))
 	fmt.Fprintln(writer, "\nOPERATIONS")
 	fmt.Fprintln(writer, "OPERATION\tSUPPORTED\tBACKEND\tAPI\tVERSION")

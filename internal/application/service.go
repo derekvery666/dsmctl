@@ -31,6 +31,17 @@ type CompatibilityResult struct {
 	Report synology.CompatibilityReport `json:"report" jsonschema:"Discovered DSM compatibility target and selected operation backends"`
 }
 
+type ControlPanelTimeStateResult struct {
+	NAS  string                         `json:"nas" jsonschema:"NAS profile used for the request"`
+	Time synology.ControlPanelTimeState `json:"time" jsonschema:"Normalized Control Panel time and NTP configuration"`
+}
+
+type ControlPanelTimeCapabilitiesResult struct {
+	NAS          string                                `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.ControlPanelTimeCapabilities `json:"capabilities" jsonschema:"Control Panel time module operations currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport          `json:"report" jsonschema:"Discovered API and selected time-module compatibility backend"`
+}
+
 type StorageStateResult struct {
 	NAS     string                `json:"nas" jsonschema:"NAS profile used for the request"`
 	Storage synology.StorageState `json:"storage" jsonschema:"Normalized disk, storage-pool, and volume inventory"`
@@ -62,6 +73,17 @@ type ShareCapabilitiesResult struct {
 	NAS          string                       `json:"nas" jsonschema:"NAS profile used for the request"`
 	Capabilities synology.ShareCapabilities   `json:"capabilities" jsonschema:"Shared-folder operations currently exposed by dsmctl"`
 	Report       synology.CompatibilityReport `json:"report" jsonschema:"Discovered APIs and selected shared-folder compatibility backends"`
+}
+
+type SANStateResult struct {
+	NAS string            `json:"nas" jsonschema:"NAS profile used for the request"`
+	SAN synology.SANState `json:"san" jsonschema:"Normalized iSCSI target, LUN, and mapping inventory"`
+}
+
+type SANCapabilitiesResult struct {
+	NAS          string                       `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.SANCapabilities     `json:"capabilities" jsonschema:"SAN inventory and management operations currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport `json:"report" jsonschema:"Discovered APIs and selected SAN compatibility backends"`
 }
 
 type ServiceOption func(*Service)
@@ -123,6 +145,30 @@ func (s *Service) GetCompatibility(ctx context.Context, requestedNAS string) (Co
 		return CompatibilityResult{}, authenticationError(name, err)
 	}
 	return CompatibilityResult{NAS: name, Report: report}, nil
+}
+
+func (s *Service) GetControlPanelTimeState(ctx context.Context, requestedNAS string) (ControlPanelTimeStateResult, error) {
+	name, client, err := s.manager.Client(ctx, requestedNAS)
+	if err != nil {
+		return ControlPanelTimeStateResult{}, err
+	}
+	state, err := client.ControlPanelTimeState(ctx)
+	if err != nil {
+		return ControlPanelTimeStateResult{}, authenticationError(name, err)
+	}
+	return ControlPanelTimeStateResult{NAS: name, Time: state}, nil
+}
+
+func (s *Service) GetControlPanelTimeCapabilities(ctx context.Context, requestedNAS string) (ControlPanelTimeCapabilitiesResult, error) {
+	name, client, err := s.manager.Client(ctx, requestedNAS)
+	if err != nil {
+		return ControlPanelTimeCapabilitiesResult{}, err
+	}
+	capabilities, report, err := client.ControlPanelTimeCapabilities(ctx)
+	if err != nil {
+		return ControlPanelTimeCapabilitiesResult{}, authenticationError(name, err)
+	}
+	return ControlPanelTimeCapabilitiesResult{NAS: name, Capabilities: capabilities, Report: report}, nil
 }
 
 func (s *Service) GetStorageState(ctx context.Context, requestedNAS string) (StorageStateResult, error) {
@@ -199,6 +245,30 @@ func (s *Service) GetShareCapabilities(ctx context.Context, requestedNAS string)
 		return ShareCapabilitiesResult{}, authenticationError(name, err)
 	}
 	return ShareCapabilitiesResult{NAS: name, Capabilities: capabilities, Report: report}, nil
+}
+
+func (s *Service) GetSANState(ctx context.Context, requestedNAS string) (SANStateResult, error) {
+	name, client, err := s.manager.Client(ctx, requestedNAS)
+	if err != nil {
+		return SANStateResult{}, err
+	}
+	state, err := client.SANState(ctx)
+	if err != nil {
+		return SANStateResult{}, authenticationError(name, err)
+	}
+	return SANStateResult{NAS: name, SAN: state}, nil
+}
+
+func (s *Service) GetSANCapabilities(ctx context.Context, requestedNAS string) (SANCapabilitiesResult, error) {
+	name, client, err := s.manager.Client(ctx, requestedNAS)
+	if err != nil {
+		return SANCapabilitiesResult{}, err
+	}
+	capabilities, report, err := client.SANCapabilities(ctx)
+	if err != nil {
+		return SANCapabilitiesResult{}, authenticationError(name, err)
+	}
+	return SANCapabilitiesResult{NAS: name, Capabilities: capabilities, Report: report}, nil
 }
 
 func authenticationError(name string, err error) error {

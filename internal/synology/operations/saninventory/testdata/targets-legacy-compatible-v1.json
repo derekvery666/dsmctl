@@ -1,0 +1,16 @@
+{
+  "targets": [
+    {
+      "target_id": "7",
+      "name": "legacy-target",
+      "iqn": "iqn.2000-01.com.synology:legacy.target",
+      "auth_type": 1,
+      "is_enabled": 1,
+      "mapped_luns": [
+        {
+          "lun_uuid": "legacy-lun-uuid"
+        }
+      ]
+    }
+  ]
+}

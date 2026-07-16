@@ -1,6 +1,7 @@
 package identityappprivilege
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -20,6 +21,8 @@ const (
 	AppListOperationName  = "identity.applications.list"
 	RuleReadOperationName = "identity.application_privileges.get"
 	RuleSetOperationName  = "identity.application_privileges.set"
+	PreviewOperationName  = "identity.application_privileges.preview"
+	PreviewCapabilityName = "identity.application_privileges.preview"
 )
 
 type PrincipalInput struct {
@@ -81,6 +84,39 @@ var ruleReadOperation = compatibility.Operation[PrincipalInput, identity.Applica
 	},
 }
 
+var previewOperation = compatibility.Operation[PrincipalInput, identity.ApplicationPrivilegeAssignment]{
+	Name: PreviewOperationName,
+	Variants: []compatibility.Variant[PrincipalInput, identity.ApplicationPrivilegeAssignment]{
+		{
+			Name:     "core-apppriv-app-preview-v2",
+			API:      AppAPIName,
+			Version:  2,
+			Priority: 10,
+			Match:    compatibility.APIVersion(AppAPIName, 2),
+			Execute: func(ctx context.Context, executor compatibility.Executor, input PrincipalInput) (identity.ApplicationPrivilegeAssignment, error) {
+				parameters := map[string]any{}
+				switch input.PrincipalType {
+				case identity.PrincipalUser:
+					parameters["username"] = input.Principal
+				case identity.PrincipalGroup:
+					parameters["groups"] = []string{input.Principal}
+				default:
+					return identity.ApplicationPrivilegeAssignment{}, fmt.Errorf("unsupported application preview principal type %q", input.PrincipalType)
+				}
+				data, err := executor.Execute(ctx, compatibility.Request{API: AppAPIName, Version: 2, Method: "preview", JSONParameters: parameters})
+				if err != nil {
+					return identity.ApplicationPrivilegeAssignment{}, fmt.Errorf("call %s.preview v2 for %s %q: %w", AppAPIName, input.PrincipalType, input.Principal, err)
+				}
+				permissions, err := decodePreview(data)
+				if err != nil {
+					return identity.ApplicationPrivilegeAssignment{}, err
+				}
+				return identity.ApplicationPrivilegeAssignment{PrincipalType: input.PrincipalType, Principal: input.Principal, Permissions: permissions}, nil
+			},
+		},
+	},
+}
+
 var ruleSetOperation = compatibility.Operation[SetInput, Result]{
 	Name: RuleSetOperationName,
 	Variants: []compatibility.Variant[SetInput, Result]{
@@ -127,17 +163,15 @@ func executeRuleSet(ctx context.Context, executor compatibility.Executor, input 
 }
 
 func decodeApplications(data json.RawMessage) ([]identity.Application, error) {
-	var response struct {
-		Applications []map[string]any `json:"applications"`
+	applications, err := requiredObjectArray(data, "applications", "application inventory")
+	if err != nil {
+		return nil, err
 	}
-	if err := json.Unmarshal(data, &response); err != nil {
-		return nil, fmt.Errorf("decode application inventory: %w", err)
-	}
-	result := make([]identity.Application, 0, len(response.Applications))
-	for _, item := range response.Applications {
+	result := make([]identity.Application, 0, len(applications))
+	for index, item := range applications {
 		id, _ := item["app_id"].(string)
-		if id == "" {
-			continue
+		if strings.TrimSpace(id) == "" {
+			return nil, fmt.Errorf("decode application inventory: applications[%d] has no app_id", index)
 		}
 		result = append(result, identity.Application{ID: id, Name: displayName(item["name"]), GrantTypes: stringSlice(item["grant_type"]), SupportsIP: boolean(item["supportIP"])})
 	}
@@ -146,28 +180,120 @@ func decodeApplications(data json.RawMessage) ([]identity.Application, error) {
 }
 
 func decodePermissions(data json.RawMessage) ([]identity.ApplicationPermission, error) {
-	var response struct {
-		Rules []struct {
-			AppID   string   `json:"app_id"`
-			AllowIP []string `json:"allow_ip"`
-			DenyIP  []string `json:"deny_ip"`
-		} `json:"rules"`
+	rules, err := requiredObjectArray(data, "rules", "application privilege rules")
+	if err != nil {
+		return nil, err
 	}
-	if err := json.Unmarshal(data, &response); err != nil {
-		return nil, fmt.Errorf("decode application privilege rules: %w", err)
-	}
-	result := make([]identity.ApplicationPermission, 0, len(response.Rules))
-	for _, rule := range response.Rules {
+	result := make([]identity.ApplicationPermission, 0, len(rules))
+	for index, rule := range rules {
+		appID, _ := rule["app_id"].(string)
+		if strings.TrimSpace(appID) == "" {
+			return nil, fmt.Errorf("decode application privilege rules: rules[%d] has no app_id", index)
+		}
+		allowIP, err := requiredStringArray(rule, "allow_ip")
+		if err != nil {
+			return nil, fmt.Errorf("decode application privilege rules: rules[%d]: %w", index, err)
+		}
+		denyIP, err := requiredStringArray(rule, "deny_ip")
+		if err != nil {
+			return nil, fmt.Errorf("decode application privilege rules: rules[%d]: %w", index, err)
+		}
 		access := identity.ApplicationAccessCustom
-		if len(rule.AllowIP) == 1 && rule.AllowIP[0] == "0.0.0.0" && len(rule.DenyIP) == 0 {
+		if len(allowIP) == 1 && allowIP[0] == "0.0.0.0" && len(denyIP) == 0 {
 			access = identity.ApplicationAccessAllow
 		}
-		if len(rule.DenyIP) == 1 && rule.DenyIP[0] == "0.0.0.0" && len(rule.AllowIP) == 0 {
+		if len(denyIP) == 1 && denyIP[0] == "0.0.0.0" && len(allowIP) == 0 {
 			access = identity.ApplicationAccessDeny
 		}
-		result = append(result, identity.ApplicationPermission{ApplicationID: rule.AppID, Access: access, AllowIP: rule.AllowIP, DenyIP: rule.DenyIP})
+		result = append(result, identity.ApplicationPermission{ApplicationID: appID, Access: access, AllowIP: allowIP, DenyIP: denyIP})
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ApplicationID < result[j].ApplicationID })
+	return result, nil
+}
+
+func decodePreview(data json.RawMessage) ([]identity.ApplicationPermission, error) {
+	var response struct {
+		Applications json.RawMessage `json:"applications"`
+	}
+	if err := json.Unmarshal(data, &response); err != nil {
+		return nil, fmt.Errorf("decode application privilege preview: %w", err)
+	}
+	if response.Applications == nil {
+		return nil, fmt.Errorf("decode application privilege preview: required field %q is missing", "applications")
+	}
+	if string(bytes.TrimSpace(response.Applications)) == "null" {
+		return nil, fmt.Errorf("decode application privilege preview: field %q must be an array", "applications")
+	}
+	var applications []struct {
+		AppID     string  `json:"app_id"`
+		Privilege *string `json:"privilelge"`
+	}
+	if err := json.Unmarshal(response.Applications, &applications); err != nil {
+		return nil, fmt.Errorf("decode application privilege preview applications: %w", err)
+	}
+	if applications == nil {
+		applications = make([]struct {
+			AppID     string  `json:"app_id"`
+			Privilege *string `json:"privilelge"`
+		}, 0)
+	}
+	result := make([]identity.ApplicationPermission, 0, len(applications))
+	for index, application := range applications {
+		if strings.TrimSpace(application.AppID) == "" {
+			return nil, fmt.Errorf("decode application privilege preview: applications[%d] has no app_id", index)
+		}
+		if application.Privilege == nil {
+			return nil, fmt.Errorf("decode application privilege preview: applications[%d] has no privilelge field", index)
+		}
+		switch *application.Privilege {
+		case identity.ApplicationAccessAllow, identity.ApplicationAccessDeny, identity.ApplicationAccessCustom:
+		default:
+			return nil, fmt.Errorf("decode application privilege preview: applications[%d] has unsupported privilelge %q", index, *application.Privilege)
+		}
+		result = append(result, identity.ApplicationPermission{ApplicationID: application.AppID, Access: *application.Privilege})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ApplicationID < result[j].ApplicationID })
+	return result, nil
+}
+
+func requiredObjectArray(data json.RawMessage, key, label string) ([]map[string]any, error) {
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(data, &root); err != nil {
+		return nil, fmt.Errorf("decode %s: %w", label, err)
+	}
+	raw, ok := root[key]
+	if !ok {
+		return nil, fmt.Errorf("decode %s: required field %q is missing", label, key)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var result []map[string]any
+	if err := decoder.Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode %s field %q: %w", label, key, err)
+	}
+	if result == nil {
+		return nil, fmt.Errorf("decode %s: field %q must be an array", label, key)
+	}
+	return result, nil
+}
+
+func requiredStringArray(values map[string]any, key string) ([]string, error) {
+	raw, ok := values[key]
+	if !ok {
+		return nil, fmt.Errorf("required field %q is missing", key)
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("field %q must be a string array", key)
+	}
+	result := make([]string, 0, len(items))
+	for index, item := range items {
+		value, ok := item.(string)
+		if !ok {
+			return nil, fmt.Errorf("field %q item %d must be a string", key, index)
+		}
+		result = append(result, value)
+	}
 	return result, nil
 }
 
@@ -217,7 +343,7 @@ func boolean(value any) bool {
 
 func APINames() []string { return []string{AppAPIName, RuleAPIName} }
 func Select(target compatibility.Target) ([]compatibility.Selection, error) {
-	selectors := []func(compatibility.Target) (compatibility.Selection, error){selectApps, selectRules, selectSet}
+	selectors := []func(compatibility.Target) (compatibility.Selection, error){selectApps, selectRules, selectSet, selectPreview}
 	result := make([]compatibility.Selection, 0, len(selectors))
 	for _, selector := range selectors {
 		selection, err := selector(target)
@@ -240,11 +366,18 @@ func selectSet(target compatibility.Target) (compatibility.Selection, error) {
 	_, selection, err := ruleSetOperation.Select(target)
 	return selection, err
 }
+func selectPreview(target compatibility.Target) (compatibility.Selection, error) {
+	_, selection, err := previewOperation.Select(target)
+	return selection, err
+}
 func ExecuteApps(ctx context.Context, target compatibility.Target, executor compatibility.Executor) ([]identity.Application, compatibility.Selection, error) {
 	return appListOperation.Run(ctx, target, executor, struct{}{})
 }
 func ExecuteRead(ctx context.Context, target compatibility.Target, executor compatibility.Executor, input PrincipalInput) (identity.ApplicationPrivilegeAssignment, compatibility.Selection, error) {
 	return ruleReadOperation.Run(ctx, target, executor, input)
+}
+func ExecutePreview(ctx context.Context, target compatibility.Target, executor compatibility.Executor, input PrincipalInput) (identity.ApplicationPrivilegeAssignment, compatibility.Selection, error) {
+	return previewOperation.Run(ctx, target, executor, input)
 }
 func ExecuteSet(ctx context.Context, target compatibility.Target, executor compatibility.Executor, input SetInput) (Result, compatibility.Selection, error) {
 	return ruleSetOperation.Run(ctx, target, executor, input)

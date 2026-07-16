@@ -7,8 +7,11 @@ import (
 
 	"github.com/ychiu1211/dsmctl/internal/application"
 	"github.com/ychiu1211/dsmctl/internal/config"
+	"github.com/ychiu1211/dsmctl/internal/domain/access"
 	"github.com/ychiu1211/dsmctl/internal/domain/identity"
+	"github.com/ychiu1211/dsmctl/internal/domain/san"
 	"github.com/ychiu1211/dsmctl/internal/domain/share"
+	"github.com/ychiu1211/dsmctl/internal/domain/storage"
 	"github.com/ychiu1211/dsmctl/internal/synology"
 )
 
@@ -36,6 +39,34 @@ type getCapabilitiesOutput struct {
 	Report synology.CompatibilityReport `json:"report" jsonschema:"Discovered APIs, capabilities, quirks, and selected operation backends"`
 }
 
+type explainEffectiveAccessInput struct {
+	NAS           string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	PrincipalType string `json:"principal_type" jsonschema:"Principal kind: user or group"`
+	Principal     string `json:"principal" jsonschema:"Local DSM user or group name"`
+	ResourceType  string `json:"resource_type" jsonschema:"Resource kind: share or application"`
+	Resource      string `json:"resource" jsonschema:"Shared-folder name or application ID"`
+}
+
+type explainEffectiveAccessOutput struct {
+	NAS         string             `json:"nas" jsonschema:"NAS profile used for the request"`
+	Explanation access.Explanation `json:"explanation" jsonschema:"Effective access decision, evidence, and limitations"`
+}
+
+type getControlPanelTimeInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getControlPanelTimeStateOutput struct {
+	NAS  string                         `json:"nas" jsonschema:"NAS profile used for the request"`
+	Time synology.ControlPanelTimeState `json:"time" jsonschema:"Normalized Control Panel time and NTP configuration"`
+}
+
+type getControlPanelTimeCapabilitiesOutput struct {
+	NAS          string                                `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.ControlPanelTimeCapabilities `json:"capabilities" jsonschema:"Control Panel time module operations currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport          `json:"report" jsonschema:"Discovered API and selected time-module backend"`
+}
+
 type getStorageInput struct {
 	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 }
@@ -49,6 +80,24 @@ type getStorageCapabilitiesOutput struct {
 	NAS          string                       `json:"nas" jsonschema:"NAS profile used for the request"`
 	Capabilities synology.StorageCapabilities `json:"capabilities" jsonschema:"Storage operations currently exposed by dsmctl"`
 	Report       synology.CompatibilityReport `json:"report" jsonschema:"Discovered APIs and selected storage compatibility backend"`
+}
+
+type planStorageChangeInput struct {
+	NAS     string                `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request storage.ChangeRequest `json:"request" jsonschema:"Typed storage-pool or volume create, patch-only update, or stable-ID delete intent"`
+}
+
+type planStorageChangeOutput struct {
+	Plan application.StoragePlan `json:"plan" jsonschema:"Validated storage plan including stable references, topology fingerprint, consequences, and approval hash"`
+}
+
+type applyStoragePlanInput struct {
+	Plan         application.StoragePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_storage_change"`
+	ApprovalHash string                  `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved storage plan"`
+}
+
+type applyStoragePlanOutput struct {
+	Result application.StorageApplyResult `json:"result" jsonschema:"Storage mutation result after postcondition verification"`
 }
 
 type getAccountInput struct {
@@ -96,6 +145,39 @@ type applyAccountPlanOutput struct {
 type getShareInput struct {
 	NAS                string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 	IncludePermissions bool   `json:"include_permissions,omitempty" jsonschema:"Expand the user/group permission matrix; causes additional read-only DSM calls"`
+}
+
+type getSANInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getSANStateOutput struct {
+	NAS string            `json:"nas" jsonschema:"NAS profile used for the request"`
+	SAN synology.SANState `json:"san" jsonschema:"Normalized iSCSI target, LUN, and mapping inventory"`
+}
+
+type getSANCapabilitiesOutput struct {
+	NAS          string                       `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.SANCapabilities     `json:"capabilities" jsonschema:"SAN inventory and management operations currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport `json:"report" jsonschema:"Discovered APIs and selected SAN compatibility backends"`
+}
+
+type planSANChangeInput struct {
+	NAS     string            `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request san.ChangeRequest `json:"request" jsonschema:"Typed target, LUN, or target-to-LUN mapping change intent; CHAP passwords must use env:NAME references"`
+}
+
+type planSANChangeOutput struct {
+	Plan application.SANPlan `json:"plan" jsonschema:"Validated SAN plan with stable references, current-state fingerprints, warnings, and approval hash"`
+}
+
+type applySANPlanInput struct {
+	Plan         application.SANPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_san_change"`
+	ApprovalHash string              `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved SAN plan"`
+}
+
+type applySANPlanOutput struct {
+	Result application.SANApplyResult `json:"result" jsonschema:"SAN mutation result and post-apply or failure-state inventory"`
 }
 
 type getShareStateOutput struct {
@@ -160,6 +242,50 @@ func New(service *application.Service, version string) *mcp.Server {
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "explain_effective_access",
+		Title:       "Explain effective access",
+		Description: "Explain one local user's or group's effective access to one shared folder or application using direct rules, memberships, group rules, and deny precedence. Custom ACLs and IP-specific rules return indeterminate rather than a guessed answer.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input explainEffectiveAccessInput) (*mcp.CallToolResult, explainEffectiveAccessOutput, error) {
+		result, err := service.ExplainEffectiveAccess(ctx, input.NAS, access.Query{
+			PrincipalType: input.PrincipalType,
+			Principal:     input.Principal,
+			ResourceType:  input.ResourceType,
+			Resource:      input.Resource,
+		})
+		if err != nil {
+			return nil, explainEffectiveAccessOutput{}, err
+		}
+		return nil, explainEffectiveAccessOutput{NAS: result.NAS, Explanation: result.Explanation}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_control_panel_time_capabilities",
+		Title:       "Get Control Panel time capabilities",
+		Description: "Report whether the focused time and NTP module can be read and which DSM API version-specific backend was selected. Mutations are not exposed.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getControlPanelTimeInput) (*mcp.CallToolResult, getControlPanelTimeCapabilitiesOutput, error) {
+		result, err := service.GetControlPanelTimeCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getControlPanelTimeCapabilitiesOutput{}, err
+		}
+		return nil, getControlPanelTimeCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_control_panel_time_state",
+		Title:       "Get Control Panel time state",
+		Description: "Read normalized DSM time zone, date/time display formats, synchronization mode, and NTP servers. This tool never changes the clock or NTP configuration.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getControlPanelTimeInput) (*mcp.CallToolResult, getControlPanelTimeStateOutput, error) {
+		result, err := service.GetControlPanelTimeState(ctx, input.NAS)
+		if err != nil {
+			return nil, getControlPanelTimeStateOutput{}, err
+		}
+		return nil, getControlPanelTimeStateOutput{NAS: result.NAS, Time: result.Time}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_storage_capabilities",
 		Title:       "Get storage capabilities",
 		Description: "Report which storage inventory and mutation operations dsmctl currently supports on a selected NAS. The first milestone is read-only.",
@@ -187,6 +313,32 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getStorageStateOutput{}, err
 		}
 		return nil, getStorageStateOutput{NAS: result.NAS, Storage: result.Storage}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_storage_change",
+		Title:       "Plan a storage change",
+		Description: "Validate a typed storage-pool or volume manifest and return a topology-, capacity-, and safety-state-bound approval plan without mutating DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planStorageChangeInput) (*mcp.CallToolResult, planStorageChangeOutput, error) {
+		plan, err := service.PlanStorageChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planStorageChangeOutput{}, err
+		}
+		return nil, planStorageChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_storage_plan",
+		Title:       "Apply an approved storage plan",
+		Description: "Validate an unmodified storage approval artifact. No storage write backend is registered yet, so this tool fails closed before contacting DSM.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyStoragePlanInput) (*mcp.CallToolResult, applyStoragePlanOutput, error) {
+		result, err := service.ApplyStoragePlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyStoragePlanOutput{}, err
+		}
+		return nil, applyStoragePlanOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -243,6 +395,58 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getAccountStateOutput{}, err
 		}
 		return nil, getAccountStateOutput{NAS: result.NAS, Identity: result.Identity}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_san_capabilities",
+		Title:       "Get SAN capabilities",
+		Description: "Report SAN Manager inventory and guarded target, LUN, and mapping operation support plus the selected DSM API backend for each operation. This tool never changes SAN resources.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getSANInput) (*mcp.CallToolResult, getSANCapabilitiesOutput, error) {
+		result, err := service.GetSANCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getSANCapabilitiesOutput{}, err
+		}
+		return nil, getSANCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_san_state",
+		Title:       "Get SAN state",
+		Description: "Read normalized iSCSI targets, LUNs, stable-ID mappings, provisioning, capacity, sessions, status, and health using two bulk DSM calls. This tool never mutates SAN Manager.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getSANInput) (*mcp.CallToolResult, getSANStateOutput, error) {
+		result, err := service.GetSANState(ctx, input.NAS)
+		if err != nil {
+			return nil, getSANStateOutput{}, err
+		}
+		return nil, getSANStateOutput{NAS: result.NAS, SAN: result.SAN}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_san_change",
+		Title:       "Plan a SAN change",
+		Description: "Validate a typed target, LUN, or mapping intent against current SAN and backing-volume state, then return a hash-bound plan. This tool never mutates DSM and never resolves CHAP secret references.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planSANChangeInput) (*mcp.CallToolResult, planSANChangeOutput, error) {
+		plan, err := service.PlanSANChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planSANChangeOutput{}, err
+		}
+		return nil, planSANChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_san_plan",
+		Title:       "Apply an approved SAN plan",
+		Description: "Apply an unmodified SAN plan only while its approval hash, stable IDs, mapping graph, sessions, and backing-volume preconditions still match; then verify the stable-ID postcondition and return current state.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applySANPlanInput) (*mcp.CallToolResult, applySANPlanOutput, error) {
+		result, err := service.ApplySANPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applySANPlanOutput{Result: result}, err
+		}
+		return nil, applySANPlanOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

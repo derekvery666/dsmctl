@@ -69,6 +69,9 @@ func TestExecuteNormalizesSharesAndOptInPermissionMatrix(t *testing.T) {
 	if projects.Permissions[1].PrincipalType != share.PrincipalUser || projects.Permissions[1].Access != share.AccessWrite {
 		t.Fatalf("user permission = %#v", projects.Permissions[1])
 	}
+	if !projects.Permissions[1].InheritanceObserved || projects.Permissions[1].InheritedAccess != share.AccessWrite {
+		t.Fatalf("user inherited aggregate = %#v", projects.Permissions[1])
+	}
 }
 
 func TestExecuteDoesNotReadPermissionsUnlessRequested(t *testing.T) {
@@ -85,6 +88,28 @@ func TestExecuteDoesNotReadPermissionsUnlessRequested(t *testing.T) {
 	}
 	if state.PermissionsIncluded || len(state.Shares) != 2 {
 		t.Fatalf("state = %#v", state)
+	}
+}
+
+func TestDecodePermissionsRejectsMalformedResponses(t *testing.T) {
+	validFlags := `"is_aclmode":false,"is_custom":false,"is_deny":false,"is_mask":false,"is_readonly":false,"is_writable":false`
+	for _, test := range []struct {
+		name  string
+		data  string
+		input PermissionInput
+	}{
+		{name: "missing shares", data: `{}`, input: PermissionInput{PrincipalType: share.PrincipalUser, Principal: "alice"}},
+		{name: "shares is null", data: `{"shares":null}`, input: PermissionInput{PrincipalType: share.PrincipalUser, Principal: "alice"}},
+		{name: "missing permission flag", data: `{"shares":[{"name":"projects","inherit":"-"}]}`, input: PermissionInput{PrincipalType: share.PrincipalUser, Principal: "alice"}},
+		{name: "boolean inherit is invalid", data: `{"shares":[{"name":"projects","inherit":false,` + validFlags + `}]}`, input: PermissionInput{PrincipalType: share.PrincipalUser, Principal: "alice"}},
+		{name: "unknown inherit code", data: `{"shares":[{"name":"projects","inherit":"maybe",` + validFlags + `}]}`, input: PermissionInput{PrincipalType: share.PrincipalUser, Principal: "alice"}},
+		{name: "user inherit missing", data: `{"shares":[{"name":"projects",` + validFlags + `}]}`, input: PermissionInput{PrincipalType: share.PrincipalUser, Principal: "alice"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := decodePermissions(json.RawMessage(test.data), test.input); err == nil {
+				t.Fatal("decodePermissions() succeeded, want error")
+			}
+		})
 	}
 }
 

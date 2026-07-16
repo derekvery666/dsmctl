@@ -24,6 +24,14 @@ type State struct {
 	PermissionsIncluded bool           `json:"permissions_included" jsonschema:"Whether permission bindings were requested and included"`
 }
 
+// Principal selects one local DSM identity whose shared-folder permission
+// bindings should be read. It lets focused use cases avoid expanding the full
+// user/group permission matrix.
+type Principal struct {
+	Type string `json:"type" jsonschema:"Principal kind: user or group"`
+	Name string `json:"name" jsonschema:"Local DSM user or group name"`
+}
+
 type SharedFolder struct {
 	Name                string       `json:"name" jsonschema:"Shared-folder name"`
 	UUID                string       `json:"uuid,omitempty" jsonschema:"DSM shared-folder UUID"`
@@ -33,7 +41,7 @@ type SharedFolder struct {
 	Encrypted           bool         `json:"encrypted" jsonschema:"Whether the shared folder is encrypted"`
 	EncryptionAutoMount bool         `json:"encryption_auto_mount" jsonschema:"Whether DSM automatically mounts the encrypted shared folder"`
 	ACLMode             bool         `json:"acl_mode" jsonschema:"Whether Windows ACL mode is enabled"`
-	UnifiedPermissions  bool         `json:"unified_permissions" jsonschema:"Whether DSM unified permissions are enabled"`
+	UnifiedPermissions  bool         `json:"unified_permissions" jsonschema:"Whether DSM Advanced Share Permissions (unite_permission) are enabled for this share"`
 	USB                 bool         `json:"usb" jsonschema:"Whether this is a USB-device share"`
 	SnapshotSupported   bool         `json:"snapshot_supported" jsonschema:"Whether DSM reports snapshot support"`
 	QuotaBytes          uint64       `json:"quota_bytes,omitempty" jsonschema:"Configured shared-folder quota in bytes"`
@@ -42,13 +50,15 @@ type SharedFolder struct {
 }
 
 type Permission struct {
-	PrincipalType string `json:"principal_type" jsonschema:"Principal kind: user or group"`
-	Principal     string `json:"principal" jsonschema:"DSM user or group name"`
-	Access        string `json:"access" jsonschema:"Normalized access: none, read, write, deny, or custom"`
-	Inherited     bool   `json:"inherited" jsonschema:"Whether DSM reports the permission as inherited"`
-	Custom        bool   `json:"custom" jsonschema:"Whether DSM reports a custom ACL"`
-	Masked        bool   `json:"masked" jsonschema:"Whether DSM masks this permission entry"`
-	ACLMode       bool   `json:"acl_mode" jsonschema:"Whether the share uses ACL mode for this permission result"`
+	PrincipalType       string `json:"principal_type" jsonschema:"Principal kind: user or group"`
+	Principal           string `json:"principal" jsonschema:"DSM user or group name"`
+	Access              string `json:"access" jsonschema:"Normalized direct access: none, read, write, deny, or custom"`
+	Inherited           bool   `json:"inherited" jsonschema:"Whether DSM reports a contributing inherited group rule"`
+	InheritedAccess     string `json:"inherited_access,omitempty" jsonschema:"DSM-computed group aggregate for a user: none, read, write, deny, custom, or unknown"`
+	InheritanceObserved bool   `json:"inheritance_observed,omitempty" jsonschema:"Whether the user permission response included DSM's inherited group aggregate"`
+	Custom              bool   `json:"custom" jsonschema:"Whether DSM reports a custom ACL"`
+	Masked              bool   `json:"masked" jsonschema:"Whether DSM masks this permission entry"`
+	ACLMode             bool   `json:"acl_mode" jsonschema:"Whether the share uses ACL mode for this permission result"`
 }
 
 type Capabilities struct {

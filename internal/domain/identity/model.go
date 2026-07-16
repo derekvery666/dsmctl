@@ -37,11 +37,12 @@ type State struct {
 // with the number of groups, while quota and application privilege reads scale
 // with the selected principals.
 type StateQuery struct {
-	IncludeMemberships           bool   `json:"include_memberships,omitempty" jsonschema:"Include user-to-group memberships"`
-	IncludeQuotas                bool   `json:"include_quotas,omitempty" jsonschema:"Include quota assignments"`
-	IncludeApplicationPrivileges bool   `json:"include_application_privileges,omitempty" jsonschema:"Include applications and explicit privilege rules"`
-	PrincipalType                string `json:"principal_type,omitempty" jsonschema:"Optional quota or application privilege principal type: user or group"`
-	Principal                    string `json:"principal,omitempty" jsonschema:"Optional principal name; omit with principal_type to read every local principal"`
+	IncludeMemberships                       bool   `json:"include_memberships,omitempty" jsonschema:"Include user-to-group memberships"`
+	IncludeQuotas                            bool   `json:"include_quotas,omitempty" jsonschema:"Include quota assignments"`
+	IncludeApplicationPrivileges             bool   `json:"include_application_privileges,omitempty" jsonschema:"Include applications and explicit privilege rules"`
+	IncludeRelatedGroupApplicationPrivileges bool   `json:"include_related_group_application_privileges,omitempty" jsonschema:"For one selected user, also include explicit application rules for that user's groups"`
+	PrincipalType                            string `json:"principal_type,omitempty" jsonschema:"Optional quota or application privilege principal type: user or group"`
+	Principal                                string `json:"principal,omitempty" jsonschema:"Optional principal name; omit with principal_type to read every local principal"`
 }
 
 type User struct {
@@ -102,20 +103,21 @@ type ApplicationPermission struct {
 }
 
 type Capabilities struct {
-	InventoryRead            bool `json:"inventory_read" jsonschema:"Local users and groups can be read"`
-	UserCreate               bool `json:"user_create" jsonschema:"Local users can be created through guarded plan/apply"`
-	UserUpdate               bool `json:"user_update" jsonschema:"Local users can be updated through guarded plan/apply"`
-	UserDelete               bool `json:"user_delete" jsonschema:"Local users can be deleted through guarded plan/apply"`
-	GroupCreate              bool `json:"group_create" jsonschema:"Local groups can be created through guarded plan/apply"`
-	GroupUpdate              bool `json:"group_update" jsonschema:"Local groups can be updated through guarded plan/apply"`
-	GroupDelete              bool `json:"group_delete" jsonschema:"Local groups can be deleted through guarded plan/apply"`
-	MembershipRead           bool `json:"membership_read" jsonschema:"User-to-group memberships can be read"`
-	MembershipSet            bool `json:"membership_set" jsonschema:"User-to-group memberships can be changed through guarded plan/apply"`
-	QuotaRead                bool `json:"quota_read" jsonschema:"User and group quotas can be read"`
-	QuotaSet                 bool `json:"quota_set" jsonschema:"User and group quotas can be changed through guarded plan/apply"`
-	ApplicationPrivilegeRead bool `json:"application_privilege_read" jsonschema:"Explicit application privilege rules can be read"`
-	ApplicationPrivilegeSet  bool `json:"application_privilege_set" jsonschema:"Application privilege rules can be changed through guarded plan/apply"`
-	Mutations                bool `json:"mutations" jsonschema:"Any identity mutation is currently exposed"`
+	InventoryRead               bool `json:"inventory_read" jsonschema:"Local users and groups can be read"`
+	UserCreate                  bool `json:"user_create" jsonschema:"Local users can be created through guarded plan/apply"`
+	UserUpdate                  bool `json:"user_update" jsonschema:"Local users can be updated through guarded plan/apply"`
+	UserDelete                  bool `json:"user_delete" jsonschema:"Local users can be deleted through guarded plan/apply"`
+	GroupCreate                 bool `json:"group_create" jsonschema:"Local groups can be created through guarded plan/apply"`
+	GroupUpdate                 bool `json:"group_update" jsonschema:"Local groups can be updated through guarded plan/apply"`
+	GroupDelete                 bool `json:"group_delete" jsonschema:"Local groups can be deleted through guarded plan/apply"`
+	MembershipRead              bool `json:"membership_read" jsonschema:"User-to-group memberships can be read"`
+	MembershipSet               bool `json:"membership_set" jsonschema:"User-to-group memberships can be changed through guarded plan/apply"`
+	QuotaRead                   bool `json:"quota_read" jsonschema:"User and group quotas can be read"`
+	QuotaSet                    bool `json:"quota_set" jsonschema:"User and group quotas can be changed through guarded plan/apply"`
+	ApplicationPrivilegeRead    bool `json:"application_privilege_read" jsonschema:"Explicit application privilege rules can be read"`
+	ApplicationPrivilegeSet     bool `json:"application_privilege_set" jsonschema:"Application privilege rules can be changed through guarded plan/apply"`
+	ApplicationPrivilegePreview bool `json:"application_privilege_preview" jsonschema:"DSM can compute final application access including inherited and default rules"`
+	Mutations                   bool `json:"mutations" jsonschema:"Any identity mutation is currently exposed"`
 }
 
 // ChangeRequest is the stable application-level intent accepted by CLI and

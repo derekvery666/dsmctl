@@ -198,3 +198,41 @@ dsmctl account inventory --nas office --quotas --application-privileges --princi
 ```
 
 Without a principal filter, quota and application privilege reads fan out across all local users and groups.
+
+## Effective access explanations
+
+The read-only `access explain` command combines one principal's direct rule,
+user-to-group memberships, contributing group rules, and DSM's coarse
+permission precedence:
+
+```console
+dsmctl access explain --nas office \
+  --principal-type user --principal alice \
+  --resource-type share --resource projects --json
+
+dsmctl access explain --nas office \
+  --principal-type user --principal alice \
+  --resource-type application \
+  --resource SYNO.SDS.App.FileStation3.Instance --json
+```
+
+For users, share explanations use DSM's `inherit` aggregate (`na`, `cu`, `rw`,
+`ro`, or `-`) together with the direct permission flags and the same precedence
+table as Admin Center. Group rows remain in the evidence so the reason is
+visible. The administrators/ACL-mode special case is modeled, while the
+special `homes` default remains indeterminate because its per-home filesystem
+ACL is below the shared-folder root.
+
+Application explanations call DSM's application privilege preview and use
+that final `allow`, `deny`, or `custom` result as authoritative. The preview
+includes direct rules, contributing groups, `everyone`/default policy, and
+built-in account behavior; explicit `Rule.get` rows remain in the evidence to
+explain why. The query expands rules only for the requested principal and that
+user's groups, rather than reading every user's permission matrix.
+
+This is deliberately conservative. Custom or masked Windows ACL entries,
+IP-specific application results, and shares with Advanced Share Permissions
+enabled return `indeterminate` with a limitation instead of guessing.
+Advanced Share Permissions include action-specific browse/modify/download
+restrictions that cannot be safely reduced to one read/write value. Filesystem
+ACL inheritance below the shared-folder root is not evaluated.

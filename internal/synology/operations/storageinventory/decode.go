@@ -3,10 +3,21 @@ package storageinventory
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/ychiu1211/dsmctl/internal/domain/storage"
+)
+
+var (
+	volumeIDPattern   = regexp.MustCompile(`^volume_([1-9][0-9]*)$`)
+	volumePathPattern = regexp.MustCompile(`^/volume([1-9][0-9]*)$`)
+)
+
+const (
+	volumeMinimumBytes       = uint64(10) << 30
+	volumeExpandMinimumBytes = uint64(1) << 30
 )
 
 func decode(data json.RawMessage) (storage.State, error) {
@@ -21,6 +32,16 @@ func decode(data json.RawMessage) (storage.State, error) {
 		Disks:   make([]storage.Disk, 0),
 		Pools:   make([]storage.Pool, 0),
 		Volumes: make([]storage.Volume, 0),
+		VolumeCreation: storage.VolumeCreationConstraints{
+			MinimumSizeBytes: volumeMinimumBytes,
+		},
+	}
+	if environment, ok := objectValue(raw, "env", "storageEnv"); ok {
+		state.PoolCreation.MaxDisks = int(uint64Value(environment, "bay_number", "bayNumber"))
+		state.VolumeCreation.MaxFileSystemBytes = uint64Value(environment, "max_fs_bytes", "maxFsBytes")
+		if support, found := objectValue(environment, "support"); found {
+			state.PoolCreation.SupportsSHR = boolValue(support, "sysdef", "shr", "support_shr")
+		}
 	}
 	for _, item := range objectList(raw, "disks", "drives") {
 		state.Disks = append(state.Disks, decodeDisk(item))
@@ -31,6 +52,7 @@ func decode(data json.RawMessage) (storage.State, error) {
 	for _, item := range objectList(raw, "volumes") {
 		state.Volumes = append(state.Volumes, decodeVolume(item))
 	}
+	deriveVolumeActionability(&state)
 	return state, nil
 }
 
@@ -41,22 +63,31 @@ func decodeDisk(raw map[string]any) storage.Disk {
 		temperaturePointer = &temperature
 	}
 	status := stringValue(raw, "status", "disk_status")
+	usedBy := stringValue(raw, "used_by", "usedBy")
+	selectable := false
+	if action, ok := objectValue(raw, "action"); ok {
+		selectable = boolValue(action, "selectable")
+	}
 	return storage.Disk{
-		ID:           stringValue(raw, "id", "disk_id", "device"),
-		Name:         stringValue(raw, "name", "longName", "display_name"),
-		Device:       stringValue(raw, "device", "dev_name", "path"),
-		Slot:         stringValue(raw, "slot", "slot_id", "bay", "bay_id", "num_id"),
-		Vendor:       stringValue(raw, "vendor", "brand"),
-		Model:        stringValue(raw, "model", "model_name"),
-		Serial:       stringValue(raw, "serial", "serial_number"),
-		Firmware:     stringValue(raw, "firm", "firmware", "firmware_version"),
-		Type:         stringValue(raw, "type", "disk_type", "media_type", "diskType"),
-		Interface:    stringValue(raw, "portType", "port_type", "interface", "diskType"),
-		Status:       status,
-		Health:       firstNonEmpty(stringValue(raw, "health", "health_status", "overview_status"), status),
-		SMARTStatus:  stringValue(raw, "smart_status", "smartStatus", "smart"),
-		SizeBytes:    uint64Value(raw, "size_total", "total_size", "sizeTotal", "totalSize", "capacity"),
-		TemperatureC: temperaturePointer,
+		ID:            stringValue(raw, "id", "disk_id", "device"),
+		Name:          stringValue(raw, "name", "longName", "display_name"),
+		Device:        stringValue(raw, "device", "dev_name", "path"),
+		Slot:          stringValue(raw, "slot", "slot_id", "bay", "bay_id", "num_id"),
+		Vendor:        stringValue(raw, "vendor", "brand"),
+		Model:         stringValue(raw, "model", "model_name"),
+		Serial:        stringValue(raw, "serial", "serial_number"),
+		Firmware:      stringValue(raw, "firm", "firmware", "firmware_version"),
+		Type:          stringValue(raw, "type", "disk_type", "media_type", "diskType"),
+		Interface:     stringValue(raw, "portType", "port_type", "interface", "diskType"),
+		Status:        status,
+		Health:        firstNonEmpty(stringValue(raw, "health", "health_status", "overview_status"), status),
+		SMARTStatus:   stringValue(raw, "smart_status", "smartStatus", "smart"),
+		UsedBy:        usedBy,
+		InUse:         strings.TrimSpace(usedBy) != "" && !strings.EqualFold(strings.TrimSpace(usedBy), "unused"),
+		Selectable:    selectable,
+		Compatibility: stringValue(raw, "compatibility", "compatibility_status"),
+		SizeBytes:     uint64Value(raw, "size_total", "total_size", "sizeTotal", "totalSize", "capacity"),
+		TemperatureC:  temperaturePointer,
 	}
 }
 
@@ -66,37 +97,121 @@ func decodePool(raw map[string]any) storage.Pool {
 	if available == 0 && size >= used {
 		available = size - used
 	}
+	canExpand, canDelete := false, false
+	if actions, ok := objectValue(raw, "can_do", "canDo"); ok {
+		canExpand = boolValue(actions, "expand_by_disk", "expandByDisk")
+		canDelete = boolValue(actions, "delete", "remove")
+	}
+	layout := strings.ToLower(stringValue(raw, "raidType", "layout"))
+	raidType := stringValue(raw, "device_type", "raid_type", "raid")
+	if raidType == "" && layout != "single" && layout != "multiple" {
+		raidType = layout
+		layout = ""
+	}
 	return storage.Pool{
 		ID:             stringValue(raw, "id", "pool_id", "pool_path", "num_id"),
 		Name:           stringValue(raw, "name", "display_name", "desc"),
-		RAIDType:       stringValue(raw, "raidType", "raid_type", "raid", "device_type"),
+		Path:           stringValue(raw, "pool_path", "poolPath"),
+		SpacePath:      stringValue(raw, "space_path", "spacePath"),
+		RAIDType:       raidType,
+		Layout:         layout,
 		Status:         status,
 		Health:         firstNonEmpty(stringValue(raw, "health", "health_status", "overview_status"), status),
 		SizeBytes:      size,
 		UsedBytes:      used,
 		AvailableBytes: available,
 		DiskIDs:        stringList(raw, "disk_ids", "diskIds", "disks", "drives"),
+		Writable:       boolValue(raw, "is_writable", "writable"),
+		Actioning:      boolValue(raw, "is_actioning", "actioning"),
+		Compatible:     compatibilityValue(raw, "compatibility", "is_compatible"),
+		CanExpand:      canExpand,
+		CanDelete:      canDelete,
+		MaxDiskCount:   int(uint64Value(raw, "limited_disk_number", "max_disk_count")),
 	}
 }
 
 func decodeVolume(raw map[string]any) storage.Volume {
 	status := stringValue(raw, "status", "volume_status")
+	id := stringValue(raw, "id", "volume_id", "volume_path", "num_id")
 	size, used, available := sizeValues(raw)
 	if available == 0 && size >= used {
 		available = size - used
 	}
-	return storage.Volume{
-		ID:             stringValue(raw, "id", "volume_id", "volume_path", "num_id"),
-		Name:           stringValue(raw, "name", "display_name", "desc"),
-		PoolID:         stringValue(raw, "pool_id", "poolId", "pool_path", "storage_pool_id"),
-		FileSystem:     stringValue(raw, "fs_type", "fsType", "file_system", "filesystem"),
-		Status:         status,
-		Health:         firstNonEmpty(stringValue(raw, "health", "health_status", "overview_status"), status),
-		SizeBytes:      size,
-		UsedBytes:      used,
-		AvailableBytes: available,
-		ReadOnly:       boolValue(raw, "read_only", "readonly", "is_read_only"),
+	allocated := uint64(0)
+	if nested, ok := objectValue(raw, "size"); ok {
+		allocated = uint64Value(nested, "total_device", "totalDevice")
 	}
+	canExpand, canDelete := false, false
+	if actions, ok := objectValue(raw, "can_do", "canDo"); ok {
+		canExpand = boolValue(actions, "expand_with_unalloc_size", "expandWithUnallocSize")
+		canDelete = boolValue(actions, "delete", "remove")
+	}
+	layout := strings.ToLower(stringValue(raw, "raidType", "layout"))
+	return storage.Volume{
+		ID:                 id,
+		Name:               stringValue(raw, "name", "display_name", "desc"),
+		Path:               normalizedVolumePath(id, stringValue(raw, "vol_path", "volume_path", "path")),
+		PoolID:             stringValue(raw, "pool_id", "poolId", "pool_path", "storage_pool_id"),
+		FileSystem:         stringValue(raw, "fs_type", "fsType", "file_system", "filesystem"),
+		Status:             status,
+		Health:             firstNonEmpty(stringValue(raw, "health", "health_status", "overview_status"), status),
+		SizeBytes:          size,
+		AllocatedBytes:     allocated,
+		MaxFileSystemBytes: uint64Value(raw, "max_fs_size", "maxFsSize"),
+		UsedBytes:          used,
+		AvailableBytes:     available,
+		ReadOnly:           boolValue(raw, "read_only", "readonly", "is_read_only"),
+		Writable:           boolValue(raw, "is_writable", "writable"),
+		Actioning:          boolValue(raw, "is_actioning", "actioning"),
+		SingleVolume:       layout == "single",
+		CanExpand:          canExpand,
+		CanDelete:          canDelete,
+	}
+}
+
+func deriveVolumeActionability(state *storage.State) {
+	pools := make(map[string]*storage.Pool, len(state.Pools))
+	for index := range state.Pools {
+		pool := &state.Pools[index]
+		pool.CanCreateVolume = pool.Writable && pool.Compatible && !pool.Actioning &&
+			((pool.Layout == "multiple" && pool.AvailableBytes > volumeMinimumBytes) ||
+				(pool.Layout == "single" && pool.UsedBytes == 0))
+		pools[pool.ID] = pool
+	}
+	for index := range state.Volumes {
+		volume := &state.Volumes[index]
+		pool, found := pools[volume.PoolID]
+		if !found || volume.Actioning || !volume.Writable || volume.ReadOnly || pool.Actioning || !pool.Writable {
+			volume.CanExpand = false
+			continue
+		}
+		if !volume.SingleVolume {
+			volume.CanExpand = pool.Layout == "multiple" && pool.AvailableBytes > volumeExpandMinimumBytes
+		}
+	}
+}
+
+// normalizedVolumePath accepts only DSM's canonical local-volume path shape.
+// The explicit API field wins, but a contradictory canonical ID is rejected.
+// Older inventory responses omit the path, so a canonical volume_N stable ID
+// can be converted deterministically to /volumeN. Every other shape remains
+// empty and causes SAN planning to fail closed.
+func normalizedVolumePath(id, explicit string) string {
+	idMatch := volumeIDPattern.FindStringSubmatch(id)
+	if explicit != "" {
+		pathMatch := volumePathPattern.FindStringSubmatch(explicit)
+		if pathMatch == nil {
+			return ""
+		}
+		if idMatch != nil && idMatch[1] != pathMatch[1] {
+			return ""
+		}
+		return explicit
+	}
+	if idMatch == nil {
+		return ""
+	}
+	return "/volume" + idMatch[1]
 }
 
 func sizeValues(raw map[string]any) (total, used, available uint64) {
@@ -132,6 +247,16 @@ func objectList(values map[string]any, keys ...string) []map[string]any {
 		return result
 	}
 	return nil
+}
+
+func objectValue(values map[string]any, keys ...string) (map[string]any, bool) {
+	for _, key := range keys {
+		value, ok := values[key].(map[string]any)
+		if ok {
+			return value, true
+		}
+	}
+	return nil, false
 }
 
 func stringValue(values map[string]any, keys ...string) string {
@@ -206,6 +331,33 @@ func boolValue(values map[string]any, keys ...string) bool {
 		case string:
 			result, _ := strconv.ParseBool(typed)
 			return result || typed == "1"
+		}
+	}
+	return false
+}
+
+func compatibilityValue(values map[string]any, keys ...string) bool {
+	for _, key := range keys {
+		value, found := values[key]
+		if !found {
+			continue
+		}
+		switch typed := value.(type) {
+		case bool:
+			return typed
+		case json.Number:
+			return typed.String() != "0"
+		case float64:
+			return typed != 0
+		case string:
+			switch strings.ToLower(strings.TrimSpace(typed)) {
+			case "1", "true", "normal", "support", "supported", "compatible":
+				return true
+			default:
+				return false
+			}
+		case map[string]any:
+			return boolValue(typed, "compatible", "is_compatible", "valid")
 		}
 	}
 	return false

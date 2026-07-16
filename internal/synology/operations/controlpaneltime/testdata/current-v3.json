@@ -1,0 +1,13 @@
+{
+  "date": "2026/7/16",
+  "date_format": "Y-m-d",
+  "enable_ntp": "ntp",
+  "hour": 21,
+  "minute": 33,
+  "now": "Thu Jul 16 21:33:50 2026\n",
+  "second": 50,
+  "server": "time.google.com, pool.ntp.org",
+  "time_format": "H:i",
+  "timestamp": 1784208830,
+  "timezone": "Taipei"
+}

@@ -5,7 +5,7 @@
 - `dsmctl`: a command-line interface for administrators.
 - `dsmctl-mcp`: a stdio MCP server for AI clients.
 
-The first milestone implements one complete connection slice: configure multiple NAS profiles, authenticate with password and DSM two-factor authentication, maintain independent sessions, and read basic system information. Management modules cover read-only storage inventory plus guarded local user, group, membership, quota, application privilege, and shared-folder management through the same CLI/MCP/application stack.
+The first milestone implements one complete connection slice: configure multiple NAS profiles, authenticate with password and DSM two-factor authentication, maintain independent sessions, and read basic system information. Management modules now cover storage and SAN inventory, guarded storage-pool, volume, and SAN lifecycles, local user/group/share management, effective-access explanation, and a focused read-only Control Panel time module through the same CLI/MCP/application stack.
 
 ## Architecture
 
@@ -19,6 +19,10 @@ MCP server --+                           |                              |
 ```
 
 CLI and MCP never construct raw DSM requests or select DSM versions. Each operation chooses a backend from the APIs and versions advertised by the NAS, with narrowly scoped DSM-release overrides when behavior actually differs. See [the compatibility architecture](docs/compatibility.md).
+
+Planned work and multi-agent coordination live in [the specification index](spec/README.md). Specs describe incomplete work; `docs/` describes implemented behavior.
+
+Focused Control Panel module conventions are documented in [the Control Panel guide](docs/control-panel.md).
 
 ## Build
 
@@ -57,6 +61,11 @@ dsmctl nas capabilities --nas office
 dsmctl storage capabilities --nas office
 dsmctl storage inventory --nas office
 dsmctl storage inventory --nas office --json
+dsmctl san capabilities --nas office
+dsmctl san inventory --nas office --json
+dsmctl san plan --nas office --file lun-change.json --output lun-change.plan.json
+dsmctl san apply --file lun-change.plan.json --approve <plan-sha256>
+dsmctl control-panel time state --nas office --json
 dsmctl account capabilities --nas office
 dsmctl account inventory --nas office --json
 dsmctl account inventory --nas office --memberships --json
@@ -64,6 +73,7 @@ dsmctl account inventory --nas office --quotas --application-privileges --princi
 dsmctl share capabilities --nas office
 dsmctl share inventory --nas office
 dsmctl share inventory --nas office --include-permissions --json
+dsmctl access explain --nas office --principal-type user --principal automation --resource-type share --resource team-data --json
 ```
 
 Account and shared-folder writes use a two-step plan/apply contract. Put the desired change in JSON, create a plan bound to the current DSM resource ID/state, review it, then apply that exact plan with its hash:
@@ -131,6 +141,14 @@ Available tools:
 - `get_capabilities`: report discovered APIs, DSM release, compatibility quirks, and the backend selected for each operation.
 - `get_storage_capabilities`: report the storage operations currently exposed for a selected NAS and the selected DSM backend.
 - `get_storage_state`: return normalized disk, storage-pool, RAID, volume, capacity, and health state without changing the NAS.
+- `plan_storage_change`: validate a storage-pool or volume intent and return a topology-, capacity-, and safety-state-bound approval plan without mutating DSM.
+- `apply_storage_plan`: apply an approved pool create, add-disk expansion, or delete plan and verify the postcondition.
+- `get_san_capabilities`: report SAN Manager inventory and guarded mutation support plus the selected backends.
+- `get_san_state`: return normalized iSCSI targets, LUNs, and their stable-ID mapping graph using bulk reads.
+- `plan_san_change`: validate a target, LUN, or mapping intent and return a state-bound approval plan without mutating DSM.
+- `apply_san_plan`: apply an approved, unchanged SAN plan and verify stable-ID and mapping-graph postconditions.
+- `get_control_panel_time_capabilities`: report support and the selected backend for the focused time/NTP module.
+- `get_control_panel_time_state`: return normalized time zone, display formats, synchronization mode, and NTP servers.
 - `get_account_capabilities`: report local user, group, membership, quota, and application privilege operations plus their selected DSM backends.
 - `get_account_state`: return normalized local users and groups; membership, quota, and explicit application privilege expansion is opt-in and may be filtered to one principal.
 - `plan_account_change`: validate a user, group, membership, quota, or application privilege change and return a current-state-bound approval plan without mutating DSM.
@@ -139,8 +157,9 @@ Available tools:
 - `get_share_state`: return normalized shared folders; set `include_permissions` only when the user/group permission matrix is required.
 - `plan_share_change`: validate a shared-folder or permission change and return an approval plan without mutating DSM.
 - `apply_share_plan`: apply an approved, unchanged shared-folder plan and verify the postcondition.
+- `explain_effective_access`: explain one principal's share or application access with direct/group evidence and conservative indeterminate results for custom rules.
 
-Storage remains deliberately read-only. Local user/group CRUD, memberships, per-user/group quotas, explicit application access, shared-folder CRUD, and normalized `none`/`read`/`write`/`deny` share permissions are available only through plan/apply. Encrypted shares, WORM, custom Windows ACLs, IP-specific application rules, and storage mutations remain out of scope until their key lifecycle and irreversible behavior have dedicated safeguards.
+Storage-pool create, add-disk expansion, and delete require an independently selected backend and guarded plan/apply; volume mutation and RAID migration remain fail-closed. Local user/group CRUD, memberships, per-user/group quotas, explicit application access, shared-folder CRUD, normalized `none`/`read`/`write`/`deny` share permissions, and guarded SAN target/LUN/mapping lifecycles are also available only through plan/apply. SAN deletes refuse active sessions or mappings, mappings never cascade-delete endpoints, and LUN capacity is checked against the selected backing volume. Encrypted shares, WORM, custom Windows ACLs, IP-specific application rules, and SAN snapshots/clones remain out of scope.
 
 Account expansion is opt-in because DSM exposes quota and application rules per principal. For large systems, filter `get_account_state` or `account inventory` with `principal_type` plus `principal` instead of reading every local principal. Membership expansion scales with local groups rather than users.
 

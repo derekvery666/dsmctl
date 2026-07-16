@@ -44,23 +44,111 @@ func decodePermissions(data json.RawMessage, input PermissionInput) ([]permissio
 	if err != nil {
 		return nil, err
 	}
-	items := objectList(raw, "shares")
+	items, err := requiredPermissionObjects(raw, "shares")
+	if err != nil {
+		return nil, fmt.Errorf("decode shared-folder permissions: %w", err)
+	}
 	results := make([]permissionResult, 0, len(items))
-	for _, item := range items {
+	for index, item := range items {
+		if scalarString(item, "name") == "" {
+			return nil, fmt.Errorf("decode shared-folder permissions: shares[%d] has no name", index)
+		}
+		if err := validatePermissionFlags(item); err != nil {
+			return nil, fmt.Errorf("decode shared-folder permissions: shares[%d]: %w", index, err)
+		}
+		inheritedAccess, inheritanceObserved, err := permissionInheritedAccess(item)
+		if err != nil {
+			return nil, fmt.Errorf("decode shared-folder permissions: shares[%d]: %w", index, err)
+		}
+		if input.PrincipalType == share.PrincipalUser && !inheritanceObserved {
+			return nil, fmt.Errorf("decode shared-folder permissions: shares[%d] has no inherit aggregate for user %q", index, input.Principal)
+		}
 		results = append(results, permissionResult{
 			ShareName: scalarString(item, "name"),
 			Binding: share.Permission{
-				PrincipalType: input.PrincipalType,
-				Principal:     input.Principal,
-				Access:        permissionAccess(item),
-				Inherited:     boolValue(item, "inherit", "inherited"),
-				Custom:        boolValue(item, "is_custom", "custom"),
-				Masked:        boolValue(item, "is_mask", "masked"),
-				ACLMode:       boolValue(item, "is_aclmode", "acl_mode"),
+				PrincipalType:       input.PrincipalType,
+				Principal:           input.Principal,
+				Access:              permissionAccess(item),
+				Inherited:           inheritanceObserved && inheritedAccess != share.AccessNone,
+				InheritedAccess:     inheritedAccess,
+				InheritanceObserved: inheritanceObserved,
+				Custom:              boolValue(item, "is_custom", "custom"),
+				Masked:              boolValue(item, "is_mask", "masked"),
+				ACLMode:             boolValue(item, "is_aclmode", "acl_mode"),
 			},
 		})
 	}
 	return results, nil
+}
+
+// DSM Admin Center treats inherit as a permission code computed from all
+// groups contributing to a user, not as a boolean. Keep the normalized
+// aggregate separate from the user's direct is_* flags.
+func permissionInheritedAccess(values map[string]any) (string, bool, error) {
+	value, ok := values["inherit"]
+	if !ok {
+		value, ok = values["inherited"]
+	}
+	if !ok {
+		return "", false, nil
+	}
+	code, ok := value.(string)
+	if !ok {
+		return "", true, fmt.Errorf("inherit must be a string permission code")
+	}
+	switch code {
+	case "-", "":
+		return share.AccessNone, true, nil
+	case "na":
+		return share.AccessDeny, true, nil
+	case "cu":
+		return share.AccessCustom, true, nil
+	case "rw":
+		return share.AccessWrite, true, nil
+	case "ro":
+		return share.AccessRead, true, nil
+	default:
+		return "", true, fmt.Errorf("unsupported inherit permission code %q", code)
+	}
+}
+
+func requiredPermissionObjects(values map[string]any, key string) ([]map[string]any, error) {
+	value, ok := values[key]
+	if !ok {
+		return nil, fmt.Errorf("required field %q is missing", key)
+	}
+	items, ok := value.([]any)
+	if !ok {
+		return nil, fmt.Errorf("field %q must be an array", key)
+	}
+	result := make([]map[string]any, 0, len(items))
+	for index, item := range items {
+		object, ok := item.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("%s[%d] must be an object", key, index)
+		}
+		result = append(result, object)
+	}
+	return result, nil
+}
+
+func validatePermissionFlags(values map[string]any) error {
+	for _, name := range []string{"is_deny", "is_custom", "is_writable", "is_readonly", "is_mask", "is_aclmode"} {
+		value, ok := values[name]
+		if !ok {
+			return fmt.Errorf("required field %q is missing", name)
+		}
+		switch typed := value.(type) {
+		case bool, json.Number, float64:
+		case string:
+			if typed != "true" && typed != "false" && typed != "0" && typed != "1" && typed != "yes" && typed != "no" {
+				return fmt.Errorf("field %q has invalid boolean value %q", name, typed)
+			}
+		default:
+			return fmt.Errorf("field %q must be boolean-like", name)
+		}
+	}
+	return nil
 }
 
 func permissionAccess(values map[string]any) string {
