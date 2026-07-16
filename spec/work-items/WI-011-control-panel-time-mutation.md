@@ -1,9 +1,9 @@
 ---
 id: WI-011
 title: Define guarded Control Panel time changes
-status: proposed
+status: in_progress
 priority: P2
-owner: ""
+owner: "claude-fable-5"
 depends_on: [WI-006]
 parallel_group: C
 touches:
