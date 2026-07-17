@@ -1,0 +1,11 @@
+{
+  "default_nas": "office",
+  "nas": {
+    "office": {
+      "url": "https://nas.example.com:5001",
+      "username": "automation",
+      "password_env": "DSMCTL_PASSWORD_OFFICE",
+      "timeout_seconds": 30
+    }
+  }
+}

@@ -5,3 +5,8 @@
 *.exe
 *.test
 coverage.out
+/deploy/container/data/*
+!/deploy/container/data/README.md
+/deploy/container/secrets/*
+!/deploy/container/secrets/README.md
+!/deploy/container/secrets/*.example

@@ -1,0 +1,195 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"net/netip"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/ychiu1211/dsmctl/internal/application"
+	"github.com/ychiu1211/dsmctl/internal/buildinfo"
+	"github.com/ychiu1211/dsmctl/internal/config"
+	"github.com/ychiu1211/dsmctl/internal/gateway"
+	"github.com/ychiu1211/dsmctl/internal/mcpserver"
+	"github.com/ychiu1211/dsmctl/internal/runtime"
+)
+
+func main() {
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		os.Exit(runHealthcheck(os.Args[2:]))
+	}
+	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	if err := run(os.Args[1:], logger); err != nil {
+		logger.Error("gateway stopped", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run(arguments []string, logger *slog.Logger) error {
+	flags := flag.NewFlagSet("dsmctl-gateway", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	configPath := flags.String("config", config.DefaultPath(), "configuration file path")
+	listenAddress := flags.String("listen", "127.0.0.1:18765", "HTTP listen address")
+	tokenPath := flags.String("dev-read-only-token-file", "", "required local bearer-token file for explicit read-only developer mode")
+	allowedHosts := flags.String("allowed-hosts", "localhost,127.0.0.1,::1", "comma-separated allowed HTTP Host names or addresses")
+	allowedOrigins := flags.String("allowed-origins", "", "comma-separated browser origins; requests without Origin remain allowed")
+	trustedProxies := flags.String("trusted-proxies", "", "comma-separated trusted reverse-proxy CIDR prefixes")
+	maxConcurrent := flags.Int("max-concurrent", 8, "maximum concurrent MCP requests")
+	maxBodyBytes := flags.Int64("max-body-bytes", 1<<20, "maximum MCP request body size")
+	shutdownTimeout := flags.Duration("shutdown-timeout", 10*time.Second, "HTTP drain and DSM session close timeout")
+	if err := flags.Parse(arguments); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("unexpected arguments: %s", strings.Join(flags.Args(), " "))
+	}
+	if *maxConcurrent < 1 {
+		return errors.New("max-concurrent must be at least 1")
+	}
+	if *maxBodyBytes < 1 {
+		return errors.New("max-body-bytes must be at least 1")
+	}
+
+	cfg, err := loadRequiredConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	token, err := gateway.ReadDevelopmentToken(*tokenPath)
+	if err != nil {
+		return err
+	}
+	tokenDigest := gateway.DevelopmentTokenDigest(token)
+	proxies, err := parsePrefixes(splitCSV(*trustedProxies))
+	if err != nil {
+		return err
+	}
+
+	secrets := gateway.NewEnvironmentCredentials()
+	manager := runtime.NewManager(cfg, secrets)
+	service := application.NewService(cfg, manager, application.WithCredentialStore(secrets))
+	mcpServer := mcpserver.NewReadOnly(service, buildinfo.Version)
+	ready := localReadiness(*configPath, *tokenPath, tokenDigest)
+	httpServer, err := gateway.New(gateway.Options{
+		MCPServer:       mcpServer,
+		BearerToken:     token,
+		AllowedHosts:    splitCSV(*allowedHosts),
+		AllowedOrigins:  splitCSV(*allowedOrigins),
+		TrustedProxies:  proxies,
+		MaxBodyBytes:    *maxBodyBytes,
+		MaxConcurrent:   *maxConcurrent,
+		Ready:           ready,
+		Close:           service.Close,
+		Logger:          logger,
+		ShutdownTimeout: *shutdownTimeout,
+	})
+	if err != nil {
+		_ = service.Close(context.Background())
+		return err
+	}
+	listener, err := net.Listen("tcp", *listenAddress)
+	if err != nil {
+		_ = service.Close(context.Background())
+		return fmt.Errorf("listen on %s: %w", *listenAddress, err)
+	}
+	logger.Info("gateway listening",
+		"address", listener.Addr().String(),
+		"version", buildinfo.Version,
+		"mode", "development-read-only",
+		"profiles", len(cfg.NAS),
+	)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return httpServer.Serve(ctx, listener)
+}
+
+func localReadiness(configPath, tokenPath string, expectedToken [32]byte) func(context.Context) error {
+	return func(context.Context) error {
+		if _, err := loadRequiredConfig(configPath); err != nil {
+			return err
+		}
+		current, err := gateway.ReadDevelopmentToken(tokenPath)
+		if err != nil {
+			return err
+		}
+		if !gateway.DevelopmentTokenMatches(expectedToken, current) {
+			return errors.New("development token file changed; restart the gateway")
+		}
+		return nil
+	}
+}
+
+func loadRequiredConfig(path string) (*config.Config, error) {
+	if _, err := os.Stat(path); err != nil {
+		return nil, fmt.Errorf("required gateway config %s: %w", path, err)
+	}
+	cfg, err := config.NewStore(path).Load()
+	if err != nil {
+		return nil, err
+	}
+	if err := gateway.ValidateConfig(cfg); err != nil {
+		return nil, fmt.Errorf("validate gateway config %s: %w", path, err)
+	}
+	return cfg, nil
+}
+
+func splitCSV(value string) []string {
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part = strings.TrimSpace(part); part != "" {
+			result = append(result, part)
+		}
+	}
+	return result
+}
+
+func parsePrefixes(values []string) ([]netip.Prefix, error) {
+	result := make([]netip.Prefix, 0, len(values))
+	for _, value := range values {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			return nil, fmt.Errorf("trusted proxy %q must be a CIDR prefix: %w", value, err)
+		}
+		result = append(result, prefix.Masked())
+	}
+	return result, nil
+}
+
+func runHealthcheck(arguments []string) int {
+	flags := flag.NewFlagSet("healthcheck", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	endpoint := flags.String("url", "http://127.0.0.1:18765/healthz", "health endpoint URL")
+	if err := flags.Parse(arguments); err != nil || flags.NArg() != 0 {
+		return 2
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, *endpoint, nil)
+	if err != nil {
+		return 1
+	}
+	client := &http.Client{
+		Timeout: 2 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	response, err := client.Do(req)
+	if err != nil {
+		return 1
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return 1
+	}
+	return 0
+}

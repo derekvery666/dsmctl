@@ -1,9 +1,10 @@
 # dsmctl
 
-`dsmctl` is a Go client for managing one or more Synology DSM systems. One repository produces two front ends backed by the same typed DSM WebAPI client:
+`dsmctl` is a Go client for managing one or more Synology DSM systems. One repository produces three front ends backed by the same typed DSM WebAPI client:
 
 - `dsmctl`: a command-line interface for administrators.
 - `dsmctl-mcp`: a stdio MCP server for AI clients.
+- `dsmctl-gateway`: a portable amd64 Streamable HTTP MCP gateway; its current developer mode is read-only.
 
 The first milestone implements one complete connection slice: configure multiple NAS profiles, authenticate with password and DSM two-factor authentication, maintain independent sessions, and read basic system information. Management modules now cover storage and SAN inventory, guarded storage-pool, volume, and SAN lifecycles, local user/group/share management, effective-access explanation, a focused read-only Control Panel time module, and guarded global SMB/NFS File Services through the same CLI/MCP/application stack.
 
@@ -32,6 +33,7 @@ Go 1.25 or newer is required.
 go test ./...
 go build -o bin/dsmctl ./cmd/dsmctl
 go build -o bin/dsmctl-mcp ./cmd/dsmctl-mcp
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/dsmctl-gateway ./cmd/dsmctl-gateway
 ```
 
 On Windows, use `bin/dsmctl.exe` and `bin/dsmctl-mcp.exe`.
@@ -87,6 +89,10 @@ dsmctl share capabilities --nas office
 dsmctl share inventory --nas office
 dsmctl share inventory --nas office --include-permissions --json
 dsmctl access explain --nas office --principal-type user --principal automation --resource-type share --resource team-data --json
+dsmctl log capabilities --nas office
+dsmctl log list --nas office
+dsmctl log list --nas office --type connection --limit 50
+dsmctl log list --nas office --keyword cache --level error --json
 ```
 
 Account and shared-folder writes use a two-step plan/apply contract. Put the desired change in JSON, create a plan bound to the current DSM resource ID/state, review it, then apply that exact plan with its hash:
@@ -153,6 +159,9 @@ Run the stdio server:
 dsmctl-mcp --config C:\path\to\config.json
 ```
 
+The portable HTTP developer gateway, its loopback-only Compose project, and
+its read-only security boundary are documented in [the gateway guide](docs/gateway.md).
+
 Available tools:
 
 - `list_nas`: list safe profile metadata; secrets are never returned.
@@ -185,6 +194,8 @@ Available tools:
 - `plan_share_change`: validate a shared-folder or permission change and return an approval plan without mutating DSM.
 - `apply_share_plan`: apply an approved, unchanged shared-folder plan and verify the postcondition.
 - `explain_effective_access`: explain one principal's share or application access with direct/group evidence and conservative indeterminate results for custom rules.
+- `get_log_capabilities`: report whether DSM system log reading is available and the selected backend.
+- `get_logs`: read normalized DSM system log entries with optional keyword, log-type, severity, and paging filters; never mutates or clears logs.
 
 Storage-pool create, add-disk expansion, and delete, plus volume create, expansion, and delete, require independently selected backends and guarded plan/apply; storage-pool RAID migration remains fail-closed. SSD cache create and remove (read-only or read-write) are also guarded plan/apply on a `cache` resource; SSD cache expand and read-only/read-write conversion are modeled but fail closed on DSMs whose flashcache API exposes only create and remove. Local user/group CRUD, memberships, per-user/group quotas, explicit application access, shared-folder CRUD, normalized `none`/`read`/`write`/`deny` share permissions, and guarded SAN target/LUN/mapping lifecycles are also available only through plan/apply. SAN deletes refuse active sessions or mappings, mappings never cascade-delete endpoints, and LUN capacity is checked against the selected backing volume. Guarded time-module changes never write wall-clock values or switch to manual synchronization, and NTP servers are validated for syntax without any reachability claim. Encrypted shares, WORM, custom Windows ACLs, IP-specific application rules, and SAN snapshots/clones remain out of scope.
 

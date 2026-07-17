@@ -70,22 +70,22 @@ profile retains its independent DSM client and session.
 
 ## Acceptance criteria
 
-- [ ] `dsmctl-gateway` starts and stops cleanly and the existing
+- [x] `dsmctl-gateway` starts and stops cleanly and the existing
       `dsmctl-mcp` stdio tests continue to pass unchanged.
-- [ ] `/mcp` successfully initializes and calls `list_nas` and a read-only DSM
+- [x] `/mcp` successfully initializes and calls `list_nas` and a read-only DSM
       fake through Streamable HTTP in stateless mode.
-- [ ] The server rejects invalid Host/Origin, oversized requests, disallowed
+- [x] The server rejects invalid Host/Origin, oversized requests, disallowed
       content types, and requests exceeding concurrency limits.
-- [ ] Shutdown stops accepting new requests, drains bounded in-flight work,
+- [x] Shutdown stops accepting new requests, drains bounded in-flight work,
       and closes all cached DSM sessions.
-- [ ] `/healthz` does not contact DSM; `/readyz` fails when required local
+- [x] `/healthz` does not contact DSM; `/readyz` fails when required local
       configuration or secret mounts are invalid.
 - [ ] A `CGO_ENABLED=0`, `linux/amd64` image builds and runs as non-root with a
       read-only root filesystem and no Docker socket.
-- [ ] The development Compose file binds the backend to `127.0.0.1` only.
-- [ ] No image or runtime code refers to `/usr/syno`, `/var/packages`,
+- [x] The development Compose file binds the backend to `127.0.0.1` only.
+- [x] No image or runtime code refers to `/usr/syno`, `/var/packages`,
       `SYNOPKG_*`, `authenticate.cgi`, or Container Manager.
-- [ ] Gateway documentation explains MCP-stateless versus DSM-stateful
+- [x] Gateway documentation explains MCP-stateless versus DSM-stateful
       sessions and states that HTTP developer mode is read-only.
 
 ## Verification
@@ -107,4 +107,26 @@ tools.
 
 ## Handoff
 
-Fill this only when pausing incomplete work.
+Last known good state: the gateway daemon, HTTP boundary tests, read-only MCP
+surface, amd64/CGO-disabled Dockerfile, hardened development Compose project,
+container CI smoke test, and user documentation are implemented in the current
+working tree. The work remains `in_progress` only because this Windows host has
+no Docker, Podman, Buildah, or WSL runtime with which to execute the required
+local image build/run inspection.
+
+Verification completed:
+
+- `go test ./... -count=1`
+- `go vet ./...`
+- focused Streamable HTTP tests, including `list_nas` and `get_system_info`
+  against an in-process fake DSM
+- `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath
+  ./cmd/dsmctl-gateway`, followed by `go version -m` verification
+- forbidden Synology-runtime string scan of both gateway source and the
+  cross-built binary
+
+Pending verification: run the image build and hardened smoke test now encoded
+in `.github/workflows/ci.yml`, or execute the equivalent Docker commands on an
+amd64 Linux host. The local attempt failed before execution because `docker`
+is not installed (`docker : The term 'docker' is not recognized`). No live DSM
+mutation was performed and no temporary resource remains.
