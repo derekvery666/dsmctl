@@ -46,7 +46,8 @@ func newDriveAdminTestServer(t *testing.T, driveVersion string, running bool, in
 				{"id":"SynologyDrive","name":"Synology Drive Server","version":%q,"additional":{"status":%q,"startable":true,"install_type":""}}
 			]}}`, driveVersion, runningStatus)
 		case "SYNO.SynologyDrive.get_status":
-			fmt.Fprint(w, `{"success":true,"data":{"status":"Active"}}`)
+			// Shape captured live from Drive 4.0.3 (WI-021).
+			fmt.Fprint(w, `{"success":true,"data":{"cstn_freeze":false,"enable_status":"enabled","no_folder_available":false}}`)
 		case "SYNO.SynologyDrive.Connection.list":
 			// A stopped Drive package rejects its own WebAPI calls; mirror that
 			// so the stopped-package guidance path is exercised end to end.
@@ -54,7 +55,7 @@ func newDriveAdminTestServer(t *testing.T, driveVersion string, running bool, in
 				fmt.Fprint(w, `{"success":false,"error":{"code":4000}}`)
 				return
 			}
-			fmt.Fprint(w, `{"success":true,"data":{"total":1,"items":[{"username":"alice","address":"10.0.0.5"}]}}`)
+			fmt.Fprint(w, `{"success":true,"data":{"total":1,"items":[{"username":"alice","ip_address":"10.0.0.5"}]}}`)
 		default:
 			t.Errorf("unexpected request %s.%s", api, method)
 			fmt.Fprint(w, `{"success":false,"error":{"code":102}}`)
@@ -76,7 +77,7 @@ func TestDriveAdminReadsRefreshPackageCatalogPerCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DriveAdminStatus() error = %v", err)
 	}
-	if status.Status != "active" {
+	if status.Status != "enabled" {
 		t.Fatalf("status = %#v", status)
 	}
 	if !status.Package.Installed || status.Package.Version != "4.0.3-27892" || !status.Package.Running || status.Package.ID != "SynologyDrive" {

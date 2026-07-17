@@ -1,9 +1,9 @@
 ---
 id: WI-021
 title: Package-scoped operation framework and Drive Admin read slice
-status: in_progress
+status: done
 priority: P1
-owner: "package-operations"
+owner: ""
 depends_on:
   - WI-019
 parallel_group: C
@@ -116,7 +116,7 @@ new selection axis.
 - [x] CLI and MCP adapters expose capabilities/status/connections/team
       folders/logs over the shared application methods.
 - [x] `go test ./...`, `go vet ./...`, all three binary builds.
-- [ ] Read-only live verification against the configured NAS (Drive
+- [x] Read-only live verification against the configured NAS (Drive
       4.0.3-27892 observed via SYNO.API.Info and package webman manifest):
       capabilities, status, connections, team folders, logs.
 
@@ -146,16 +146,39 @@ group C at claim time.
 - Community client (N4S4/synology-api `drive_admin_console.py`) corroborates
   method names and Log `list` filter parameters (`keyword`, `username`,
   `target`, `datefrom`, `dateto`, `limit`).
-- Internal codesearch cross-check pending (extension offline during
-  implementation); response-shape confirmation is deferred to live
-  verification.
+- Internal codesearch cross-check (after the extension reconnected): the Drive
+  server repo is `synosyncfolder`; the WebAPI registry is
+  `server/ui-web/webapi/admin-console/SYNO.SynologyDrive.py` and the log
+  handler `server/ui-web/src/handlers/log/list.cpp`, with release branches per
+  package version (SynologyDrive-3-0/3-4/3-5/BSM-4-0) confirming that the API
+  surface follows the package release — the premise of this work item.
 
-## Handoff
+## Completion record
 
-Implementation complete; live read-only verification pending because no
-`DSMCTL_PASSWORD_LAB` credential was available in the implementing session
-(keyring holds only the trusted-device entry). To finish: export the password
-or run `dsmctl auth login --nas lab`, then run
-`dsmctl drive admin capabilities|status|connections|team-folders|log list`
-and record results (correcting decoder field names if DSM's real shapes
-differ) before setting `status: done`.
+- Framework and module completed with unit coverage on 2026-07-17; live
+  read-only verification finished the same day once `DSMCTL_PASSWORD_LAB`
+  became available (user-scope environment variable; the OS keyring holds only
+  the trusted-device entry).
+- Live verification against the configured lab NAS (DSM 7.3, Synology Drive
+  Server 4.0.3-27892, running) passed for `drive admin capabilities`,
+  `status`, `connections`, `team-folders`, and `log list` (including the
+  username filter), with the observed package version carried in the
+  capability report and selection reasons.
+- Live verification corrected the initial evidence-based assumptions, caught
+  by the strict decoders and read-only probes:
+  - `get_status` reports the service state as `enable_status`, not `status`.
+  - `SYNO.SynologyDrive.Share.list` rejects requests (error 120) without
+    `offset`/`limit`/`sort_by`/`sort_direction`; items carry `share_name`,
+    `share_enable`, `share_status`. The domain model gained `Enabled`.
+  - `SYNO.SynologyDrive.Log.list` requires `target` ("user" for the all view,
+    "@<share>" for one team folder, matching the Admin Console's beforeload
+    logic), takes `log_type` as a numeric event-code array, uses
+    `datefrom`/`dateto` (not the client helper's `date_from`), and supports
+    `offset` and `username` (confirmed in `handlers/log/list.cpp`). Entries
+    are template-coded (numeric `type` + `s*`/`p*` slots), so the domain log
+    entry surfaces structured fields instead of a rendered description.
+- Connection list items were observed only as an empty set (no live Drive
+  clients during verification); per-item field aliases stay defensive and are
+  the one shape to re-confirm when a client is connected.
+- No mutation was attempted; `drive.admin.teamfolders.set` remains modeled and
+  fail-closed as scoped.

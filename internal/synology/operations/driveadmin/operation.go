@@ -52,6 +52,10 @@ var baselinePackage = compatibility.PackageVersionRange(
 // Input is the empty input for parameterless reads.
 type Input struct{}
 
+// teamFolderPageLimit bounds the verified Share.list read. Team folders map to
+// shared folders, which DSM caps far below this value.
+const teamFolderPageLimit = 1000
+
 var statusOperation = compatibility.Operation[Input, driveadmin.ServiceStatus]{
 	Name: StatusCapabilityName,
 	Variants: []compatibility.Variant[Input, driveadmin.ServiceStatus]{
@@ -97,8 +101,14 @@ var teamFoldersOperation = compatibility.Operation[Input, driveadmin.TeamFolders
 			Name: "drive-share-v1", API: ShareAPIName, Version: 1, Priority: 10,
 			Match: compatibility.All(compatibility.APIVersion(ShareAPIName, 1), baselinePackage),
 			Execute: func(ctx context.Context, executor compatibility.Executor, _ Input) (driveadmin.TeamFolders, error) {
+				// Verified live on Drive 4.0.3: list rejects the request (120)
+				// unless paging and a valid sort column are present.
 				data, err := executor.Execute(ctx, compatibility.Request{
 					API: ShareAPIName, Version: 1, Method: "list",
+					JSONParameters: map[string]any{
+						"offset": 0, "limit": teamFolderPageLimit,
+						"sort_by": "share_name", "sort_direction": "ASC",
+					},
 				})
 				if err != nil {
 					return driveadmin.TeamFolders{}, fmt.Errorf("call %s.list v1: %w", ShareAPIName, err)
@@ -116,15 +126,28 @@ var logOperation = compatibility.Operation[driveadmin.LogQuery, driveadmin.Log]{
 			Name: "drive-log-v1", API: LogAPIName, Version: 1, Priority: 10,
 			Match: compatibility.All(compatibility.APIVersion(LogAPIName, 1), baselinePackage),
 			Execute: func(ctx context.Context, executor compatibility.Executor, query driveadmin.LogQuery) (driveadmin.Log, error) {
-				parameters := map[string]any{"limit": query.Limit}
+				// Verified live on Drive 4.0.3: target is required. The Admin
+				// Console's "all" view sends share_type "all" with target
+				// "user"; one team folder is share_type "share" with an
+				// @-prefixed shared-folder name. log_type is Drive's numeric
+				// event-code array filter; empty means every event type.
+				parameters := map[string]any{
+					"share_type": "all",
+					"target":     "user",
+					"log_type":   []int{},
+					"get_all":    false,
+					"offset":     query.Offset,
+					"limit":      query.Limit,
+				}
+				if query.TeamFolder != "" {
+					parameters["share_type"] = "share"
+					parameters["target"] = "@" + query.TeamFolder
+				}
 				if query.Keyword != "" {
 					parameters["keyword"] = query.Keyword
 				}
 				if query.Username != "" {
 					parameters["username"] = query.Username
-				}
-				if query.Target != "" {
-					parameters["target"] = query.Target
 				}
 				if query.From > 0 {
 					parameters["datefrom"] = query.From

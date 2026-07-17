@@ -96,7 +96,11 @@ func TestTeamFoldersSetFailsClosed(t *testing.T) {
 }
 
 func TestExecuteStatusRequestShapeAndDecode(t *testing.T) {
-	executor := &capturingExecutor{response: json.RawMessage(`{"status":"Active"}`)}
+	// Response shape captured live from Drive 4.0.3 (WI-021).
+	executor := &capturingExecutor{response: json.RawMessage(`{
+		"csrv_alias_err": "", "csrv_enable": true, "csrv_status": "connected success",
+		"cstn_freeze": false, "enable_status": "Enabled", "no_folder_available": false
+	}`)}
 	status, selection, err := ExecuteStatus(context.Background(), driveTarget("4.0.3-27892", true), executor)
 	if err != nil {
 		t.Fatalf("ExecuteStatus() error = %v", err)
@@ -104,7 +108,7 @@ func TestExecuteStatusRequestShapeAndDecode(t *testing.T) {
 	if executor.request.API != StatusAPIName || executor.request.Version != 1 || executor.request.Method != "get_status" {
 		t.Fatalf("request = %#v", executor.request)
 	}
-	if status.Status != "active" || selection.Backend != "drive-status-v1" {
+	if status.Status != "enabled" || selection.Backend != "drive-status-v1" {
 		t.Fatalf("status=%#v selection=%#v", status, selection)
 	}
 }
@@ -152,11 +156,15 @@ func TestExecuteConnectionsRejectsMissingListContainer(t *testing.T) {
 	}
 }
 
-func TestExecuteTeamFoldersDecodesItems(t *testing.T) {
+func TestExecuteTeamFoldersRequestShapeAndDecode(t *testing.T) {
+	// Response shape captured live from Drive 4.0.3 (WI-021): share_enable is
+	// the team-folder activation flag, and fields that do not apply to a
+	// disabled share are reported as "-".
 	executor := &capturingExecutor{response: json.RawMessage(`{
+		"total": 2,
 		"items": [
-			{"id": "5", "name": "projects", "status": "Enabled"},
-			{"name": "media", "status": "disabled"}
+			{"share_name": "homes/mydrive_home", "share_enable": true, "share_status": "normal", "share_type": "", "rotate_cnt": 8},
+			{"share_name": "projects", "share_enable": false, "share_status": "normal", "share_type": "normal", "rotate_cnt": "-"}
 		]
 	}`)}
 	folders, _, err := ExecuteTeamFolders(context.Background(), driveTarget("4.0.3-27892", true), executor)
@@ -166,16 +174,24 @@ func TestExecuteTeamFoldersDecodesItems(t *testing.T) {
 	if executor.request.API != ShareAPIName || executor.request.Method != "list" || executor.request.Version != 1 {
 		t.Fatalf("request = %#v", executor.request)
 	}
+	// Verified live: list rejects the request without paging and a valid sort.
+	parameters := executor.request.JSONParameters
+	if parameters["offset"] != 0 || parameters["limit"] != teamFolderPageLimit || parameters["sort_by"] != "share_name" || parameters["sort_direction"] != "ASC" {
+		t.Fatalf("parameters = %#v", parameters)
+	}
 	if folders.Total != 2 || len(folders.TeamFolders) != 2 {
 		t.Fatalf("folders = %#v", folders)
 	}
-	if folders.TeamFolders[0].ID != "5" || folders.TeamFolders[0].Name != "projects" || folders.TeamFolders[0].Status != "enabled" {
+	if folders.TeamFolders[0].Name != "homes/mydrive_home" || !folders.TeamFolders[0].Enabled || folders.TeamFolders[0].Status != "normal" {
 		t.Fatalf("first = %#v", folders.TeamFolders[0])
+	}
+	if folders.TeamFolders[1].Name != "projects" || folders.TeamFolders[1].Enabled {
+		t.Fatalf("second = %#v", folders.TeamFolders[1])
 	}
 }
 
 func TestExecuteTeamFoldersRequiresName(t *testing.T) {
-	executor := &capturingExecutor{response: json.RawMessage(`{"items":[{"status":"enabled"}]}`)}
+	executor := &capturingExecutor{response: json.RawMessage(`{"items":[{"share_status":"normal"}]}`)}
 	_, _, err := ExecuteTeamFolders(context.Background(), driveTarget("4.0.3-27892", true), executor)
 	if err == nil || !strings.Contains(err.Error(), "no name field") {
 		t.Fatalf("error = %v", err)
@@ -183,13 +199,16 @@ func TestExecuteTeamFoldersRequiresName(t *testing.T) {
 }
 
 func TestExecuteLogSendsFiltersAndDecodes(t *testing.T) {
+	// Response shape captured live from Drive 4.0.3 (WI-021): entries carry a
+	// numeric event type plus substitution slots instead of rendered text.
 	executor := &capturingExecutor{response: json.RawMessage(`{
 		"total": 1,
 		"items": [
-			{"time": "2026-07-17 10:00:03", "username": "alice", "action": "Upload", "filename": "/projects/spec.md", "descr": "Uploaded spec.md"}
+			{"time": 1779279309, "username": "alice", "client_type": "web_portal", "ip_address": "10.0.0.5",
+			 "type": 24, "s1": "/projects/spec.md", "share_name": "projects", "target": "user", "p1": "1"}
 		]
 	}`)}
-	query := driveadmin.LogQuery{Limit: 50, Keyword: "spec", Username: "alice", Target: "/projects", From: 1700000000, To: 1800000000}
+	query := driveadmin.LogQuery{Limit: 50, Offset: 10, Keyword: "spec", Username: "alice", From: 1700000000, To: 1800000000}
 	log, _, err := ExecuteLog(context.Background(), driveTarget("4.0.3-27892", true), executor, query)
 	if err != nil {
 		t.Fatalf("ExecuteLog() error = %v", err)
@@ -198,7 +217,15 @@ func TestExecuteLogSendsFiltersAndDecodes(t *testing.T) {
 		t.Fatalf("request = %#v", executor.request)
 	}
 	parameters := executor.request.JSONParameters
-	if parameters["limit"] != 50 || parameters["keyword"] != "spec" || parameters["username"] != "alice" || parameters["target"] != "/projects" {
+	// Verified live: share_type, target, log_type, and get_all are required;
+	// the all-scopes view is share_type "all" with target "user".
+	if parameters["share_type"] != "all" || parameters["target"] != "user" || parameters["get_all"] != false {
+		t.Fatalf("scope parameters = %#v", parameters)
+	}
+	if types, ok := parameters["log_type"].([]int); !ok || len(types) != 0 {
+		t.Fatalf("log_type = %#v", parameters["log_type"])
+	}
+	if parameters["limit"] != 50 || parameters["offset"] != 10 || parameters["keyword"] != "spec" || parameters["username"] != "alice" {
 		t.Fatalf("parameters = %#v", parameters)
 	}
 	if parameters["datefrom"] != int64(1700000000) || parameters["dateto"] != int64(1800000000) {
@@ -208,8 +235,23 @@ func TestExecuteLogSendsFiltersAndDecodes(t *testing.T) {
 		t.Fatalf("log = %#v", log)
 	}
 	entry := log.Entries[0]
-	if entry.Username != "alice" || entry.Action != "upload" || entry.Target != "/projects/spec.md" || entry.Description != "Uploaded spec.md" {
+	if entry.TimeUnix != 1779279309 || entry.Username != "alice" || entry.ClientType != "web_portal" ||
+		entry.IPAddress != "10.0.0.5" || entry.EventType != 24 || entry.Path != "/projects/spec.md" || entry.TeamFolder != "projects" {
 		t.Fatalf("entry = %#v", entry)
+	}
+}
+
+func TestExecuteLogScopesToTeamFolder(t *testing.T) {
+	executor := &capturingExecutor{response: json.RawMessage(`{"items":[]}`)}
+	query := driveadmin.LogQuery{Limit: 100, TeamFolder: "projects"}
+	if _, _, err := ExecuteLog(context.Background(), driveTarget("4.0.3-27892", true), executor, query); err != nil {
+		t.Fatalf("ExecuteLog() error = %v", err)
+	}
+	parameters := executor.request.JSONParameters
+	// Verified live: one team folder is share_type "share" with an @-prefixed
+	// shared-folder name.
+	if parameters["share_type"] != "share" || parameters["target"] != "@projects" {
+		t.Fatalf("scope parameters = %#v", parameters)
 	}
 }
 
@@ -219,9 +261,14 @@ func TestExecuteLogOmitsUnsetFilters(t *testing.T) {
 		t.Fatalf("ExecuteLog() error = %v", err)
 	}
 	parameters := executor.request.JSONParameters
-	for _, key := range []string{"keyword", "username", "target", "datefrom", "dateto"} {
+	for _, key := range []string{"keyword", "username", "datefrom", "dateto"} {
 		if _, present := parameters[key]; present {
 			t.Fatalf("parameter %q should be omitted when unset: %#v", key, parameters)
+		}
+	}
+	for _, key := range []string{"share_type", "target", "log_type", "get_all", "offset", "limit"} {
+		if _, present := parameters[key]; !present {
+			t.Fatalf("required parameter %q missing: %#v", key, parameters)
 		}
 	}
 }

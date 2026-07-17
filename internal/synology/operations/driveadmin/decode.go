@@ -15,12 +15,15 @@ import (
 // silently empty state, and lenient about per-item fields because their
 // presence varies across package versions.
 
+// decodeServiceStatus reads get_status. Verified live on Drive 4.0.3: the
+// service state is enable_status ("enabled"); the response also carries
+// QuickConnect relay fields and freeze flags that stay unmodeled.
 func decodeServiceStatus(data json.RawMessage) (driveadmin.ServiceStatus, error) {
 	root, err := decodeObject(data, "Drive service status")
 	if err != nil {
 		return driveadmin.ServiceStatus{}, err
 	}
-	status := stringValue(root, "status", "service_status", "state")
+	status := stringValue(root, "enable_status", "status", "service_status", "state")
 	if status == "" {
 		return driveadmin.ServiceStatus{}, fmt.Errorf("decode Drive service status: no status field among %s", availableKeys(root))
 	}
@@ -52,6 +55,9 @@ func decodeConnections(data json.RawMessage) (driveadmin.Connections, error) {
 	return result, nil
 }
 
+// decodeTeamFolders reads Share.list. Verified live on Drive 4.0.3: items carry
+// share_name, the share_enable team-folder activation flag, and share_status
+// ("normal"); watermark and rotation settings stay unmodeled.
 func decodeTeamFolders(data json.RawMessage) (driveadmin.TeamFolders, error) {
 	root, err := decodeObject(data, "Drive team folder list")
 	if err != nil {
@@ -63,14 +69,15 @@ func decodeTeamFolders(data json.RawMessage) (driveadmin.TeamFolders, error) {
 	}
 	result := driveadmin.TeamFolders{TeamFolders: make([]driveadmin.TeamFolder, 0, len(items))}
 	for index, item := range items {
-		name := stringValue(item, "name", "share_name", "title")
+		name := stringValue(item, "share_name", "name", "title")
 		if name == "" {
 			return driveadmin.TeamFolders{}, fmt.Errorf("decode Drive team folder %d: no name field among %s", index, availableKeys(item))
 		}
+		enabled, _ := boolValue(item, "share_enable", "enabled")
 		result.TeamFolders = append(result.TeamFolders, driveadmin.TeamFolder{
-			ID:     stringValue(item, "id", "share_id", "uuid"),
-			Name:   name,
-			Status: strings.ToLower(stringValue(item, "status", "state")),
+			Name:    name,
+			Enabled: enabled,
+			Status:  strings.ToLower(stringValue(item, "share_status", "status", "state")),
 		})
 	}
 	result.Total = intValue(root, "total")
@@ -80,6 +87,10 @@ func decodeTeamFolders(data json.RawMessage) (driveadmin.TeamFolders, error) {
 	return result, nil
 }
 
+// decodeLog reads Log.list. Verified live on Drive 4.0.3: entries are
+// template-coded — a numeric event type plus substitution slots (s1..s5 paths,
+// p1..p5 values) — rather than rendered text, so the structured fields are
+// surfaced directly.
 func decodeLog(data json.RawMessage) (driveadmin.Log, error) {
 	root, err := decodeObject(data, "Drive log list")
 	if err != nil {
@@ -92,11 +103,13 @@ func decodeLog(data json.RawMessage) (driveadmin.Log, error) {
 	result := driveadmin.Log{Entries: make([]driveadmin.LogEntry, 0, len(items))}
 	for _, item := range items {
 		result.Entries = append(result.Entries, driveadmin.LogEntry{
-			Time:        stringValue(item, "time", "date", "timestamp"),
-			Username:    stringValue(item, "username", "user", "who"),
-			Action:      strings.ToLower(stringValue(item, "action", "event", "category")),
-			Target:      stringValue(item, "target", "filename", "file_name", "path"),
-			Description: stringValue(item, "descr", "description", "message"),
+			TimeUnix:   int64Value(item, "time"),
+			Username:   stringValue(item, "username", "user"),
+			ClientType: strings.ToLower(stringValue(item, "client_type")),
+			IPAddress:  stringValue(item, "ip_address", "ip"),
+			EventType:  intValue(item, "type"),
+			Path:       stringValue(item, "s1"),
+			TeamFolder: stringValue(item, "share_name"),
 		})
 	}
 	result.Total = intValue(root, "total")
@@ -162,6 +175,10 @@ func stringValue(values map[string]any, keys ...string) string {
 }
 
 func intValue(values map[string]any, keys ...string) int {
+	return int(int64Value(values, keys...))
+}
+
+func int64Value(values map[string]any, keys ...string) int64 {
 	for _, key := range keys {
 		value, ok := values[key]
 		if !ok || value == nil {
@@ -170,13 +187,29 @@ func intValue(values map[string]any, keys ...string) int {
 		switch typed := value.(type) {
 		case json.Number:
 			if parsed, err := typed.Int64(); err == nil {
-				return int(parsed)
+				return parsed
 			}
 		case float64:
-			return int(typed)
+			return int64(typed)
 		}
 	}
 	return 0
+}
+
+// boolValue reads the first present boolean field. Drive reports "-" for
+// fields that do not apply to an item (seen live on disabled shares), so
+// non-boolean values are skipped rather than treated as false.
+func boolValue(values map[string]any, keys ...string) (bool, bool) {
+	for _, key := range keys {
+		value, ok := values[key]
+		if !ok || value == nil {
+			continue
+		}
+		if typed, ok := value.(bool); ok {
+			return typed, true
+		}
+	}
+	return false, false
 }
 
 func availableKeys(values map[string]any) string {

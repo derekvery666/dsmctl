@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -150,8 +151,8 @@ func newDriveAdminLogCommand(opts *options) *cobra.Command {
 
 func newDriveAdminLogListCommand(opts *options) *cobra.Command {
 	var jsonOutput bool
-	var limit int
-	var keyword, username, target, from, to string
+	var limit, offset int
+	var keyword, username, teamFolder, from, to string
 	command := &cobra.Command{
 		Use:   "list",
 		Short: "List Drive server log entries with optional filters",
@@ -171,8 +172,8 @@ func newDriveAdminLogListCommand(opts *options) *cobra.Command {
 			}
 			defer closeService(service)
 			result, err := service.GetDriveAdminLog(cmd.Context(), opts.nas, driveadmin.LogQuery{
-				Limit: limit, Keyword: keyword, Username: username, Target: target,
-				From: fromTime, To: toTime,
+				Limit: limit, Offset: offset, Keyword: keyword, Username: username,
+				TeamFolder: teamFolder, From: fromTime, To: toTime,
 			})
 			if err != nil {
 				return err
@@ -185,9 +186,10 @@ func newDriveAdminLogListCommand(opts *options) *cobra.Command {
 	}
 	command.Flags().BoolVar(&jsonOutput, "json", false, "output structured JSON")
 	command.Flags().IntVar(&limit, "limit", 100, "maximum number of entries to return")
+	command.Flags().IntVar(&offset, "offset", 0, "number of newest entries to skip for pagination")
 	command.Flags().StringVar(&keyword, "keyword", "", "substring filter applied by Drive")
 	command.Flags().StringVar(&username, "username", "", "filter to one account name")
-	command.Flags().StringVar(&target, "target", "", "filter to one file or folder path")
+	command.Flags().StringVar(&teamFolder, "team-folder", "", "filter to one Drive team folder by shared-folder name")
 	command.Flags().StringVar(&from, "from", "", "inclusive lower time bound: Unix seconds or \"2006-01-02 15:04:05\"")
 	command.Flags().StringVar(&to, "to", "", "inclusive upper time bound: Unix seconds or \"2006-01-02 15:04:05\"")
 	return command
@@ -258,9 +260,9 @@ func writeDriveAdminTeamFolders(cmd *cobra.Command, result application.DriveAdmi
 		fmt.Fprintln(writer, "No team folders reported.")
 		return writer.Flush()
 	}
-	fmt.Fprintln(writer, "\nID\tNAME\tSTATUS")
+	fmt.Fprintln(writer, "\nNAME\tENABLED\tSTATUS")
 	for _, folder := range result.TeamFolders.TeamFolders {
-		fmt.Fprintf(writer, "%s\t%s\t%s\n", valueOrDash(folder.ID), folder.Name, valueOrDash(folder.Status))
+		fmt.Fprintf(writer, "%s\t%s\t%s\n", folder.Name, yesNo(folder.Enabled), valueOrDash(folder.Status))
 	}
 	return writer.Flush()
 }
@@ -273,11 +275,18 @@ func writeDriveAdminLog(cmd *cobra.Command, result application.DriveAdminLogResu
 		fmt.Fprintln(writer, "No Drive log entries matched.")
 		return writer.Flush()
 	}
-	fmt.Fprintln(writer, "\nTIME\tUSER\tACTION\tTARGET\tDESCRIPTION")
+	fmt.Fprintln(writer, "\nTIME\tUSER\tCLIENT\tEVENT\tTEAM FOLDER\tPATH")
 	for _, entry := range result.Log.Entries {
-		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n",
-			valueOrDash(entry.Time), valueOrDash(entry.Username), valueOrDash(entry.Action),
-			valueOrDash(entry.Target), valueOrDash(entry.Description))
+		fmt.Fprintf(writer, "%s\t%s\t%s\t%d\t%s\t%s\n",
+			formatUnixTime(entry.TimeUnix), valueOrDash(entry.Username), valueOrDash(entry.ClientType),
+			entry.EventType, valueOrDash(entry.TeamFolder), valueOrDash(entry.Path))
 	}
 	return writer.Flush()
+}
+
+func formatUnixTime(seconds int64) string {
+	if seconds <= 0 {
+		return "-"
+	}
+	return time.Unix(seconds, 0).Local().Format("2006-01-02 15:04:05")
 }

@@ -115,6 +115,9 @@ func validateDriveAdminLogQuery(query *driveadmin.LogQuery) error {
 	if query.Limit < 0 {
 		return fmt.Errorf("log limit cannot be negative")
 	}
+	if query.Offset < 0 {
+		return fmt.Errorf("log offset cannot be negative")
+	}
 	if query.Limit == 0 {
 		query.Limit = driveAdminDefaultLogLimit
 	}

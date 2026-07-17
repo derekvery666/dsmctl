@@ -413,13 +413,14 @@ type getDriveAdminTeamFoldersOutput struct {
 }
 
 type getDriveAdminLogsInput struct {
-	NAS      string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
-	Limit    int    `json:"limit,omitempty" jsonschema:"Maximum entries to return; defaults to 100, maximum 1000"`
-	Keyword  string `json:"keyword,omitempty" jsonschema:"Substring filter applied by Drive"`
-	Username string `json:"username,omitempty" jsonschema:"Filter to one account name"`
-	Target   string `json:"target,omitempty" jsonschema:"Filter to one file or folder path"`
-	From     int64  `json:"from,omitempty" jsonschema:"Inclusive lower bound as a Unix time in seconds"`
-	To       int64  `json:"to,omitempty" jsonschema:"Inclusive upper bound as a Unix time in seconds"`
+	NAS        string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"Maximum entries to return; defaults to 100, maximum 1000"`
+	Offset     int    `json:"offset,omitempty" jsonschema:"Number of newest entries to skip for pagination"`
+	Keyword    string `json:"keyword,omitempty" jsonschema:"Substring filter applied by Drive"`
+	Username   string `json:"username,omitempty" jsonschema:"Filter to one account name"`
+	TeamFolder string `json:"team_folder,omitempty" jsonschema:"Filter to one Drive team folder by shared-folder name"`
+	From       int64  `json:"from,omitempty" jsonschema:"Inclusive lower bound as a Unix time in seconds"`
+	To         int64  `json:"to,omitempty" jsonschema:"Inclusive upper bound as a Unix time in seconds"`
 }
 
 type getDriveAdminLogsOutput struct {
@@ -1058,12 +1059,12 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_drive_admin_logs",
 		Title:       "List Drive server logs",
-		Description: "Read Synology Drive server log entries with optional Drive-applied keyword, username, target-path, and Unix-seconds time-range filters. Results are newest first and bounded by limit; this tool never clears logs.",
+		Description: "Read Synology Drive server log entries with optional Drive-applied keyword, username, team-folder, and Unix-seconds time-range filters. Entries are Drive's structured event records (numeric event code, path, client, address), newest first and bounded by limit/offset; this tool never clears logs.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDriveAdminLogsInput) (*mcp.CallToolResult, getDriveAdminLogsOutput, error) {
 		result, err := service.GetDriveAdminLog(ctx, input.NAS, driveadmin.LogQuery{
-			Limit: input.Limit, Keyword: input.Keyword, Username: input.Username,
-			Target: input.Target, From: input.From, To: input.To,
+			Limit: input.Limit, Offset: input.Offset, Keyword: input.Keyword, Username: input.Username,
+			TeamFolder: input.TeamFolder, From: input.From, To: input.To,
 		})
 		if err != nil {
 			return nil, getDriveAdminLogsOutput{}, err

@@ -46,16 +46,19 @@ dsmctl drive admin log list --nas office --username alice --keyword report --fro
 ```
 
 - `status` returns the Drive service status as reported by the package
-  (lowercased, vocabulary follows the package release) plus the package
-  evidence observed with this exact call.
+  (lowercased, for example `enabled`) plus the package evidence observed with
+  this exact call.
 - `connections` lists active Drive client sessions with the user, device,
   client type, and address fields Drive reports.
-- `team-folders` lists team folders from the admin perspective with their
-  reported status.
-- `log list` reads Drive server logs. Keyword, username, target-path, and the
-  Unix-seconds/`"2006-01-02 15:04:05"` time range are applied by Drive; the
-  page size is bounded (default 100, maximum 1000). Offset paging is not
-  exposed in this slice.
+- `team-folders` lists shared folders from the admin team-folder view: the
+  name, whether each is enabled as a Drive team folder, and Drive's share
+  status. Drive's home entry appears as `homes/mydrive_home`.
+- `log list` reads Drive server logs. Keyword, username, team-folder scope,
+  offset, and the Unix-seconds/`"2006-01-02 15:04:05"` time range are applied
+  by Drive; the page size is bounded (default 100, maximum 1000). Drive stores
+  log text as a numeric event code plus substitution fields rather than a
+  rendered message, so entries surface the structured fields: time, username,
+  client type, IP address, event code, path, and team folder.
 
 MCP tools: `get_drive_admin_status`, `get_drive_admin_connections`,
 `get_drive_admin_team_folders`, `get_drive_admin_logs`.
@@ -71,24 +74,37 @@ Drive Config/settings writes, connection disconnection, index management, the
 end-user file API (`SYNO.SynologyDrive.Files`), sharing links, labels, and
 ShareSync are likewise out of scope for this slice.
 
-## DSM backends (evidence)
+## DSM backends (verified live on Drive 4.0.3-27892)
 
-API names and versions were verified against the configured lab NAS via
-read-only `SYNO.API.Info` discovery with Synology Drive Server **4.0.3-27892**
-installed, cross-checked with the package's own Admin Console client assets
-and community client implementations:
+API names, versions, request shapes, and response fields were verified against
+the configured lab NAS (read-only) with Synology Drive Server **4.0.3-27892**
+installed, guided by `SYNO.API.Info` discovery, the package's own Admin
+Console assets, and the Drive server source's WebAPI registry
+(`synosyncfolder` `server/ui-web/webapi/admin-console/SYNO.SynologyDrive.py`
+and `handlers/log/list.cpp`, whose release branches confirm the per-package-
+version API surface):
 
-- Status: `SYNO.SynologyDrive` `get_status` v1.
+- Status: `SYNO.SynologyDrive` `get_status` v1. The service state is
+  `enable_status`; QuickConnect relay fields stay unmodeled.
 - Connections: `SYNO.SynologyDrive.Connection` `list` v1 (target advertises
   v1-2; the v1 shape is the verified baseline).
-- Team folders: `SYNO.SynologyDrive.Share` `list` v1.
-- Logs: `SYNO.SynologyDrive.Log` `list` v1 with `keyword`, `username`,
-  `target`, `datefrom`, `dateto`, and `limit`.
+- Team folders: `SYNO.SynologyDrive.Share` `list` v1. The request is rejected
+  (error 120) without paging and a valid sort column, so the backend always
+  sends `offset`/`limit` with `sort_by: share_name`. Items expose `share_name`,
+  the `share_enable` activation flag, and `share_status`.
+- Logs: `SYNO.SynologyDrive.Log` `list` v1. `target` is required: the
+  all-scopes view is `share_type: all` with `target: user`, and one team
+  folder is `share_type: share` with an `@`-prefixed shared-folder name.
+  `log_type` is Drive's numeric event-code array filter (sent empty), and
+  `keyword`, `username`, `offset`, `limit`, `datefrom`, and `dateto` are
+  applied by Drive. Entries are template-coded (numeric `type` plus `s*`/`p*`
+  substitution slots).
 
 Every variant additionally requires `SynologyDrive >= 3.0` through the
 package-version matcher (see
 [the compatibility guide](compatibility.md#package-scoped-operations)).
 Response decoders are defensive: a malformed envelope or an unrecognized list
 shape returns an explicit decode error naming the available fields instead of
-silently returning an empty state. Confirm the selected backends on any target
-with `dsmctl drive admin capabilities`.
+silently returning an empty state — this is exactly how the initial field
+assumptions were corrected during live verification. Confirm the selected
+backends on any target with `dsmctl drive admin capabilities`.

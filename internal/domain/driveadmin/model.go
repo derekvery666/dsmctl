@@ -40,11 +40,13 @@ type Connections struct {
 	Connections []Connection `json:"connections" jsonschema:"Active Drive client connections"`
 }
 
-// TeamFolder is one Drive team folder as shown in the Admin Console.
+// TeamFolder is one shared folder as shown in the Admin Console team-folder
+// view. Enabled reports whether the share is activated as a Drive team folder;
+// Status carries Drive's own state vocabulary (for example "normal").
 type TeamFolder struct {
-	ID     string `json:"id,omitempty" jsonschema:"Stable Drive identifier for the team folder when reported"`
-	Name   string `json:"name" jsonschema:"Team folder (shared folder) name"`
-	Status string `json:"status,omitempty" jsonschema:"Team folder state as reported by Drive, lowercased, for example enabled or disabled"`
+	Name    string `json:"name" jsonschema:"Shared folder name; Drive's home entry appears as homes/mydrive_home"`
+	Enabled bool   `json:"enabled" jsonschema:"Whether the shared folder is enabled as a Drive team folder"`
+	Status  string `json:"status,omitempty" jsonschema:"Share state as reported by Drive, lowercased, for example normal"`
 }
 
 // TeamFolders is the admin view of Drive team folders.
@@ -54,24 +56,29 @@ type TeamFolders struct {
 }
 
 // LogQuery selects and pages Drive server log entries. All filters are applied
-// by the Drive package. Offset paging is not exposed because the verified Drive
-// log API pages by limit only in this slice.
+// by the Drive package. TeamFolder narrows the scope to one Drive team folder;
+// when empty, logs from every scope are returned.
 type LogQuery struct {
-	Limit    int    `json:"limit,omitempty" jsonschema:"Maximum entries to return; defaults to a bounded page size"`
-	Keyword  string `json:"keyword,omitempty" jsonschema:"Substring filter applied by Drive"`
-	Username string `json:"username,omitempty" jsonschema:"Filter to one account name"`
-	Target   string `json:"target,omitempty" jsonschema:"Filter to one file or folder path"`
-	From     int64  `json:"from,omitempty" jsonschema:"Inclusive lower bound as a Unix time in seconds"`
-	To       int64  `json:"to,omitempty" jsonschema:"Inclusive upper bound as a Unix time in seconds"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"Maximum entries to return; defaults to a bounded page size"`
+	Offset     int    `json:"offset,omitempty" jsonschema:"Number of newest entries to skip for pagination"`
+	Keyword    string `json:"keyword,omitempty" jsonschema:"Substring filter applied by Drive"`
+	Username   string `json:"username,omitempty" jsonschema:"Filter to one account name"`
+	TeamFolder string `json:"team_folder,omitempty" jsonschema:"Filter to one Drive team folder by shared-folder name"`
+	From       int64  `json:"from,omitempty" jsonschema:"Inclusive lower bound as a Unix time in seconds"`
+	To         int64  `json:"to,omitempty" jsonschema:"Inclusive upper bound as a Unix time in seconds"`
 }
 
-// LogEntry is one Drive server log record.
+// LogEntry is one Drive server log record. Drive encodes log text as an event
+// code plus substitution parameters rather than a rendered description, so the
+// structured fields are surfaced directly.
 type LogEntry struct {
-	Time        string `json:"time,omitempty" jsonschema:"Timestamp as reported by Drive"`
-	Username    string `json:"username,omitempty" jsonschema:"Account that performed the action"`
-	Action      string `json:"action,omitempty" jsonschema:"Drive action or event type as reported"`
-	Target      string `json:"target,omitempty" jsonschema:"File or folder the action applied to"`
-	Description string `json:"description,omitempty" jsonschema:"Human-readable log description"`
+	TimeUnix   int64  `json:"time_unix,omitempty" jsonschema:"Event time as a Unix time in seconds"`
+	Username   string `json:"username,omitempty" jsonschema:"Account that performed the action; empty for system events"`
+	ClientType string `json:"client_type,omitempty" jsonschema:"Originating client as reported by Drive, for example web_portal"`
+	IPAddress  string `json:"ip_address,omitempty" jsonschema:"Client IP address when reported"`
+	EventType  int    `json:"event_type" jsonschema:"Drive's numeric event code for this entry"`
+	Path       string `json:"path,omitempty" jsonschema:"File or folder path the event applied to, when reported"`
+	TeamFolder string `json:"team_folder,omitempty" jsonschema:"Team folder the event belongs to; empty for My Drive events"`
 }
 
 // Log is a page of Drive server log entries.
