@@ -28,6 +28,9 @@ contracts unless a work item explicitly changes them:
 - [roadmap.md](roadmap.md): priority, dependency graph, and backlog status.
 - [architecture-contracts.md](architecture-contracts.md): invariants every
   implementation must preserve.
+- [gateway-deployment.md](gateway-deployment.md): approved architecture and
+  delivery plan for the portable amd64 gateway, generic Linux container, and
+  Synology x86_64 package.
 - [agent-workflow.md](agent-workflow.md): how agents claim, update, and hand off
   work without colliding.
 - [work-items](work-items): executable specs with scope and acceptance criteria.

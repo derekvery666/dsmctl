@@ -63,3 +63,35 @@ Each completed management slice normally contains:
 6. Thin MCP tools using the same application methods.
 7. Unit fixtures/request-capture tests and proportionate integration tests.
 8. User documentation and an updated work-item status.
+
+## Remote gateway and deployment boundary
+
+The portable gateway extends the dependency graph without changing DSM
+operation ownership:
+
+```text
+Generic Linux adapter --+
+                        +--> gateway transport/policy --> application --> runtime --> Synology facade
+Synology SPK adapter ---+
+```
+
+- Deployment adapters own process lifecycle, ports, reverse-proxy/TLS wiring,
+  persistent mounts, and platform authentication. They never construct DSM
+  requests, resolve DSM operation variants, or bypass the application layer.
+- The core gateway container is platform-neutral. It must not depend on DSM
+  paths, commands, package environment variables, Container Manager control,
+  the Docker socket, or a desktop keyring.
+- Authentication occurs before remote MCP session/tool execution. The verified
+  caller and target/scope policy reach an enforceable gateway application
+  boundary; tool annotations and client-supplied identity are never authority.
+- Remote authorization is additive to the existing plan/apply checks. A plan
+  hash proves artifact integrity, not human approval. High-risk remote apply
+  requires a separate short-lived, single-use approval.
+- Persistent ciphertext and its master key use separate mounts. Missing or
+  invalid key material fails closed and must not overwrite stored data.
+- Fan-out mutation is prohibited. Read-only fleet fan-out is opt-in, bounded,
+  target-filtered, and returns per-target success or error without hiding
+  partial results.
+
+The complete platform and packaging decisions are in
+[`gateway-deployment.md`](gateway-deployment.md).
