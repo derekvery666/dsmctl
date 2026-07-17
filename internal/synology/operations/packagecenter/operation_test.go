@@ -95,15 +95,29 @@ func TestSettingsReadContract(t *testing.T) {
 	}
 }
 
-func TestSettingsSetFailsClosed(t *testing.T) {
-	// Settings SET is modeled but deferred: on DSM the set surface is split
-	// across per-section sub-APIs, so it must report unsupported even when the
-	// base SYNO.Core.Package.Setting API is present.
+func TestSettingsSetContract(t *testing.T) {
 	target := compatibility.NewTarget()
 	target.SetAPI(SettingAPIName, compatibility.APIInfo{MinVersion: 1, MaxVersion: 2})
-	selection, err := SelectSettingsSet(target)
-	if err == nil || selection.Supported || !compatibility.IsUnsupported(err) {
-		t.Fatalf("SelectSettingsSet() = %#v, %v", selection, err)
+	executor := &captureExecutor{responses: map[string]json.RawMessage{}}
+
+	// Auto-update: enabled + important-only. Trust level must NOT be written
+	// (no DSM endpoint accepts it), even though the desired state carries one.
+	desired := packagecenter.Settings{
+		TrustLevel: packagecenter.TrustAny, AutoUpdateEnabled: true, AutoUpdateImportantOnly: true,
+	}
+	result, selection, err := ExecuteSettingsSet(context.Background(), target, executor, desired)
+	if err != nil {
+		t.Fatalf("ExecuteSettingsSet() error = %v", err)
+	}
+	want := map[string]any{
+		"enable_autoupdate": true, "autoupdateimportant": true, "autoupdateall": false,
+	}
+	request := executor.requests[len(executor.requests)-1]
+	if selection.Version != 2 || request.API != SettingAPIName || request.Method != "set" || !reflect.DeepEqual(request.JSONParameters, want) {
+		t.Fatalf("settings set request = %#v, want parameters %#v", request, want)
+	}
+	if result.Method != "set" || result.Action != packagecenter.KindSettings {
+		t.Fatalf("settings set result = %#v", result)
 	}
 }
 

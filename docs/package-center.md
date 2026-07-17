@@ -31,7 +31,7 @@ The inventory backend is `SYNO.Core.Package` `list`; settings use
 unsupported; storage, SAN, account, share, and Control Panel features are
 unaffected.
 
-## Settings (read-only)
+## Settings
 
 `dsmctl package settings` reads the global settings exposed by
 `SYNO.Core.Package.Setting`: the publisher trust level (`synology`,
@@ -44,15 +44,29 @@ automatic-update choices map to two booleans:
 | Install important updates only | `true` | `true` |
 | Install all updates | `true` | `false` |
 
-Settings **changes are deferred** in this release; `capabilities` reports
-`settings_set: false` and a `settings` plan is refused. DSM does not accept these
-values through a single `set` call: the setting surface is split across
-`SYNO.Core.Package.Setting.Update` (auto-update),
-`SYNO.Core.Package.Setting.Volume` (default volume), and the base
-`SYNO.Core.Package.Setting` (which handles only notifications and the update
-channel and silently ignores trust level and auto-update). A correct settings
-set therefore needs the per-section sub-APIs and is tracked as a follow-up; the
-beta channel and default install volume come with that work.
+The **automatic-update policy is writable** through the same hash-bound
+plan/apply flow. A settings change is patch-only: an omitted field keeps its
+current value. The plan records and hashes the complete current settings state;
+apply rejects a changed state, merges the patch into a freshly read full state,
+submits the three DSM auto-update fields consistently through
+`SYNO.Core.Package.Setting.set`, and verifies the requested fields afterward.
+
+```json
+{
+  "kind": "settings",
+  "settings": { "auto_update_enabled": true, "auto_update_important_only": true }
+}
+```
+
+```console
+dsmctl package plan --nas office --file settings.json --output settings.plan.json
+dsmctl package apply --file settings.plan.json --approve <hash-from-plan>
+```
+
+**Trust level is read-only** and cannot be changed: no DSM WebAPI writes it, and
+the base `set` silently ignores it, so `trust_level` is not accepted in a change.
+The beta channel and default install volume are likewise not writable here (see
+[Deferred operations](#deferred-operations)).
 
 ## Guarded package lifecycle
 
@@ -102,12 +116,12 @@ but they are **not implemented** and fail closed:
   `action: update` is rejected. They contact Synology's online repository, run
   asynchronously over minutes, and download and run remote code, which does not
   fit the synchronous plan/apply postcondition contract.
-- **settings changes**: `capabilities` reports `settings_set: false`, and a
-  `settings` plan is refused, because the DSM set surface is split across
-  per-section sub-APIs (see [Settings](#settings-read-only)).
 
-The online catalog browse and per-package application-specific settings are also
-tracked as a follow-up.
+Writing the **trust level**, **beta channel**, and **default install volume** is
+also not supported: trust level has no DSM write endpoint, and the beta channel
+(base `Setting.set` `update_channel`) and default volume
+(`SYNO.Core.Package.Setting.Volume.set`) are separate follow-ups. The online
+catalog browse and per-package application-specific settings are deferred too.
 
 ## DSM backends (verified on DSM 7.3)
 
@@ -121,10 +135,12 @@ The API names and fields are verified against DSM 7.3-81168:
   object. `startable` marks a package that exposes a start/stop control (not one
   that can start right now), so `can_stop` is `startable && running`, `can_start`
   is `startable && not running`, and `can_uninstall` is `install_type != system`.
-- Settings read: `SYNO.Core.Package.Setting` `get` v1. `trust_level` is an
-  integer (0/1/2); `enable_autoupdate` is the master auto-update toggle, with
-  `autoupdateimportant` / `autoupdateall` selecting important-only vs all.
-  Settings set is deferred (fragmented across sub-APIs; see Deferred operations).
+- Settings: `SYNO.Core.Package.Setting` `get`/`set` v1. `trust_level` is an
+  integer (0/1/2, read-only); `enable_autoupdate` is the master auto-update
+  toggle, with `autoupdateimportant` / `autoupdateall` selecting important-only vs
+  all. The `set` write applies the auto-update fields even though its response
+  echoes only the notification/channel fields (verified live); it silently
+  ignores `trust_level`, which is why trust is read-only.
 - Start/stop: `SYNO.Core.Package.Control` `start`/`stop` with `id` (verified live;
   DSM refuses to stop packages required by others, surfaced as an error).
 - Uninstall: `SYNO.Core.Package.Uninstallation` `uninstall` with `id`.

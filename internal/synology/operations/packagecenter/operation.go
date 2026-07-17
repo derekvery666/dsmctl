@@ -3,16 +3,18 @@
 // start/stop and uninstall. DSM WebAPI names and versions stay behind this
 // package so the shared domain, CLI, and MCP contracts remain stable.
 //
-// Some operations are modeled as variant-less operations so capability
+// Settings SET covers only the automatic-update policy, which the base
+// SYNO.Core.Package.Setting `set` writes (verified on DSM 7.3: the write is
+// applied even though the response echoes only the notification/channel fields).
+// Publisher trust level is read-only: no DSM API accepts a trust-level write and
+// the base `set` silently ignores it. Default install volume
+// (SYNO.Core.Package.Setting.Volume) and the update channel are separate
+// follow-ups.
+//
+// Install and update are modeled as variant-less operations so capability
 // reporting and request validation can name them, but they have no backend in
-// this slice and always fail closed:
-//   - install and update require the online catalog, download, and installation
-//     APIs plus asynchronous job handling; and
-//   - settings SET is fragmented on DSM across SYNO.Core.Package.Setting.Update
-//     (auto-update), SYNO.Core.Package.Setting.Volume (default volume), and the
-//     base SYNO.Core.Package.Setting (notifications/channel only); the base
-//     endpoint silently ignores trust level and auto-update, so a correct set
-//     needs the per-section sub-APIs. Settings are therefore read-only here.
+// this slice and always fail closed: they require the online catalog, download,
+// and installation APIs plus asynchronous job handling.
 package packagecenter
 
 import (
@@ -95,11 +97,15 @@ var settingsReadOperation = compatibility.Operation[Input, packagecenter.Setting
 	},
 }
 
-// settingsSetOperation is modeled but variant-less: on DSM the settings SET
-// surface is split across per-section sub-APIs (see the package doc), so it
-// always reports unsupported and fails closed. Settings are read-only.
+// settingsSetOperation writes the automatic-update policy through the base
+// SYNO.Core.Package.Setting `set`. Trust level is not written (no DSM endpoint
+// accepts it); the encoder omits it.
 var settingsSetOperation = compatibility.Operation[packagecenter.Settings, MutationResult]{
 	Name: SettingsSetCapabilityName,
+	Variants: []compatibility.Variant[packagecenter.Settings, MutationResult]{
+		settingsSetVariant("core-package-setting-v2", 2, 20),
+		settingsSetVariant("core-package-setting-v1", 1, 10),
+	},
 }
 
 var controlOperation = compatibility.Operation[ControlInput, MutationResult]{
@@ -245,6 +251,20 @@ func settingsReadVariant(name string, version, priority int) compatibility.Varia
 				return packagecenter.Settings{}, fmt.Errorf("call %s.get v%d: %w", SettingAPIName, version, err)
 			}
 			return decodeSettings(data)
+		},
+	}
+}
+
+func settingsSetVariant(name string, version, priority int) compatibility.Variant[packagecenter.Settings, MutationResult] {
+	return compatibility.Variant[packagecenter.Settings, MutationResult]{
+		Name: name, API: SettingAPIName, Version: version, Priority: priority,
+		Match: compatibility.APIVersion(SettingAPIName, version),
+		Execute: func(ctx context.Context, executor compatibility.Executor, desired packagecenter.Settings) (MutationResult, error) {
+			parameters := encodeSettings(desired)
+			if _, err := executor.Execute(ctx, compatibility.Request{API: SettingAPIName, Version: version, Method: "set", JSONParameters: parameters}); err != nil {
+				return MutationResult{}, fmt.Errorf("call %s.set v%d: %w", SettingAPIName, version, err)
+			}
+			return MutationResult{}, nil
 		},
 	}
 }

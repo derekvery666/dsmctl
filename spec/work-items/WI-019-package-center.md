@@ -54,7 +54,7 @@ without dsmctl exposing a raw DSM settings or installation proxy.
   but **fail closed** (report `false`, request validator rejects them). They
   contact Synology's online repository, run asynchronously, and download and run
   remote code, which does not fit the synchronous plan/apply postcondition
-  contract. Tracked as a follow-up (WI-020).
+  contract. Tracked as a later follow-up.
 - **Settings changes** (`set`): modeled but fail closed (`settings_set: false`,
   `settings` plans refused). Verified live on DSM 7.3 that the set surface is
   split across `SYNO.Core.Package.Setting.Update` (auto-update),

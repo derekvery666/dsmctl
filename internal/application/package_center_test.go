@@ -64,7 +64,7 @@ func testPackageCaps() synology.PackageCapabilities {
 
 func testPackageClient() *fakePackageClient {
 	return &fakePackageClient{
-		settings: synology.PackageSettings{TrustLevel: packagecenter.TrustSynology},
+		settings: synology.PackageSettings{TrustLevel: packagecenter.TrustSynology, AutoUpdateEnabled: true},
 		caps:     testPackageCaps(),
 		packages: []packagecenter.Package{
 			{ID: "SynologyDrive", Name: "Synology Drive Server", Version: "3.5.1", Status: packagecenter.StatusRunning, Running: true, CanStart: false, CanStop: true, CanUninstall: true},
@@ -74,20 +74,19 @@ func testPackageClient() *fakePackageClient {
 	}
 }
 
-func trust(level packagecenter.TrustLevel) *packagecenter.TrustLevel { return &level }
-func boolPtr(value bool) *bool                                       { return &value }
+func boolPtr(value bool) *bool { return &value }
 
 func TestPackageSettingsPlanApplyAndStale(t *testing.T) {
 	client := testPackageClient()
 	request := packagecenter.ChangeRequest{
 		Kind:     packagecenter.KindSettings,
-		Settings: &packagecenter.SettingsChange{TrustLevel: trust(packagecenter.TrustAny), AutoUpdateEnabled: boolPtr(true)},
+		Settings: &packagecenter.SettingsChange{AutoUpdateEnabled: boolPtr(false)},
 	}
 	plan, err := planPackageChangeWithClient(context.Background(), "lab", client, request)
 	if err != nil {
 		t.Fatalf("planPackageChangeWithClient() error = %v", err)
 	}
-	if plan.Hash == "" || plan.ObservedFingerprint == "" || plan.Observed.Settings == nil || plan.Risk != "high" {
+	if plan.Hash == "" || plan.ObservedFingerprint == "" || plan.Observed.Settings == nil || plan.Risk != "medium" {
 		t.Fatalf("plan = %#v", plan)
 	}
 	if err := validatePackagePlan(plan, plan.Hash); err != nil {
@@ -108,7 +107,7 @@ func TestPackageSettingsPlanApplyAndStale(t *testing.T) {
 	if err != nil {
 		t.Fatalf("applyPackagePlanWithClient() error = %v", err)
 	}
-	if !result.Applied || !client.settings.AutoUpdateEnabled || client.settings.TrustLevel != packagecenter.TrustAny || client.mutations != 1 {
+	if !result.Applied || client.settings.AutoUpdateEnabled || client.mutations != 1 {
 		t.Fatalf("apply result/client = %#v %#v", result, client.settings)
 	}
 }
@@ -176,7 +175,7 @@ func TestPackagePlanRejectsUnsafeIntents(t *testing.T) {
 
 	// no-op settings patch
 	if _, err := planPackageChangeWithClient(context.Background(), "lab", client, packagecenter.ChangeRequest{
-		Kind: packagecenter.KindSettings, Settings: &packagecenter.SettingsChange{TrustLevel: trust(packagecenter.TrustSynology)},
+		Kind: packagecenter.KindSettings, Settings: &packagecenter.SettingsChange{AutoUpdateEnabled: boolPtr(true)},
 	}); err == nil || !strings.Contains(err.Error(), "would not change") {
 		t.Fatalf("no-op settings error = %v", err)
 	}
@@ -215,7 +214,7 @@ func TestPackageRequestShapeRejectsDeferredAndMalformed(t *testing.T) {
 func TestPackagePlanHashRejectsTampering(t *testing.T) {
 	client := testPackageClient()
 	plan, err := planPackageChangeWithClient(context.Background(), "lab", client, packagecenter.ChangeRequest{
-		Kind: packagecenter.KindSettings, Settings: &packagecenter.SettingsChange{AutoUpdateEnabled: boolPtr(true)},
+		Kind: packagecenter.KindSettings, Settings: &packagecenter.SettingsChange{AutoUpdateEnabled: boolPtr(false)},
 	})
 	if err != nil {
 		t.Fatalf("planPackageChangeWithClient() error = %v", err)

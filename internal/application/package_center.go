@@ -144,11 +144,8 @@ func planPackageChangeWithClient(ctx context.Context, nas string, client package
 	plan := PackagePlan{APIVersion: packageCenterAPIVersion, NAS: nas, Request: request}
 	switch request.Kind {
 	case packagecenter.KindSettings:
-		if !capabilities.SettingsSet {
-			return PackagePlan{}, fmt.Errorf("Package Center settings changes are deferred in this release; settings are read-only because DSM splits the settings set surface across per-section sub-APIs")
-		}
-		if !capabilities.SettingsRead {
-			return PackagePlan{}, fmt.Errorf("NAS %q does not expose a verified Package Center settings read backend", nas)
+		if !capabilities.SettingsRead || !capabilities.SettingsSet {
+			return PackagePlan{}, fmt.Errorf("NAS %q does not expose a verified Package Center settings read/set backend", nas)
 		}
 		settings, err := client.PackageSettings(ctx)
 		if err != nil {
@@ -354,9 +351,6 @@ func validateLifecycleAgainstPackage(action string, pkg packagecenter.Package) e
 }
 
 func validateSettingsChange(state synology.PackageSettings, change packagecenter.SettingsChange) error {
-	if change.TrustLevel != nil && !validTrustLevel(*change.TrustLevel) {
-		return fmt.Errorf("unsupported trust level %q", *change.TrustLevel)
-	}
 	if settingsChangeMatches(state, change) {
 		return fmt.Errorf("settings patch would not change the current state")
 	}
@@ -369,15 +363,11 @@ func packagePlanEffects(plan PackagePlan) (destructive, highRisk bool, warnings,
 	switch plan.Request.Kind {
 	case packagecenter.KindSettings:
 		change := plan.Request.Settings
-		if change.TrustLevel != nil {
-			summary = append(summary, fmt.Sprintf("set trust level to %s", *change.TrustLevel))
-			if *change.TrustLevel == packagecenter.TrustAny {
-				highRisk = true
-				warnings = append(warnings, "allowing any publisher reduces package signature enforcement")
-			}
-		}
 		if change.AutoUpdateEnabled != nil {
 			summary = append(summary, fmt.Sprintf("set automatic updates to %t", *change.AutoUpdateEnabled))
+			if !*change.AutoUpdateEnabled {
+				warnings = append(warnings, "disabling automatic updates stops security and important package updates from installing on their own")
+			}
 		}
 		if change.AutoUpdateImportantOnly != nil {
 			summary = append(summary, fmt.Sprintf("set automatic important-only updates to %t", *change.AutoUpdateImportantOnly))
@@ -402,9 +392,6 @@ func packagePlanEffects(plan PackagePlan) (destructive, highRisk bool, warnings,
 
 func mergeSettingsChange(current synology.PackageSettings, change packagecenter.SettingsChange) synology.PackageSettings {
 	desired := current
-	if change.TrustLevel != nil {
-		desired.TrustLevel = *change.TrustLevel
-	}
 	if change.AutoUpdateEnabled != nil {
 		desired.AutoUpdateEnabled = *change.AutoUpdateEnabled
 	}
@@ -415,8 +402,7 @@ func mergeSettingsChange(current synology.PackageSettings, change packagecenter.
 }
 
 func settingsChangeMatches(state synology.PackageSettings, change packagecenter.SettingsChange) bool {
-	return (change.TrustLevel == nil || state.TrustLevel == *change.TrustLevel) &&
-		(change.AutoUpdateEnabled == nil || state.AutoUpdateEnabled == *change.AutoUpdateEnabled) &&
+	return (change.AutoUpdateEnabled == nil || state.AutoUpdateEnabled == *change.AutoUpdateEnabled) &&
 		(change.AutoUpdateImportantOnly == nil || state.AutoUpdateImportantOnly == *change.AutoUpdateImportantOnly)
 }
 
@@ -450,11 +436,7 @@ func packagePlanHash(plan PackagePlan) (string, error) {
 }
 
 func emptySettingsChange(change packagecenter.SettingsChange) bool {
-	return change.TrustLevel == nil && change.AutoUpdateEnabled == nil && change.AutoUpdateImportantOnly == nil
-}
-
-func validTrustLevel(level packagecenter.TrustLevel) bool {
-	return level == packagecenter.TrustSynology || level == packagecenter.TrustSynologyAndTrusted || level == packagecenter.TrustAny
+	return change.AutoUpdateEnabled == nil && change.AutoUpdateImportantOnly == nil
 }
 
 func findPackage(state synology.PackageState, id string) (packagecenter.Package, bool) {

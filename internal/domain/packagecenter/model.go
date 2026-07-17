@@ -107,11 +107,11 @@ type ChangeRequest struct {
 }
 
 // SettingsChange is a patch-only settings intent. A nil field keeps the
-// currently configured DSM value.
+// currently configured DSM value. Only the automatic-update policy is writable;
+// publisher trust level is read-only (no DSM endpoint writes it).
 type SettingsChange struct {
-	TrustLevel              *TrustLevel `json:"trust_level,omitempty" jsonschema:"Set the publisher trust policy"`
-	AutoUpdateEnabled       *bool       `json:"auto_update_enabled,omitempty" jsonschema:"Enable or disable automatic package updates"`
-	AutoUpdateImportantOnly *bool       `json:"auto_update_important_only,omitempty" jsonschema:"Restrict automatic updates to important updates only"`
+	AutoUpdateEnabled       *bool `json:"auto_update_enabled,omitempty" jsonschema:"Enable or disable automatic package updates"`
+	AutoUpdateImportantOnly *bool `json:"auto_update_important_only,omitempty" jsonschema:"Restrict automatic updates to important updates only"`
 }
 
 // LifecycleChange identifies a package by its stable DSM identifier and the
