@@ -17,7 +17,6 @@ type fakeCredentialStore struct {
 	envSet    map[string]bool
 	sessions  map[string]credentials.SessionMeta
 	probeErr  error
-	deleted   []string
 }
 
 func (store *fakeCredentialStore) HasPassword(_ context.Context, profileName string) (bool, error) {
@@ -32,20 +31,6 @@ func (store *fakeCredentialStore) HasTrustedDevice(_ context.Context, profileNam
 		return false, store.probeErr
 	}
 	return store.devices[profileName], nil
-}
-
-func (store *fakeCredentialStore) DeletePassword(_ context.Context, profileName string) (bool, error) {
-	store.deleted = append(store.deleted, "password/"+profileName)
-	existed := store.passwords[profileName]
-	delete(store.passwords, profileName)
-	return existed, nil
-}
-
-func (store *fakeCredentialStore) DeleteTrustedDevice(_ context.Context, profileName string) (bool, error) {
-	store.deleted = append(store.deleted, "trusted-device/"+profileName)
-	existed := store.devices[profileName]
-	delete(store.devices, profileName)
-	return existed, nil
 }
 
 func (store *fakeCredentialStore) PasswordEnvironment(profileName string, profile config.Profile) (string, bool) {
@@ -135,54 +120,5 @@ func TestGetAuthStatusRequiresStore(t *testing.T) {
 	service := NewService(cfg, manager)
 	if _, err := service.GetAuthStatus(context.Background(), ""); err == nil || !strings.Contains(err.Error(), "credential store") {
 		t.Fatalf("GetAuthStatus() error = %v", err)
-	}
-}
-
-func TestRemoveCredentialsScopes(t *testing.T) {
-	tests := []struct {
-		name  string
-		scope CredentialScope
-		want  CredentialRemoval
-	}{
-		{name: "both", scope: CredentialScope{Password: true, TrustedDevice: true}, want: CredentialRemoval{NAS: "office", PasswordRemoved: true, TrustedDeviceRemoved: true}},
-		{name: "password only", scope: CredentialScope{Password: true}, want: CredentialRemoval{NAS: "office", PasswordRemoved: true}},
-		{name: "device only", scope: CredentialScope{TrustedDevice: true}, want: CredentialRemoval{NAS: "office", TrustedDeviceRemoved: true}},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			store := &fakeCredentialStore{
-				passwords: map[string]bool{"office": true},
-				devices:   map[string]bool{"office": true},
-			}
-			service := credentialTestService(store)
-			result, err := service.RemoveCredentials(context.Background(), "", test.scope)
-			if err != nil {
-				t.Fatalf("RemoveCredentials() error = %v", err)
-			}
-			if result != test.want {
-				t.Fatalf("result = %#v, want %#v", result, test.want)
-			}
-			if test.scope.Password != result.PasswordRemoved || test.scope.TrustedDevice != result.TrustedDeviceRemoved {
-				t.Fatalf("scope/result mismatch: %#v", result)
-			}
-		})
-	}
-}
-
-func TestRemoveCredentialsSupportsOrphanedProfiles(t *testing.T) {
-	store := &fakeCredentialStore{passwords: map[string]bool{"retired": true}, devices: map[string]bool{}}
-	service := credentialTestService(store)
-	result, err := service.RemoveCredentials(context.Background(), "retired", CredentialScope{Password: true, TrustedDevice: true})
-	if err != nil {
-		t.Fatalf("RemoveCredentials(orphan) error = %v", err)
-	}
-	if !result.PasswordRemoved || result.TrustedDeviceRemoved {
-		t.Fatalf("result = %#v", result)
-	}
-	if _, err := service.RemoveCredentials(context.Background(), "bad name!", CredentialScope{Password: true}); err == nil || !strings.Contains(err.Error(), "invalid NAS name") {
-		t.Fatalf("invalid name error = %v", err)
-	}
-	if _, err := service.RemoveCredentials(context.Background(), "office", CredentialScope{}); err == nil || !strings.Contains(err.Error(), "at least one") {
-		t.Fatalf("empty scope error = %v", err)
 	}
 }

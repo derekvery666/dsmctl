@@ -30,14 +30,6 @@ func (*EnvironmentCredentials) HasTrustedDevice(context.Context, string) (bool, 
 	return false, nil
 }
 
-func (*EnvironmentCredentials) DeletePassword(context.Context, string) (bool, error) {
-	return false, nil
-}
-
-func (*EnvironmentCredentials) DeleteTrustedDevice(context.Context, string) (bool, error) {
-	return false, nil
-}
-
 func (c *EnvironmentCredentials) PasswordEnvironment(profileName string, profile config.Profile) (string, bool) {
 	return c.environment.Status(profileName, profile)
 }

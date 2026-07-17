@@ -10,14 +10,13 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/credentials"
 )
 
-// CredentialStore is the credential presence and removal surface the
-// application layer needs. It is implemented by *credentials.SecureStore and
-// never exposes secret values to its callers.
+// CredentialStore is the credential presence surface the application layer
+// needs. It is implemented by *credentials.SecureStore and never exposes
+// secret values to its callers. Credential removal is a CLI concern handled
+// directly against the concrete store.
 type CredentialStore interface {
 	HasPassword(ctx context.Context, profileName string) (bool, error)
 	HasTrustedDevice(ctx context.Context, profileName string) (bool, error)
-	DeletePassword(ctx context.Context, profileName string) (bool, error)
-	DeleteTrustedDevice(ctx context.Context, profileName string) (bool, error)
 	PasswordEnvironment(profileName string, profile config.Profile) (string, bool)
 	SessionMeta(ctx context.Context, profileName string) (credentials.SessionMeta, error)
 }
@@ -50,19 +49,6 @@ type AuthStatus struct {
 
 type AuthStatusResult struct {
 	Statuses []AuthStatus `json:"statuses" jsonschema:"Per-NAS credential presence and in-process session status; secret values are never returned"`
-}
-
-// CredentialScope selects which stored credentials RemoveCredentials
-// deletes. At least one field must be true.
-type CredentialScope struct {
-	Password      bool `json:"password"`
-	TrustedDevice bool `json:"trusted_device"`
-}
-
-type CredentialRemoval struct {
-	NAS                  string `json:"nas" jsonschema:"NAS profile the removal applied to"`
-	PasswordRemoved      bool   `json:"password_removed" jsonschema:"A stored password existed and was deleted"`
-	TrustedDeviceRemoved bool   `json:"trusted_device_removed" jsonschema:"A stored trusted-device credential existed and was deleted"`
 }
 
 // GetAuthStatus reports credential presence and in-process session state.
@@ -119,46 +105,6 @@ func (s *Service) GetAuthStatus(ctx context.Context, requestedNAS string) (AuthS
 		result.Statuses = append(result.Statuses, status)
 	}
 	return result, nil
-}
-
-// RemoveCredentials deletes stored secrets for one profile. An explicitly
-// named profile does not need to exist in the configuration, so credentials
-// orphaned by an earlier profile removal stay removable. The action is
-// local-only and reversible by running auth login again, which is why it is
-// exempt from the plan/apply contract.
-func (s *Service) RemoveCredentials(ctx context.Context, requestedNAS string, scope CredentialScope) (CredentialRemoval, error) {
-	if s.credentialStore == nil {
-		return CredentialRemoval{}, errors.New("credential removal requires the OS credential store, which is not configured for this process")
-	}
-	if !scope.Password && !scope.TrustedDevice {
-		return CredentialRemoval{}, errors.New("credential removal requires at least one of password or trusted device")
-	}
-	name := strings.TrimSpace(requestedNAS)
-	if name == "" {
-		resolved, _, err := s.config.Resolve("")
-		if err != nil {
-			return CredentialRemoval{}, err
-		}
-		name = resolved
-	} else if err := config.ValidateName(name); err != nil {
-		return CredentialRemoval{}, fmt.Errorf("invalid NAS name %q: %w", name, err)
-	}
-	removal := CredentialRemoval{NAS: name}
-	if scope.Password {
-		removed, err := s.credentialStore.DeletePassword(ctx, name)
-		if err != nil {
-			return CredentialRemoval{}, err
-		}
-		removal.PasswordRemoved = removed
-	}
-	if scope.TrustedDevice {
-		removed, err := s.credentialStore.DeleteTrustedDevice(ctx, name)
-		if err != nil {
-			return CredentialRemoval{}, err
-		}
-		removal.TrustedDeviceRemoved = removed
-	}
-	return removal, nil
 }
 
 var _ CredentialStore = (*credentials.SecureStore)(nil)
