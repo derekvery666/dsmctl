@@ -39,10 +39,14 @@ func decode(data json.RawMessage) (storage.State, error) {
 	if environment, ok := objectValue(raw, "env", "storageEnv"); ok {
 		state.PoolCreation.MaxDisks = int(uint64Value(environment, "bay_number", "bayNumber"))
 		state.VolumeCreation.MaxFileSystemBytes = uint64Value(environment, "max_fs_bytes", "maxFsBytes")
+		state.CacheCreation.MaxDisks = int(uint64Value(environment, "cache_max_ssd_num", "cacheMaxSsdNum"))
 		if support, found := objectValue(environment, "support"); found {
 			state.PoolCreation.SupportsSHR = boolValue(support, "sysdef", "shr", "support_shr")
 		}
 	}
+	state.CacheCreation.MinReadOnlyDisks = 1
+	state.CacheCreation.MinReadWriteDisks = 2
+	state.CacheCreation.ProtectionRAIDTypes = []string{storage.RAID1, storage.RAID5, storage.RAID6}
 	for _, item := range objectList(raw, "disks", "drives") {
 		state.Disks = append(state.Disks, decodeDisk(item))
 	}
@@ -52,8 +56,83 @@ func decode(data json.RawMessage) (storage.State, error) {
 	for _, item := range objectList(raw, "volumes") {
 		state.Volumes = append(state.Volumes, decodeVolume(item))
 	}
+	for _, item := range objectList(raw, "ssdCaches", "ssd_caches", "flashcaches", "flashCaches") {
+		state.Caches = append(state.Caches, decodeCache(item))
+	}
 	deriveVolumeActionability(&state)
+	deriveCacheReferences(&state)
 	return state, nil
+}
+
+// decodeCache normalizes one DSM ssdCaches entry. DSM addresses the cache by its
+// parent volume ("reference_path"); the mode is reported as readCache/writeCache
+// (or ro/rw) and normalized to the CacheMode* constants. Field names are read
+// tolerantly because the exact keys vary by DSM release.
+func decodeCache(raw map[string]any) storage.Cache {
+	status := stringValue(raw, "status", "cache_status", "cacheStatus")
+	canExpand, canConvert, canDelete := false, false, false
+	if actions, ok := objectValue(raw, "can_do", "canDo", "vspace_can_do"); ok {
+		canExpand = boolValue(actions, "expand", "resize", "add_disk")
+		canConvert = boolValue(actions, "convert", "change_type")
+		canDelete = boolValue(actions, "remove", "delete")
+	}
+	// DSM reports cache size either as a scalar or as a {total,occupied,reusable}
+	// object; prefer the object's total when present.
+	sizeBytes := uint64Value(raw, "size", "size_total", "sizeTotal", "capacity")
+	if sizeObject, ok := objectValue(raw, "size"); ok {
+		sizeBytes = uint64Value(sizeObject, "total", "size_total", "total_size")
+	}
+	return storage.Cache{
+		ID:               stringValue(raw, "id", "cache_id", "flashcache_id", "uuid", "space_id"),
+		Name:             stringValue(raw, "name", "display_name", "desc"),
+		VolumeID:         stringValue(raw, "mountSpaceId", "reference_path", "vol_id", "volume_id", "mount_point", "volumeId"),
+		VolumePath:       stringValue(raw, "vol_path", "volume_path", "mount_point"),
+		CacheType:        normalizeCacheType(stringValue(raw, "mode", "advtype", "cache_type", "cacheMode", "cacheType", "type")),
+		ProtectionRAID:   stringValue(raw, "raidType", "raid_type", "device_type"),
+		DiskIDs:          stringList(raw, "disk_ids", "diskIds", "disks", "cache_disks", "ssd_disks"),
+		SizeBytes:        sizeBytes,
+		Status:           status,
+		Health:           firstNonEmpty(stringValue(raw, "health", "health_status", "overview_status"), status),
+		ProtectionStatus: stringValue(raw, "protection_status", "raid_status"),
+		HasDirtyData:     boolValue(raw, "has_dirty_data", "hasDirtyData", "dirty") || uint64Value(raw, "dirty_size", "dirtySize") > 0,
+		Mounted:          boolValue(raw, "mounted", "is_mounted", "is_writable"),
+		Actioning:        boolValue(raw, "is_actioning", "actioning"),
+		Flushing:         boolValue(raw, "is_flushing", "flushing"),
+		CanExpand:        canExpand,
+		CanConvert:       canConvert,
+		CanDelete:        canDelete,
+	}
+}
+
+func normalizeCacheType(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "writecache", "rw", "read_write", "readwrite", "write", "rw_cache":
+		return storage.CacheModeReadWrite
+	case "readcache", "ro", "read_only", "readonly", "read", "ro_cache":
+		return storage.CacheModeReadOnly
+	default:
+		return ""
+	}
+}
+
+// deriveCacheReferences fills each cache's parent volume path and pool from the
+// decoded volumes when DSM reported only the volume identifier on the cache.
+func deriveCacheReferences(state *storage.State) {
+	volumes := make(map[string]storage.Volume, len(state.Volumes))
+	for _, volume := range state.Volumes {
+		volumes[volume.ID] = volume
+	}
+	for index := range state.Caches {
+		cache := &state.Caches[index]
+		if volume, ok := volumes[cache.VolumeID]; ok {
+			if cache.VolumePath == "" {
+				cache.VolumePath = volume.Path
+			}
+			if cache.PoolID == "" {
+				cache.PoolID = volume.PoolID
+			}
+		}
+	}
 }
 
 func decodeDisk(raw map[string]any) storage.Disk {
@@ -68,6 +147,21 @@ func decodeDisk(raw map[string]any) storage.Disk {
 	if action, ok := objectValue(raw, "action"); ok {
 		selectable = boolValue(action, "selectable")
 	}
+	// DSM load_info reports media through the boolean isSsd and uses diskType for
+	// the bus (SATA/NVMe). Prefer an explicit media type, then isSsd, so SSD-cache
+	// eligibility can distinguish SSDs from HDDs.
+	mediaType := stringValue(raw, "type", "disk_type", "media_type")
+	if mediaType == "" {
+		if _, present := raw["isSsd"]; present {
+			if boolValue(raw, "isSsd", "is_ssd") {
+				mediaType = "SSD"
+			} else {
+				mediaType = "HDD"
+			}
+		} else {
+			mediaType = stringValue(raw, "diskType")
+		}
+	}
 	return storage.Disk{
 		ID:            stringValue(raw, "id", "disk_id", "device"),
 		Name:          stringValue(raw, "name", "longName", "display_name"),
@@ -77,7 +171,7 @@ func decodeDisk(raw map[string]any) storage.Disk {
 		Model:         stringValue(raw, "model", "model_name"),
 		Serial:        stringValue(raw, "serial", "serial_number"),
 		Firmware:      stringValue(raw, "firm", "firmware", "firmware_version"),
-		Type:          stringValue(raw, "type", "disk_type", "media_type", "diskType"),
+		Type:          mediaType,
 		Interface:     stringValue(raw, "portType", "port_type", "interface", "diskType"),
 		Status:        status,
 		Health:        firstNonEmpty(stringValue(raw, "health", "health_status", "overview_status"), status),

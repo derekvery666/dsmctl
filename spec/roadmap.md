@@ -20,6 +20,10 @@ flowchart LR
   WI008["WI-008 Advanced share security"]
   WI009["WI-009 Credential lifecycle"]
   WI010["WI-010 Reliability and release hardening"]
+  WI014["WI-014 Portable gateway daemon"] --> WI015["WI-015 Gateway state/vault/admin"]
+  WI014 --> WI016["WI-016 Remote authorization/approval/audit"]
+  WI015 --> WI016
+  WI016 --> WI017["WI-017 amd64 Linux/Synology distribution"]
 ```
 
 ## Work queue
@@ -38,6 +42,11 @@ flowchart LR
 | WI-010 | P1 | `proposed` | E | ongoing | Structured DSM errors, observability, CI matrix, packaging, and release policy. |
 | [WI-011](work-items/WI-011-control-panel-time-mutation.md) | P2 | `done` | C | WI-006 | Guarded time zone, display format, and NTP changes. |
 | [WI-012](work-items/WI-012-file-services-smb-nfs.md) | P1 | `done` | C | WI-006 | Guarded global SMB and NFS state and settings. |
+| [WI-013](work-items/WI-013-ssd-cache.md) | P2 | `in_progress` | A | WI-001, WI-002, WI-003 | SSD cache inventory and guarded create/remove (expand/convert modeled, backend-gated). |
+| [WI-014](work-items/WI-014-portable-gateway-daemon.md) | P0 | `ready` | F | - | Establish a platform-neutral, read-only Streamable HTTP gateway and hardened amd64 container. |
+| [WI-015](work-items/WI-015-gateway-state-vault-admin.md) | P0 | `blocked` | F | WI-014 | Add transactional profiles, encrypted vault storage, administration, and runtime invalidation. |
+| [WI-016](work-items/WI-016-remote-authorization-approval-audit.md) | P0 | `blocked` | F | WI-014, WI-015 | Enforce scoped remote authorization, out-of-band high-risk approval, and redacted audit. |
+| [WI-017](work-items/WI-017-amd64-linux-synology-distribution.md) | P1 | `blocked` | G | WI-014, WI-015, WI-016 | Ship the same amd64 image for generic Linux and an offline Synology x86_64 Container Manager SPK. |
 
 Parallel groups indicate likely file overlap. Items in different groups may run
 at the same time after checking their `touches` lists. Only one agent should
@@ -65,3 +74,12 @@ The project does not become an untyped generic configuration proxy.
 
 Compatibility evidence, error semantics, packaging, and documentation are
 strong enough for third-party integrations to depend on stable CLI/MCP schemas.
+
+### M5 - Portable gateway distribution
+
+A single-owner operator can run one hardened `linux/amd64` gateway on ordinary
+Linux or install the identical image through a Synology x86_64 SPK, administer
+multiple independently authenticated NAS profiles, expose scoped remote MCP
+access, and require out-of-band approval for high-risk apply. The full scope and
+platform decisions are in
+[`gateway-deployment.md`](gateway-deployment.md).

@@ -474,7 +474,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_storage_state",
 		Title:       "Get storage state",
-		Description: "Read the normalized physical-disk, storage-pool, RAID type, volume, capacity, and health state from a selected NAS. This tool never changes storage.",
+		Description: "Read the normalized physical-disk, storage-pool, RAID type, volume, SSD cache, capacity, and health state from a selected NAS. This tool never changes storage.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getStorageInput) (*mcp.CallToolResult, getStorageStateOutput, error) {
 		result, err := service.GetStorageState(ctx, input.NAS)
@@ -487,7 +487,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "plan_storage_change",
 		Title:       "Plan a storage change",
-		Description: "Validate a typed storage-pool or volume manifest and return a topology-, capacity-, and safety-state-bound approval plan without mutating DSM.",
+		Description: "Validate a typed storage-pool, volume, or SSD cache manifest and return a topology-, capacity-, and safety-state-bound approval plan without mutating DSM.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planStorageChangeInput) (*mcp.CallToolResult, planStorageChangeOutput, error) {
 		plan, err := service.PlanStorageChange(ctx, input.NAS, input.Request)
@@ -500,7 +500,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "apply_storage_plan",
 		Title:       "Apply an approved storage plan",
-		Description: "Apply an unmodified storage plan only while its approval hash, stable IDs, and topology and safety fingerprints still match; then create, expand, or delete the planned storage pool or volume and verify the postcondition. Storage-pool RAID migration has no backend and fails closed.",
+		Description: "Apply an unmodified storage plan only while its approval hash, stable IDs, and topology and safety fingerprints still match; then create, expand, or delete the planned storage pool, volume, or SSD cache and verify the postcondition. Storage-pool RAID migration and, where a DSM lacks the backend, SSD cache expand and mode conversion fail closed.",
 		Annotations: mutationAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyStoragePlanInput) (*mcp.CallToolResult, applyStoragePlanOutput, error) {
 		result, err := service.ApplyStoragePlan(ctx, input.Plan, input.ApprovalHash)

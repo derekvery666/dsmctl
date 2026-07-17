@@ -187,6 +187,63 @@ larger than the observed volume size:
 }
 ```
 
+## SSD cache manifests
+
+SSD caches attach to a volume and reuse the same `storage plan` / `storage apply`
+flow under `resource: "cache"`. Read the current caches with `storage inventory`
+(an `SSD CACHES` section appears when one exists) and check support with
+`storage capabilities`.
+
+Create a read-only cache from one or more SSDs:
+
+```json
+{
+  "action": "create",
+  "resource": "cache",
+  "cache": {
+    "name": "read-cache",
+    "volume_id": "volume_1",
+    "cache_type": "read_only",
+    "disk_ids": ["sda"]
+  }
+}
+```
+
+A read-write cache requires a protection RAID and at least two SSDs:
+
+```json
+{
+  "action": "create",
+  "resource": "cache",
+  "cache": {
+    "name": "rw-cache",
+    "volume_id": "volume_1",
+    "cache_type": "read_write",
+    "protection_raid": "raid1",
+    "disk_ids": ["sda", "sdb"]
+  }
+}
+```
+
+Remove a cache by its stable DSM ID:
+
+```json
+{"action":"delete","resource":"cache","cache":{"id":"cache_1"}}
+```
+
+Cache SSD candidates must be SSD media, unused by a storage pool, selectable, and
+healthy; the DSM boot SSDs (reported as `sys_partition_normal`) are accepted as
+cache media. A volume may hold only one cache. Removing a **read-write** cache
+flushes dirty data and is planned as high risk with a `cache_dirty_flush`
+destructive consequence; removing a read-only cache is non-destructive.
+
+The contract also models `update` (add SSDs) and `convert` (read-only↔read-write,
+a dedicated `convert` action because read-write→read-only flushes dirty data).
+These are only offered where a DSM advertises the backend; the discovered DSM 7.3
+`SYNO.Storage.CGI.Flashcache` API exposes only create (`enable`) and remove
+(`remove`), so `storage capabilities` reports cache expand and convert as
+unsupported there and planning fails closed.
+
 ## Plan binding
 
 The storage plan contains:

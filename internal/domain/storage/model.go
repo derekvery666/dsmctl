@@ -1,12 +1,14 @@
 package storage
 
 const (
-	ActionCreate = "create"
-	ActionUpdate = "update"
-	ActionDelete = "delete"
+	ActionCreate  = "create"
+	ActionUpdate  = "update"
+	ActionConvert = "convert"
+	ActionDelete  = "delete"
 
 	ResourcePool   = "pool"
 	ResourceVolume = "volume"
+	ResourceCache  = "cache"
 
 	RAIDSHR   = "shr"
 	RAIDSHR2  = "shr2"
@@ -23,6 +25,11 @@ const (
 
 	CapacityMaximum = "maximum"
 	CapacityExact   = "exact"
+
+	// SSD cache modes. The operation layer maps these canonical names to the
+	// DSM "ro"/"rw" flashcache values; the domain never exposes DSM strings.
+	CacheModeReadOnly  = "read_only"
+	CacheModeReadWrite = "read_write"
 )
 
 // State is a stable, DSM-version-independent snapshot of the storage resources
@@ -31,8 +38,10 @@ type State struct {
 	Disks          []Disk                    `json:"disks" jsonschema:"Physical disks reported by DSM"`
 	Pools          []Pool                    `json:"pools" jsonschema:"Storage pools and RAID groups reported by DSM"`
 	Volumes        []Volume                  `json:"volumes" jsonschema:"Volumes reported by DSM"`
+	Caches         []Cache                   `json:"caches" jsonschema:"SSD (flashcache) caches reported by DSM"`
 	PoolCreation   PoolCreationConstraints   `json:"pool_creation" jsonschema:"Model-level constraints used to calculate applicable pool RAID choices"`
 	VolumeCreation VolumeCreationConstraints `json:"volume_creation" jsonschema:"Model-level constraints used to validate volume creation"`
+	CacheCreation  CacheCreationConstraints  `json:"cache_creation" jsonschema:"Model-level constraints used to validate SSD cache creation"`
 }
 
 type PoolCreationConstraints struct {
@@ -44,6 +53,19 @@ type VolumeCreationConstraints struct {
 	SupportedFileSystems []string `json:"supported_file_systems" jsonschema:"Filesystem types explicitly advertised by this DSM model"`
 	MinimumSizeBytes     uint64   `json:"minimum_size_bytes" jsonschema:"Minimum volume allocation accepted by Storage Manager"`
 	MaxFileSystemBytes   uint64   `json:"max_file_system_bytes,omitempty" jsonschema:"Model-level filesystem size limit reported by DSM when available"`
+}
+
+// CacheCreationConstraints holds model-level SSD cache facts used to validate a
+// cache request without re-deriving them in the planner. Read-write support is
+// gated on the DSM protection API being present.
+type CacheCreationConstraints struct {
+	SupportsReadOnly    bool     `json:"supports_read_only" jsonschema:"Whether this DSM model advertises read-only SSD cache support"`
+	SupportsReadWrite   bool     `json:"supports_read_write" jsonschema:"Whether this DSM model advertises read-write SSD cache support"`
+	SupportsProtection  bool     `json:"supports_protection" jsonschema:"Whether the read-write cache protection RAID backend is available"`
+	ProtectionRAIDTypes []string `json:"protection_raid_types,omitempty" jsonschema:"RAID types accepted for read-write cache protection, such as raid1, raid5, or raid6"`
+	MinReadOnlyDisks    int      `json:"min_read_only_disks,omitempty" jsonschema:"Minimum SSDs required for a read-only cache"`
+	MinReadWriteDisks   int      `json:"min_read_write_disks,omitempty" jsonschema:"Minimum SSDs required for a read-write cache"`
+	MaxDisks            int      `json:"max_disks,omitempty" jsonschema:"Maximum cache SSD slots reported by DSM when available"`
 }
 
 type Disk struct {
@@ -111,6 +133,31 @@ type Volume struct {
 	CanDelete          bool   `json:"can_delete" jsonschema:"Whether DSM reports volume deletion available"`
 }
 
+// Cache is a stable, DSM-version-independent snapshot of one SSD (flashcache)
+// cache mounted on a volume. DSM's internal "flashcache" naming is confined to
+// the operation layer; the domain uses "cache" and the CacheMode* constants.
+type Cache struct {
+	ID               string   `json:"id" jsonschema:"Stable DSM SSD cache identifier"`
+	Name             string   `json:"name,omitempty" jsonschema:"Human-readable cache name"`
+	VolumeID         string   `json:"volume_id,omitempty" jsonschema:"Stable identifier of the cached parent volume"`
+	VolumePath       string   `json:"volume_path,omitempty" jsonschema:"Mount point of the cached parent volume, for example /volume1"`
+	PoolID           string   `json:"pool_id,omitempty" jsonschema:"Stable identifier of the pool containing the cached volume"`
+	CacheType        string   `json:"cache_type,omitempty" jsonschema:"Normalized cache mode: read_only or read_write"`
+	ProtectionRAID   string   `json:"protection_raid,omitempty" jsonschema:"Protection RAID type for a read-write cache, such as raid1, raid5, or raid6"`
+	DiskIDs          []string `json:"disk_ids" jsonschema:"Stable DSM identifiers of the SSDs backing the cache"`
+	SizeBytes        uint64   `json:"size_bytes,omitempty" jsonschema:"Cache capacity in bytes"`
+	Status           string   `json:"status,omitempty" jsonschema:"Normalized DSM cache status code"`
+	Health           string   `json:"health,omitempty" jsonschema:"DSM health or overview status"`
+	ProtectionStatus string   `json:"protection_status,omitempty" jsonschema:"Read-write protection RAID status such as normal or degraded"`
+	HasDirtyData     bool     `json:"has_dirty_data" jsonschema:"Whether a read-write cache holds unflushed dirty data"`
+	Mounted          bool     `json:"mounted" jsonschema:"Whether DSM reports the cache mounted on its volume"`
+	Actioning        bool     `json:"actioning" jsonschema:"Whether a cache operation is already in progress"`
+	Flushing         bool     `json:"flushing" jsonschema:"Whether a read-write dirty-data flush is in progress"`
+	CanExpand        bool     `json:"can_expand" jsonschema:"Whether DSM reports adding SSDs to the cache available"`
+	CanConvert       bool     `json:"can_convert" jsonschema:"Whether DSM reports converting the cache mode available"`
+	CanDelete        bool     `json:"can_delete" jsonschema:"Whether DSM reports cache removal available"`
+}
+
 // Capabilities deliberately distinguishes the read-only first milestone from
 // future mutation support so an agent cannot infer that discovery implies write
 // access.
@@ -125,6 +172,11 @@ type Capabilities struct {
 	VolumeCreate  bool `json:"volume_create" jsonschema:"Volumes can be created through guarded plan/apply"`
 	VolumeUpdate  bool `json:"volume_update" jsonschema:"Volumes can be expanded through guarded plan/apply"`
 	VolumeDelete  bool `json:"volume_delete" jsonschema:"Volumes can be deleted through guarded plan/apply"`
+	CacheStatus   bool `json:"cache_status" jsonschema:"SSD cache inventory and status can be read"`
+	CacheCreate   bool `json:"cache_create" jsonschema:"SSD caches can be created through guarded plan/apply"`
+	CacheExpand   bool `json:"cache_expand" jsonschema:"SSD caches can be expanded with additional SSDs through guarded plan/apply"`
+	CacheConvert  bool `json:"cache_convert" jsonschema:"SSD caches can be converted between read-only and read-write through guarded plan/apply"`
+	CacheDelete   bool `json:"cache_delete" jsonschema:"SSD caches can be removed through guarded plan/apply"`
 	Mutations     bool `json:"mutations" jsonschema:"Any storage mutation is currently exposed"`
 }
 
@@ -134,10 +186,11 @@ type Capabilities struct {
 // RAID type, or expand a volume. Delete names an existing resource by stable
 // DSM ID.
 type ChangeRequest struct {
-	Action   string        `json:"action" jsonschema:"Storage action: create, update, or delete"`
-	Resource string        `json:"resource" jsonschema:"Storage resource: pool or volume"`
+	Action   string        `json:"action" jsonschema:"Storage action: create, update, convert, or delete"`
+	Resource string        `json:"resource" jsonschema:"Storage resource: pool, volume, or cache"`
 	Pool     *PoolChange   `json:"pool,omitempty" jsonschema:"Storage-pool intent when resource is pool"`
 	Volume   *VolumeChange `json:"volume,omitempty" jsonschema:"Volume intent when resource is volume"`
+	Cache    *CacheChange  `json:"cache,omitempty" jsonschema:"SSD cache intent when resource is cache"`
 }
 
 // PoolChange uses DiskIDs only for create and AddDiskIDs only for update.
@@ -168,4 +221,20 @@ type VolumeChange struct {
 type CapacityPolicy struct {
 	Mode      string `json:"mode" jsonschema:"Capacity policy: maximum or exact"`
 	SizeBytes uint64 `json:"size_bytes,omitempty" jsonschema:"Requested bytes when mode is exact; zero when mode is maximum"`
+}
+
+// CacheChange is the SSD cache intent. Ownership follows the storage contract:
+// create owns the complete initial cache (parent volume, mode, SSD set, and, for
+// read-write, the protection RAID); update (expand) only adds SSDs; convert only
+// changes the mode (and may add SSDs and a protection RAID when enabling
+// read-write); delete names an existing cache by stable DSM ID.
+type CacheChange struct {
+	ID             string   `json:"id,omitempty" jsonschema:"Stable DSM cache identifier for update, convert, or delete"`
+	Name           string   `json:"name,omitempty" jsonschema:"New cache name for create"`
+	VolumeID       string   `json:"volume_id,omitempty" jsonschema:"Stable DSM parent volume identifier for create"`
+	CacheType      string   `json:"cache_type,omitempty" jsonschema:"Initial cache mode for create: read_only or read_write"`
+	DiskIDs        []string `json:"disk_ids,omitempty" jsonschema:"Complete initial set of stable SSD identifiers for create"`
+	ProtectionRAID string   `json:"protection_raid,omitempty" jsonschema:"Protection RAID for a read-write create or convert: raid1, raid5, or raid6"`
+	AddDiskIDs     []string `json:"add_disk_ids,omitempty" jsonschema:"Stable SSD identifiers to add during expand, or to satisfy read-write disk minimums during convert"`
+	TargetMode     *string  `json:"target_mode,omitempty" jsonschema:"Desired cache mode for convert: read_only or read_write"`
 }

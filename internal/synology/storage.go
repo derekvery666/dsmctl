@@ -7,6 +7,7 @@ import (
 
 	"github.com/ychiu1211/dsmctl/internal/domain/storage"
 	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
+	"github.com/ychiu1211/dsmctl/internal/synology/operations/storageflashcachemutation"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/storageinventory"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/storagemodelconstraints"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/storagepoolmutation"
@@ -33,6 +34,8 @@ func (c *Client) StorageState(ctx context.Context) (StorageState, error) {
 	defer c.mu.Unlock()
 
 	apiNames := append(storageinventory.APINames(), storagemodelconstraints.APINames()...)
+	apiNames = append(apiNames, storageflashcachemutation.APINames()...)
+	apiNames = append(apiNames, storageflashcachemutation.ProtectionAPIName)
 	if err := c.prepareCompatibilityTargetLocked(ctx, apiNames...); err != nil {
 		return StorageState{}, fmt.Errorf("prepare storage inventory target: %w", err)
 	}
@@ -41,6 +44,13 @@ func (c *Client) StorageState(ctx context.Context) (StorageState, error) {
 		return StorageState{}, fmt.Errorf("get storage inventory: %w", err)
 	}
 	c.target.AddCapability(storageinventory.CapabilityName)
+	cacheSelections, cacheErr := storageflashcachemutation.Select(c.target)
+	if cacheErr != nil && !compatibility.IsUnsupported(cacheErr) {
+		return StorageState{}, fmt.Errorf("select SSD cache backends: %w", cacheErr)
+	}
+	state.CacheCreation.SupportsReadOnly = storageflashcachemutation.Supported(cacheSelections, 0)
+	state.CacheCreation.SupportsProtection = c.target.SupportsAPI(storageflashcachemutation.ProtectionAPIName, 1)
+	state.CacheCreation.SupportsReadWrite = state.CacheCreation.SupportsReadOnly && state.CacheCreation.SupportsProtection
 	modelSelection, selectErr := storagemodelconstraints.Select(c.target)
 	if selectErr == nil && modelSelection.Supported {
 		constraints, selection, executeErr := storagemodelconstraints.Execute(ctx, c.target, lockedExecutor{client: c})
@@ -62,6 +72,8 @@ func (c *Client) StorageCapabilities(ctx context.Context) (StorageCapabilities, 
 	apiNames := append(storageinventory.APINames(), storagemodelconstraints.APINames()...)
 	apiNames = append(apiNames, storagepoolmutation.APINames()...)
 	apiNames = append(apiNames, volumemutation.APINames()...)
+	apiNames = append(apiNames, storageflashcachemutation.APINames()...)
+	apiNames = append(apiNames, storageflashcachemutation.ProtectionAPIName)
 	if err := c.prepareCompatibilityTargetLocked(ctx, apiNames...); err != nil {
 		return StorageCapabilities{}, CompatibilityReport{}, fmt.Errorf("prepare storage capabilities target: %w", err)
 	}
@@ -91,6 +103,12 @@ func (c *Client) StorageCapabilities(ctx context.Context) (StorageCapabilities, 
 	volumeCreate := modelSelection.Supported && volumemutation.Supported(volumeSelections, 0)
 	volumeExpand := volumemutation.Supported(volumeSelections, 1)
 	volumeDelete := volumemutation.Supported(volumeSelections, 2)
+	cacheSelections, err := storageflashcachemutation.Select(c.target)
+	if err != nil {
+		return StorageCapabilities{}, CompatibilityReport{}, fmt.Errorf("select SSD cache backends: %w", err)
+	}
+	cacheCreate := storageflashcachemutation.Supported(cacheSelections, 0)
+	cacheDelete := storageflashcachemutation.Supported(cacheSelections, 1)
 	capabilities := StorageCapabilities{
 		InventoryRead: supported,
 		DiskStatus:    supported,
@@ -102,11 +120,19 @@ func (c *Client) StorageCapabilities(ctx context.Context) (StorageCapabilities, 
 		VolumeCreate:  volumeCreate,
 		VolumeUpdate:  volumeExpand,
 		VolumeDelete:  volumeDelete,
-		Mutations:     poolCreate || poolExpand || poolDelete || volumeCreate || volumeExpand || volumeDelete,
+		CacheStatus:   supported,
+		CacheCreate:   cacheCreate,
+		CacheDelete:   cacheDelete,
+		// This DSM's SSD cache API exposes only create and remove; expand and
+		// mode conversion have no backend method and stay fail-closed.
+		CacheExpand:  false,
+		CacheConvert: false,
+		Mutations:    poolCreate || poolExpand || poolDelete || volumeCreate || volumeExpand || volumeDelete || cacheCreate || cacheDelete,
 	}
 	c.updateDerivedCapabilitiesLocked()
 	selections := append([]compatibility.Selection{selection, modelSelection}, mutationSelections...)
 	selections = append(selections, volumeSelections...)
+	selections = append(selections, cacheSelections...)
 	return capabilities, c.target.Report(selections...), nil
 }
 
@@ -130,7 +156,88 @@ func (c *Client) ApplyStorageChange(ctx context.Context, input StorageMutationIn
 		}
 		return c.applyVolumeChange(ctx, request, state, input.ResolvedCapacityBytes)
 	}
+	if request.Resource == storage.ResourceCache {
+		if request.Cache == nil || request.Pool != nil || request.Volume != nil {
+			return StorageMutationResult{}, fmt.Errorf("SSD cache backend requires exactly one cache intent")
+		}
+		return c.applyCacheChange(ctx, request, state)
+	}
 	return StorageMutationResult{}, fmt.Errorf("unsupported storage resource %q", request.Resource)
+}
+
+// applyCacheChange resolves the DSM reference path (parent volume identifier) and
+// the device RAID string from observed state, then runs the selected SSD cache
+// operation. Only create and delete are backed on this DSM; expand and convert
+// are rejected earlier in the application layer.
+func (c *Client) applyCacheChange(ctx context.Context, request StorageChangeRequest, state StorageState) (StorageMutationResult, error) {
+	change := request.Cache
+	referencePath, cacheType, protectionRAID := "", "", change.ProtectionRAID
+	switch request.Action {
+	case storage.ActionCreate:
+		referencePath = change.VolumeID
+		cacheType = change.CacheType
+	case storage.ActionDelete:
+		for _, cache := range state.Caches {
+			if cache.ID == change.ID {
+				referencePath = cache.VolumeID
+				cacheType = cache.CacheType
+				break
+			}
+		}
+		if referencePath == "" {
+			return StorageMutationResult{}, fmt.Errorf("SSD cache %q is missing from observed state", change.ID)
+		}
+	default:
+		return StorageMutationResult{}, fmt.Errorf("unsupported SSD cache action %q", request.Action)
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.prepareCompatibilityTargetLocked(ctx, storageflashcachemutation.APINames()...); err != nil {
+		return StorageMutationResult{}, fmt.Errorf("prepare SSD cache mutation target: %w", err)
+	}
+	input := storageflashcachemutation.Input{
+		Action:        request.Action,
+		CacheType:     cacheType,
+		ReferencePath: referencePath,
+		RAIDType:      cacheDeviceType(cacheType, protectionRAID, len(change.DiskIDs)),
+		DiskIDs:       change.DiskIDs,
+	}
+	if request.Action == storage.ActionCreate {
+		size, sizeErr := storageflashcachemutation.EstimateRAIDSize(ctx, lockedExecutor{client: c}, change.DiskIDs, input.RAIDType)
+		if sizeErr != nil {
+			return StorageMutationResult{}, fmt.Errorf("resolve SSD cache size: %w", sizeErr)
+		}
+		input.SizeBytes = size
+		input.IsMax = true
+	}
+	result, selection, err := storageflashcachemutation.Execute(ctx, c.target, lockedExecutor{client: c}, input)
+	if err != nil {
+		return StorageMutationResult{}, fmt.Errorf("apply SSD cache %s: %w", request.Action, err)
+	}
+	c.target.AddCapability(selection.Operation)
+	return StorageMutationResult{ResourceID: result.ResourceID, Operation: result.Operation}, nil
+}
+
+// cacheDeviceType maps the normalized cache mode and protection RAID to DSM's
+// flashcache device string. A read-write cache uses its protection RAID
+// (raid_1, raid_5, or raid_6); a read-only cache stripes across its SSDs as
+// raid_0, or uses basic for a single SSD.
+func cacheDeviceType(cacheType, protectionRAID string, diskCount int) string {
+	if cacheType == storage.CacheModeReadWrite {
+		switch protectionRAID {
+		case storage.RAID1:
+			return "raid_1"
+		case storage.RAID5:
+			return "raid_5"
+		case storage.RAID6:
+			return "raid_6"
+		}
+	}
+	if diskCount <= 1 {
+		return "basic"
+	}
+	return "raid_0"
 }
 
 func (c *Client) applyStoragePoolChange(ctx context.Context, request StorageChangeRequest, state StorageState) (StorageMutationResult, error) {

@@ -36,12 +36,14 @@ type StoragePlan struct {
 }
 
 type StorageStableReferences struct {
-	ResourceID string   `json:"resource_id,omitempty" jsonschema:"Stable DSM ID of the pool or volume being changed"`
-	PoolID     string   `json:"pool_id,omitempty" jsonschema:"Stable DSM storage-pool ID referenced by the intent"`
-	PoolPath   string   `json:"pool_path,omitempty" jsonschema:"Stable DSM pool_path captured while planning a volume change"`
-	SpacePath  string   `json:"space_path,omitempty" jsonschema:"Stable DSM space_path captured while planning a single-volume deployment"`
-	PoolLayout string   `json:"pool_layout,omitempty" jsonschema:"DSM pool volume layout captured while planning"`
-	DiskIDs    []string `json:"disk_ids,omitempty" jsonschema:"Sorted stable DSM disk IDs participating in the topology"`
+	ResourceID      string   `json:"resource_id,omitempty" jsonschema:"Stable DSM ID of the pool, volume, or cache being changed"`
+	PoolID          string   `json:"pool_id,omitempty" jsonschema:"Stable DSM storage-pool ID referenced by the intent"`
+	PoolPath        string   `json:"pool_path,omitempty" jsonschema:"Stable DSM pool_path captured while planning a volume change"`
+	SpacePath       string   `json:"space_path,omitempty" jsonschema:"Stable DSM space_path captured while planning a single-volume deployment"`
+	PoolLayout      string   `json:"pool_layout,omitempty" jsonschema:"DSM pool volume layout captured while planning"`
+	DiskIDs         []string `json:"disk_ids,omitempty" jsonschema:"Sorted stable DSM disk IDs participating in the topology"`
+	CacheID         string   `json:"cache_id,omitempty" jsonschema:"Stable DSM SSD cache ID captured while planning a cache change"`
+	CacheVolumePath string   `json:"cache_volume_path,omitempty" jsonschema:"Parent volume identifier DSM addresses the SSD cache by"`
 }
 
 type StorageDestructiveConsequence struct {
@@ -113,7 +115,7 @@ func ensureStorageBackendScope(request storage.ChangeRequest) error {
 	if request.Resource == storage.ResourcePool && request.Action == storage.ActionUpdate && request.Pool != nil && request.Pool.TargetRAIDType != nil {
 		return fmt.Errorf("storage-pool RAID migration is not implemented; no DSM request was sent")
 	}
-	if request.Resource != storage.ResourcePool && request.Resource != storage.ResourceVolume {
+	if request.Resource != storage.ResourcePool && request.Resource != storage.ResourceVolume && request.Resource != storage.ResourceCache {
 		return ErrStorageMutationBackendUnavailable
 	}
 	return nil
@@ -176,6 +178,20 @@ func applyStoragePlanWithClient(ctx context.Context, client storageManagementCli
 }
 
 func storageActionSupported(capabilities storage.Capabilities, resource, action string) bool {
+	if resource == storage.ResourceCache {
+		switch action {
+		case storage.ActionCreate:
+			return capabilities.CacheCreate
+		case storage.ActionUpdate:
+			return capabilities.CacheExpand
+		case storage.ActionConvert:
+			return capabilities.CacheConvert
+		case storage.ActionDelete:
+			return capabilities.CacheDelete
+		default:
+			return false
+		}
+	}
 	if resource == storage.ResourceVolume {
 		switch action {
 		case storage.ActionCreate:
@@ -250,6 +266,18 @@ type storageTopology struct {
 	Disks   []storageTopologyDisk   `json:"disks"`
 	Pools   []storageTopologyPool   `json:"pools"`
 	Volumes []storageTopologyVolume `json:"volumes"`
+	Caches  []storageTopologyCache  `json:"caches,omitempty"`
+}
+
+// storageTopologyCache carries the cache identity facts that must invalidate a
+// stale plan: a parent-volume change, a mode flip, or an SSD add/remove.
+type storageTopologyCache struct {
+	ID             string   `json:"id"`
+	VolumeID       string   `json:"volume_id,omitempty"`
+	CacheType      string   `json:"cache_type,omitempty"`
+	ProtectionRAID string   `json:"protection_raid,omitempty"`
+	DiskIDs        []string `json:"disk_ids"`
+	SizeBytes      uint64   `json:"size_bytes,omitempty"`
 }
 
 type storageTopologyDisk struct {
@@ -283,9 +311,27 @@ type storageTopologyVolume struct {
 type storageSafetyObservation struct {
 	PoolCreation   storage.PoolCreationConstraints   `json:"pool_creation"`
 	VolumeCreation storage.VolumeCreationConstraints `json:"volume_creation"`
+	CacheCreation  *storage.CacheCreationConstraints `json:"cache_creation,omitempty"`
 	Disks          []storageSafetyDisk               `json:"disks,omitempty"`
 	Pool           *storageSafetyPool                `json:"pool,omitempty"`
 	Volume         *storageSafetyVolume              `json:"volume,omitempty"`
+	Cache          *storageSafetyCache               `json:"cache,omitempty"`
+}
+
+type storageSafetyCache struct {
+	ID               string   `json:"id"`
+	VolumeID         string   `json:"volume_id"`
+	CacheType        string   `json:"cache_type"`
+	ProtectionRAID   string   `json:"protection_raid,omitempty"`
+	Status           string   `json:"status"`
+	Health           string   `json:"health"`
+	ProtectionStatus string   `json:"protection_status,omitempty"`
+	DiskIDs          []string `json:"disk_ids"`
+	HasDirtyData     bool     `json:"has_dirty_data"`
+	Flushing         bool     `json:"flushing"`
+	Actioning        bool     `json:"actioning"`
+	CanDelete        bool     `json:"can_delete"`
+	SizeBytes        uint64   `json:"size_bytes,omitempty"`
 }
 
 type storageSafetyDisk struct {
@@ -404,9 +450,29 @@ func normalizeStorageTopology(state storage.State) (storageTopology, error) {
 			MaxFileSystemBytes: volume.MaxFileSystemBytes, ReadOnly: volume.ReadOnly,
 		})
 	}
+	seenCaches := make(map[string]struct{}, len(state.Caches))
+	for _, cache := range state.Caches {
+		id := strings.TrimSpace(cache.ID)
+		if id == "" {
+			return storageTopology{}, fmt.Errorf("storage inventory contains an SSD cache without a stable ID")
+		}
+		if _, duplicate := seenCaches[id]; duplicate {
+			return storageTopology{}, fmt.Errorf("storage inventory contains duplicate SSD cache ID %q", id)
+		}
+		seenCaches[id] = struct{}{}
+		diskIDs, err := canonicalIDs("cache disk", cache.DiskIDs)
+		if err != nil {
+			return storageTopology{}, fmt.Errorf("cache %q: %w", id, err)
+		}
+		topology.Caches = append(topology.Caches, storageTopologyCache{
+			ID: id, VolumeID: strings.TrimSpace(cache.VolumeID), CacheType: cache.CacheType,
+			ProtectionRAID: normalizeObservedRAIDType(cache.ProtectionRAID), DiskIDs: diskIDs, SizeBytes: cache.SizeBytes,
+		})
+	}
 	sort.Slice(topology.Disks, func(i, j int) bool { return topology.Disks[i].ID < topology.Disks[j].ID })
 	sort.Slice(topology.Pools, func(i, j int) bool { return topology.Pools[i].ID < topology.Pools[j].ID })
 	sort.Slice(topology.Volumes, func(i, j int) bool { return topology.Volumes[i].ID < topology.Volumes[j].ID })
+	sort.Slice(topology.Caches, func(i, j int) bool { return topology.Caches[i].ID < topology.Caches[j].ID })
 	return topology, nil
 }
 
@@ -462,6 +528,33 @@ func canonicalStorageRequest(request storage.ChangeRequest) (storage.ChangeReque
 		}
 		canonical.Volume = &volume
 	}
+	if request.Cache != nil {
+		cache := *request.Cache
+		cache.ID = strings.TrimSpace(cache.ID)
+		cache.Name = strings.TrimSpace(cache.Name)
+		cache.VolumeID = strings.TrimSpace(cache.VolumeID)
+		cache.CacheType = strings.ToLower(strings.TrimSpace(cache.CacheType))
+		var err error
+		cache.DiskIDs, err = canonicalIDs("disk", cache.DiskIDs)
+		if err != nil {
+			return storage.ChangeRequest{}, err
+		}
+		cache.AddDiskIDs, err = canonicalIDs("disk", cache.AddDiskIDs)
+		if err != nil {
+			return storage.ChangeRequest{}, err
+		}
+		if cache.ProtectionRAID != "" {
+			cache.ProtectionRAID, err = canonicalRAIDType(cache.ProtectionRAID)
+			if err != nil {
+				return storage.ChangeRequest{}, err
+			}
+		}
+		if cache.TargetMode != nil {
+			mode := strings.ToLower(strings.TrimSpace(*cache.TargetMode))
+			cache.TargetMode = &mode
+		}
+		canonical.Cache = &cache
+	}
 	if err := validateStorageRequestShape(canonical); err != nil {
 		return storage.ChangeRequest{}, err
 	}
@@ -469,23 +562,111 @@ func canonicalStorageRequest(request storage.ChangeRequest) (storage.ChangeReque
 }
 
 func validateStorageRequestShape(request storage.ChangeRequest) error {
-	if request.Action != storage.ActionCreate && request.Action != storage.ActionUpdate && request.Action != storage.ActionDelete {
+	if request.Action != storage.ActionCreate && request.Action != storage.ActionUpdate && request.Action != storage.ActionConvert && request.Action != storage.ActionDelete {
 		return fmt.Errorf("unsupported storage action %q", request.Action)
 	}
 	switch request.Resource {
 	case storage.ResourcePool:
-		if request.Pool == nil || request.Volume != nil {
+		if request.Pool == nil || request.Volume != nil || request.Cache != nil {
 			return fmt.Errorf("pool resource requires exactly one pool intent")
 		}
 		return validatePoolChange(request.Action, *request.Pool)
 	case storage.ResourceVolume:
-		if request.Volume == nil || request.Pool != nil {
+		if request.Volume == nil || request.Pool != nil || request.Cache != nil {
 			return fmt.Errorf("volume resource requires exactly one volume intent")
 		}
 		return validateVolumeChange(request.Action, *request.Volume)
+	case storage.ResourceCache:
+		if request.Cache == nil || request.Pool != nil || request.Volume != nil {
+			return fmt.Errorf("cache resource requires exactly one cache intent")
+		}
+		return validateCacheChange(request.Action, *request.Cache)
 	default:
 		return fmt.Errorf("unsupported storage resource %q", request.Resource)
 	}
+}
+
+// validateCacheChange enforces per-action field ownership for SSD cache intents.
+// Create owns the full initial cache; update (expand) only adds SSDs; convert
+// only changes the mode (and may add SSDs and a protection RAID when enabling
+// read-write); delete names an existing cache by stable ID. The convert and
+// update actions are shape-validated here even though a given DSM may report them
+// unsupported; the capability gate rejects an unbacked action separately.
+func validateCacheChange(action string, change storage.CacheChange) error {
+	switch action {
+	case storage.ActionCreate:
+		if change.ID != "" || len(change.AddDiskIDs) != 0 || change.TargetMode != nil {
+			return fmt.Errorf("cache create accepts only name, volume_id, cache_type, disk_ids, and protection_raid")
+		}
+		if err := validateStorageName("cache", change.Name); err != nil {
+			return err
+		}
+		if change.VolumeID == "" {
+			return fmt.Errorf("cache create requires the parent volume_id")
+		}
+		switch change.CacheType {
+		case storage.CacheModeReadOnly:
+			if change.ProtectionRAID != "" {
+				return fmt.Errorf("a read-only cache does not accept protection_raid")
+			}
+			if len(change.DiskIDs) < 1 {
+				return fmt.Errorf("a read-only cache requires at least one SSD")
+			}
+		case storage.CacheModeReadWrite:
+			if !isCacheProtectionRAID(change.ProtectionRAID) {
+				return fmt.Errorf("a read-write cache requires protection_raid of raid1, raid5, or raid6")
+			}
+			if err := validateRAIDDiskCount(change.ProtectionRAID, len(change.DiskIDs)); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("cache create requires cache_type read_only or read_write")
+		}
+	case storage.ActionUpdate:
+		if change.ID == "" {
+			return fmt.Errorf("cache expand requires stable id")
+		}
+		if change.Name != "" || change.VolumeID != "" || change.CacheType != "" || len(change.DiskIDs) != 0 || change.ProtectionRAID != "" || change.TargetMode != nil {
+			return fmt.Errorf("cache expand is patch-only and accepts only id and add_disk_ids")
+		}
+		if len(change.AddDiskIDs) == 0 {
+			return fmt.Errorf("cache expand requires at least one SSD in add_disk_ids")
+		}
+	case storage.ActionConvert:
+		if change.ID == "" {
+			return fmt.Errorf("cache convert requires stable id")
+		}
+		if change.TargetMode == nil {
+			return fmt.Errorf("cache convert requires target_mode")
+		}
+		if change.Name != "" || change.VolumeID != "" || change.CacheType != "" || len(change.DiskIDs) != 0 {
+			return fmt.Errorf("cache convert accepts only id, target_mode, add_disk_ids, and protection_raid")
+		}
+		switch *change.TargetMode {
+		case storage.CacheModeReadWrite:
+			if change.ProtectionRAID != "" && !isCacheProtectionRAID(change.ProtectionRAID) {
+				return fmt.Errorf("cache convert protection_raid must be raid1, raid5, or raid6")
+			}
+		case storage.CacheModeReadOnly:
+			if change.ProtectionRAID != "" || len(change.AddDiskIDs) != 0 {
+				return fmt.Errorf("converting to read-only accepts only id and target_mode")
+			}
+		default:
+			return fmt.Errorf("cache convert target_mode must be read_only or read_write")
+		}
+	case storage.ActionDelete:
+		if change.ID == "" {
+			return fmt.Errorf("cache delete requires stable id")
+		}
+		if change.Name != "" || change.VolumeID != "" || change.CacheType != "" || len(change.DiskIDs) != 0 || len(change.AddDiskIDs) != 0 || change.ProtectionRAID != "" || change.TargetMode != nil {
+			return fmt.Errorf("cache delete accepts only stable id")
+		}
+	}
+	return nil
+}
+
+func isCacheProtectionRAID(value string) bool {
+	return value == storage.RAID1 || value == storage.RAID5 || value == storage.RAID6
 }
 
 func validatePoolChange(action string, change storage.PoolChange) error {
@@ -599,6 +780,9 @@ func validateStorageTopologyReferences(topology storageTopology, request storage
 			occupied[diskID] = pool.ID
 		}
 	}
+	if request.Resource == storage.ResourceCache {
+		return validateCacheTopologyReferences(topology, disks, occupied, request)
+	}
 	if request.Resource == storage.ResourcePool {
 		change := request.Pool
 		if request.Action == storage.ActionCreate {
@@ -656,6 +840,9 @@ func validateStorageTopologyReferences(topology storageTopology, request storage
 }
 
 func validateStorageMutationSafety(state storage.State, topology storageTopology, request storage.ChangeRequest) ([]string, uint64, error) {
+	if request.Resource == storage.ResourceCache {
+		return nil, 0, validateCacheMutationSafety(state, request)
+	}
 	if request.Resource == storage.ResourceVolume {
 		resolved, err := validateVolumeMutationSafety(state, request)
 		return nil, resolved, err
@@ -909,8 +1096,214 @@ func applicablePoolRAIDTypes(constraints storage.PoolCreationConstraints, diskCo
 	return result
 }
 
+func validateCacheTopologyReferences(topology storageTopology, disks map[string]storageTopologyDisk, occupied map[string]string, request storage.ChangeRequest) error {
+	change := request.Cache
+	cachedVolumes := make(map[string]string, len(topology.Caches))
+	for _, cache := range topology.Caches {
+		cachedVolumes[cache.VolumeID] = cache.ID
+		for _, diskID := range cache.DiskIDs {
+			if _, found := occupied[diskID]; !found {
+				occupied[diskID] = cache.ID
+			}
+		}
+	}
+	if request.Action == storage.ActionCreate {
+		if _, found := topologyVolumeByID(topology, change.VolumeID); !found {
+			return fmt.Errorf("volume with stable ID %q does not exist", change.VolumeID)
+		}
+		if cacheID, found := cachedVolumes[change.VolumeID]; found {
+			return fmt.Errorf("volume %q already has SSD cache %q", change.VolumeID, cacheID)
+		}
+		return validateAvailableDisks(disks, occupied, change.DiskIDs)
+	}
+	cache, found := topologyCacheByID(topology, change.ID)
+	if !found {
+		return fmt.Errorf("SSD cache with stable ID %q does not exist", change.ID)
+	}
+	if len(change.AddDiskIDs) > 0 {
+		if err := validateAvailableDisks(disks, occupied, change.AddDiskIDs); err != nil {
+			return err
+		}
+	}
+	if request.Action == storage.ActionConvert {
+		if cache.CacheType != "" && cache.CacheType == *change.TargetMode {
+			return fmt.Errorf("cache %q is already %s", cache.ID, *change.TargetMode)
+		}
+		if *change.TargetMode == storage.CacheModeReadWrite && change.ProtectionRAID != "" {
+			if err := validateRAIDDiskCount(change.ProtectionRAID, len(cache.DiskIDs)+len(change.AddDiskIDs)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// validateCacheMutationSafety checks live-state safety for an SSD cache change:
+// candidate SSD eligibility, parent-volume writability, mode support, and that a
+// target cache is not mid-action. Read-write requires the protection RAID
+// backend. Unlike a pool disk, a cache SSD may carry the DSM system partition
+// (the boot SSDs), so status "sys_partition_normal" is accepted for cache media.
+func validateCacheMutationSafety(state storage.State, request storage.ChangeRequest) error {
+	change := request.Cache
+	if request.Action == storage.ActionCreate {
+		volume, found := storageVolumeByID(state, change.VolumeID)
+		if !found {
+			return fmt.Errorf("parent volume %q is missing from observed state", change.VolumeID)
+		}
+		if volume.ReadOnly || !volume.Writable {
+			return fmt.Errorf("parent volume %q is not writable", change.VolumeID)
+		}
+		if volume.Actioning {
+			return fmt.Errorf("parent volume %q already has an action in progress", change.VolumeID)
+		}
+		if !healthyStorageStatus(volume.Status) || !healthyStorageStatus(volume.Health) {
+			return fmt.Errorf("parent volume %q status/health is %q/%q, expected normal or healthy", change.VolumeID, volume.Status, volume.Health)
+		}
+		for _, diskID := range change.DiskIDs {
+			disk, ok := storageDiskByID(state, diskID)
+			if !ok {
+				return fmt.Errorf("stable disk ID %q is missing from observed state", diskID)
+			}
+			if err := validateCacheCandidateDisk(disk); err != nil {
+				return fmt.Errorf("stable disk ID %q is not eligible for an SSD cache: %w", diskID, err)
+			}
+		}
+		if state.CacheCreation.MaxDisks > 0 && len(change.DiskIDs) > state.CacheCreation.MaxDisks {
+			return fmt.Errorf("cache uses %d SSDs but DSM reports a limit of %d", len(change.DiskIDs), state.CacheCreation.MaxDisks)
+		}
+		switch change.CacheType {
+		case storage.CacheModeReadOnly:
+			if !state.CacheCreation.SupportsReadOnly {
+				return fmt.Errorf("DSM does not report read-only SSD cache support")
+			}
+		case storage.CacheModeReadWrite:
+			if !state.CacheCreation.SupportsReadWrite || !state.CacheCreation.SupportsProtection {
+				return fmt.Errorf("read-write SSD cache requires the RAID protection backend, which is unavailable")
+			}
+		}
+		return nil
+	}
+	cache, found := storageCacheByID(state, change.ID)
+	if !found {
+		return fmt.Errorf("SSD cache %q is missing from observed state", change.ID)
+	}
+	if cache.Actioning || cache.Flushing {
+		return fmt.Errorf("SSD cache %q already has an action in progress", change.ID)
+	}
+	if request.Action == storage.ActionDelete {
+		return nil
+	}
+	// Expand and convert re-add SSDs to an existing cache; their candidate disks
+	// must be eligible too.
+	for _, diskID := range change.AddDiskIDs {
+		disk, ok := storageDiskByID(state, diskID)
+		if !ok {
+			return fmt.Errorf("stable disk ID %q is missing from observed state", diskID)
+		}
+		if err := validateCacheCandidateDisk(disk); err != nil {
+			return fmt.Errorf("stable disk ID %q is not eligible for an SSD cache: %w", diskID, err)
+		}
+	}
+	if request.Action == storage.ActionConvert && *change.TargetMode == storage.CacheModeReadWrite {
+		if !state.CacheCreation.SupportsProtection {
+			return fmt.Errorf("read-write SSD cache requires the RAID protection backend, which is unavailable")
+		}
+	}
+	return nil
+}
+
+// validateCacheCandidateDisk accepts an SSD that is unused by a storage pool and
+// selectable. It deliberately tolerates the "sys_partition_normal" status of the
+// DSM boot SSDs, which Synology permits as cache media, while still requiring
+// healthy overview status and SMART.
+func validateCacheCandidateDisk(disk storage.Disk) error {
+	if strings.TrimSpace(disk.ID) == "" {
+		return fmt.Errorf("disk is missing from normalized inventory")
+	}
+	if !strings.EqualFold(strings.TrimSpace(disk.Type), "ssd") {
+		return fmt.Errorf("disk media is %q, expected SSD", disk.Type)
+	}
+	usedBy := strings.TrimSpace(disk.UsedBy)
+	if disk.InUse || (usedBy != "" && !strings.EqualFold(usedBy, "unused")) {
+		return fmt.Errorf("SSD is already used by %q", disk.UsedBy)
+	}
+	if !disk.Selectable {
+		return fmt.Errorf("DSM does not report the SSD selectable")
+	}
+	if !healthyStorageStatus(disk.Health) {
+		return fmt.Errorf("SSD health is %q, expected normal or healthy", disk.Health)
+	}
+	if value := strings.ToLower(strings.TrimSpace(disk.SMARTStatus)); value != "" && value != "normal" && value != "healthy" && value != "passed" && value != "pass" {
+		return fmt.Errorf("SMART status is %q", disk.SMARTStatus)
+	}
+	return nil
+}
+
+func storageCacheByID(state storage.State, id string) (storage.Cache, bool) {
+	for _, cache := range state.Caches {
+		if strings.TrimSpace(cache.ID) == id {
+			return cache, true
+		}
+	}
+	return storage.Cache{}, false
+}
+
+func topologyCacheByID(topology storageTopology, id string) (storageTopologyCache, bool) {
+	for _, cache := range topology.Caches {
+		if cache.ID == id {
+			return cache, true
+		}
+	}
+	return storageTopologyCache{}, false
+}
+
 func storageSafetyFingerprint(state storage.State, request storage.ChangeRequest) (string, error) {
 	observation := storageSafetyObservation{PoolCreation: state.PoolCreation, VolumeCreation: state.VolumeCreation}
+	if request.Resource == storage.ResourceCache && request.Cache != nil {
+		cacheCreation := state.CacheCreation
+		observation.CacheCreation = &cacheCreation
+		change := request.Cache
+		selected := change.DiskIDs
+		if request.Action != storage.ActionCreate {
+			selected = change.AddDiskIDs
+		}
+		for _, diskID := range selected {
+			disk, found := storageDiskByID(state, diskID)
+			if !found {
+				return "", fmt.Errorf("stable disk ID %q disappeared while creating cache safety fingerprint", diskID)
+			}
+			observation.Disks = append(observation.Disks, storageSafetyDisk{
+				ID: disk.ID, Status: disk.Status, Health: disk.Health, SMARTStatus: disk.SMARTStatus,
+				UsedBy: disk.UsedBy, InUse: disk.InUse, Selectable: disk.Selectable, Compatibility: disk.Compatibility,
+				Serial: disk.Serial, Firmware: disk.Firmware, SizeBytes: disk.SizeBytes,
+			})
+		}
+		sort.Slice(observation.Disks, func(i, j int) bool { return observation.Disks[i].ID < observation.Disks[j].ID })
+		volumeID := change.VolumeID
+		if request.Action != storage.ActionCreate {
+			cache, found := storageCacheByID(state, change.ID)
+			if !found {
+				return "", fmt.Errorf("SSD cache %q disappeared while creating safety fingerprint", change.ID)
+			}
+			volumeID = cache.VolumeID
+			diskIDs := append([]string(nil), cache.DiskIDs...)
+			sort.Strings(diskIDs)
+			observation.Cache = &storageSafetyCache{
+				ID: cache.ID, VolumeID: cache.VolumeID, CacheType: cache.CacheType, ProtectionRAID: normalizeObservedRAIDType(cache.ProtectionRAID),
+				Status: cache.Status, Health: cache.Health, ProtectionStatus: cache.ProtectionStatus, DiskIDs: diskIDs,
+				HasDirtyData: cache.HasDirtyData, Flushing: cache.Flushing, Actioning: cache.Actioning, CanDelete: cache.CanDelete, SizeBytes: cache.SizeBytes,
+			}
+		}
+		if volume, found := storageVolumeByID(state, volumeID); found {
+			observation.Volume = &storageSafetyVolume{
+				ID: volume.ID, PoolID: volume.PoolID, FileSystem: volume.FileSystem, Status: volume.Status, Health: volume.Health,
+				ReadOnly: volume.ReadOnly, Writable: volume.Writable, Actioning: volume.Actioning,
+				SingleVolume: volume.SingleVolume, CanExpand: volume.CanExpand, CanDelete: volume.CanDelete,
+				AllocatedBytes: volume.AllocatedBytes, MaxFileSystemBytes: volume.MaxFileSystemBytes,
+			}
+		}
+		return fingerprint(observation), nil
+	}
 	if request.Resource == storage.ResourceVolume && request.Volume != nil {
 		poolID := request.Volume.PoolID
 		if request.Action != storage.ActionCreate {
@@ -1023,10 +1416,63 @@ func containsString(values []string, want string) bool {
 }
 
 func verifyStoragePostcondition(plan StoragePlan, before, after storage.State) (string, error) {
+	if plan.Request.Resource == storage.ResourceCache {
+		return verifyStorageCachePostcondition(plan, before, after)
+	}
 	if plan.Request.Resource == storage.ResourceVolume {
 		return verifyStorageVolumePostcondition(plan, before, after)
 	}
 	return verifyStoragePoolPostcondition(plan, before, after)
+}
+
+func verifyStorageCachePostcondition(plan StoragePlan, before, after storage.State) (string, error) {
+	change := plan.Request.Cache
+	switch plan.Request.Action {
+	case storage.ActionCreate:
+		existing := make(map[string]struct{}, len(before.Caches))
+		for _, cache := range before.Caches {
+			existing[cache.ID] = struct{}{}
+		}
+		for _, cache := range after.Caches {
+			if _, seen := existing[cache.ID]; seen {
+				continue
+			}
+			if cache.VolumeID != change.VolumeID {
+				continue
+			}
+			if cache.CacheType != "" && change.CacheType != "" && cache.CacheType != change.CacheType {
+				return "", fmt.Errorf("new cache on volume %q has mode %q, expected %q", change.VolumeID, cache.CacheType, change.CacheType)
+			}
+			if failedStorageStatus(cache.Status) {
+				return "", fmt.Errorf("new cache on volume %q reports failed status %q", change.VolumeID, cache.Status)
+			}
+			return cache.ID, nil
+		}
+		// Some DSM releases re-read the cache asynchronously; accept the volume
+		// now reporting a cache even if the array is still settling.
+		return "", fmt.Errorf("created SSD cache was not found on volume %q", change.VolumeID)
+	case storage.ActionDelete:
+		cache, found := storageCacheByID(after, change.ID)
+		if !found {
+			return change.ID, nil
+		}
+		// Read-write cache removal flushes dirty data asynchronously; a cache that
+		// is still present but actioning, flushing, or no longer in a settled
+		// normal state is being torn down and counts as applied.
+		if cache.Actioning || cache.Flushing || !healthyStorageStatus(cache.Status) {
+			return change.ID, nil
+		}
+		return "", fmt.Errorf("SSD cache %q still present after removal", change.ID)
+	default:
+		cache, found := storageCacheByID(after, change.ID)
+		if !found {
+			return "", fmt.Errorf("SSD cache %q disappeared after %s", change.ID, plan.Request.Action)
+		}
+		if failedStorageStatus(cache.Status) {
+			return "", fmt.Errorf("SSD cache %q reports failed status %q", change.ID, cache.Status)
+		}
+		return cache.ID, nil
+	}
 }
 
 func verifyStoragePoolPostcondition(plan StoragePlan, before, after storage.State) (string, error) {
@@ -1178,6 +1624,18 @@ func validateAvailableDisks(disks map[string]storageTopologyDisk, occupied map[s
 }
 
 func storagePreconditionAndReferences(topology storageTopology, request storage.ChangeRequest) (ChangePrecondition, StorageStableReferences) {
+	if request.Resource == storage.ResourceCache {
+		change := request.Cache
+		if request.Action == storage.ActionCreate {
+			return ChangePrecondition{ExpectedExists: false}, StorageStableReferences{
+				CacheVolumePath: change.VolumeID, DiskIDs: append([]string(nil), change.DiskIDs...),
+			}
+		}
+		cache, _ := topologyCacheByID(topology, change.ID)
+		return ChangePrecondition{ExpectedExists: true, ResourceID: cache.ID, Fingerprint: fingerprint(cache)}, StorageStableReferences{
+			ResourceID: cache.ID, CacheID: cache.ID, CacheVolumePath: cache.VolumeID,
+		}
+	}
 	if request.Resource == storage.ResourcePool {
 		if request.Action == storage.ActionCreate {
 			return ChangePrecondition{ExpectedExists: false}, StorageStableReferences{DiskIDs: append([]string(nil), request.Pool.DiskIDs...)}
@@ -1208,6 +1666,51 @@ func storagePlanEffects(topology storageTopology, request storage.ChangeRequest,
 	var consequences []StorageDestructiveConsequence
 	var summary []string
 	destructive := request.Action == storage.ActionDelete
+	if request.Resource == storage.ResourceCache {
+		change := request.Cache
+		destructive = false
+		switch request.Action {
+		case storage.ActionCreate:
+			summary = []string{fmt.Sprintf("Create a %s SSD cache on volume %s using stable SSDs %s.", change.CacheType, change.VolumeID, strings.Join(change.DiskIDs, ", "))}
+			if change.CacheType == storage.CacheModeReadWrite {
+				warnings = append(warnings, "A read-write SSD cache holds dirty data; a later removal flushes it before teardown.")
+			} else {
+				warnings = append(warnings, "A read-only SSD cache can be removed live without data loss.")
+			}
+		case storage.ActionUpdate:
+			summary = []string{fmt.Sprintf("Add stable SSDs %s to SSD cache %s.", strings.Join(change.AddDiskIDs, ", "), change.ID)}
+			warnings = append(warnings, "Adding SSDs can start an SSD cache rebuild.")
+		case storage.ActionConvert:
+			summary = []string{fmt.Sprintf("Convert SSD cache %s to %s.", change.ID, *change.TargetMode)}
+			if *change.TargetMode == storage.CacheModeReadOnly {
+				destructive = true
+				warnings = append(warnings, "Converting a read-write cache to read-only flushes all dirty cache data before teardown.")
+				consequences = append(consequences, StorageDestructiveConsequence{
+					Kind: "cache_dirty_flush", ResourceIDs: []string{change.ID},
+					Description: "Dirty read-write cache data is flushed during conversion; interrupting it risks data loss.",
+				})
+			}
+		case storage.ActionDelete:
+			cache, _ := topologyCacheByID(topology, change.ID)
+			resourceIDs := []string{cache.ID}
+			if cache.VolumeID != "" {
+				resourceIDs = append(resourceIDs, cache.VolumeID)
+				sort.Strings(resourceIDs)
+			}
+			if cache.CacheType == storage.CacheModeReadWrite {
+				destructive = true
+				warnings = append(warnings, "Removing a read-write SSD cache flushes dirty data; interrupting it risks data loss.")
+				consequences = append(consequences, StorageDestructiveConsequence{
+					Kind: "cache_dirty_flush", ResourceIDs: resourceIDs,
+					Description: "Dirty read-write cache data is flushed during removal; interrupting it risks data loss.",
+				})
+			} else {
+				warnings = append(warnings, "Removing a read-only SSD cache is live and non-destructive.")
+			}
+			summary = []string{fmt.Sprintf("Remove SSD cache %s from volume %s.", cache.ID, cache.VolumeID)}
+		}
+		return destructive, warnings, consequences, summary
+	}
 	if request.Resource == storage.ResourcePool {
 		change := request.Pool
 		switch request.Action {

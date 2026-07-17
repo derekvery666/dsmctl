@@ -160,9 +160,9 @@ Available tools:
 - `get_system_info`: authenticate to a selected profile and return normalized DSM system information.
 - `get_capabilities`: report discovered APIs, DSM release, compatibility quirks, and the backend selected for each operation.
 - `get_storage_capabilities`: report the storage operations currently exposed for a selected NAS and the selected DSM backend.
-- `get_storage_state`: return normalized disk, storage-pool, RAID, volume, capacity, and health state without changing the NAS.
-- `plan_storage_change`: validate a storage-pool or volume intent and return a topology-, capacity-, and safety-state-bound approval plan without mutating DSM.
-- `apply_storage_plan`: apply an approved, unchanged storage-pool or volume create/expand/delete plan and verify the postcondition.
+- `get_storage_state`: return normalized disk, storage-pool, RAID, volume, SSD cache, capacity, and health state without changing the NAS.
+- `plan_storage_change`: validate a storage-pool, volume, or SSD cache intent and return a topology-, capacity-, and safety-state-bound approval plan without mutating DSM.
+- `apply_storage_plan`: apply an approved, unchanged storage-pool, volume, or SSD cache plan and verify the postcondition.
 - `get_san_capabilities`: report SAN Manager inventory and guarded mutation support plus the selected backends.
 - `get_san_state`: return normalized iSCSI targets, LUNs, and their stable-ID mapping graph using bulk reads.
 - `plan_san_change`: validate a target, LUN, or mapping intent and return a state-bound approval plan without mutating DSM.
@@ -186,7 +186,7 @@ Available tools:
 - `apply_share_plan`: apply an approved, unchanged shared-folder plan and verify the postcondition.
 - `explain_effective_access`: explain one principal's share or application access with direct/group evidence and conservative indeterminate results for custom rules.
 
-Storage-pool create, add-disk expansion, and delete, plus volume create, expansion, and delete, require independently selected backends and guarded plan/apply; storage-pool RAID migration remains fail-closed. Local user/group CRUD, memberships, per-user/group quotas, explicit application access, shared-folder CRUD, normalized `none`/`read`/`write`/`deny` share permissions, and guarded SAN target/LUN/mapping lifecycles are also available only through plan/apply. SAN deletes refuse active sessions or mappings, mappings never cascade-delete endpoints, and LUN capacity is checked against the selected backing volume. Guarded time-module changes never write wall-clock values or switch to manual synchronization, and NTP servers are validated for syntax without any reachability claim. Encrypted shares, WORM, custom Windows ACLs, IP-specific application rules, and SAN snapshots/clones remain out of scope.
+Storage-pool create, add-disk expansion, and delete, plus volume create, expansion, and delete, require independently selected backends and guarded plan/apply; storage-pool RAID migration remains fail-closed. SSD cache create and remove (read-only or read-write) are also guarded plan/apply on a `cache` resource; SSD cache expand and read-only/read-write conversion are modeled but fail closed on DSMs whose flashcache API exposes only create and remove. Local user/group CRUD, memberships, per-user/group quotas, explicit application access, shared-folder CRUD, normalized `none`/`read`/`write`/`deny` share permissions, and guarded SAN target/LUN/mapping lifecycles are also available only through plan/apply. SAN deletes refuse active sessions or mappings, mappings never cascade-delete endpoints, and LUN capacity is checked against the selected backing volume. Guarded time-module changes never write wall-clock values or switch to manual synchronization, and NTP servers are validated for syntax without any reachability claim. Encrypted shares, WORM, custom Windows ACLs, IP-specific application rules, and SAN snapshots/clones remain out of scope.
 
 Account expansion is opt-in because DSM exposes quota and application rules per principal. For large systems, filter `get_account_state` or `account inventory` with `principal_type` plus `principal` instead of reading every local principal. Membership expansion scales with local groups rather than users.
 

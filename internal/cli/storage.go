@@ -155,6 +155,8 @@ func writeStorageCapabilities(cmd *cobra.Command, result application.StorageCapa
 	fmt.Fprintf(writer, "Volume status:\t%s\n", yesNo(result.Capabilities.VolumeStatus))
 	fmt.Fprintf(writer, "Pool create/expand/delete:\t%s/%s/%s\n", yesNo(result.Capabilities.PoolCreate), yesNo(result.Capabilities.PoolUpdate), yesNo(result.Capabilities.PoolDelete))
 	fmt.Fprintf(writer, "Volume create/update/delete:\t%s/%s/%s\n", yesNo(result.Capabilities.VolumeCreate), yesNo(result.Capabilities.VolumeUpdate), yesNo(result.Capabilities.VolumeDelete))
+	fmt.Fprintf(writer, "SSD cache status:\t%s\n", yesNo(result.Capabilities.CacheStatus))
+	fmt.Fprintf(writer, "SSD cache create/expand/convert/delete:\t%s/%s/%s/%s\n", yesNo(result.Capabilities.CacheCreate), yesNo(result.Capabilities.CacheExpand), yesNo(result.Capabilities.CacheConvert), yesNo(result.Capabilities.CacheDelete))
 	fmt.Fprintf(writer, "Mutations:\t%s\n", yesNo(result.Capabilities.Mutations))
 	for _, operation := range result.Report.Operations {
 		fmt.Fprintf(writer, "Backend:\t%s\n", valueOrDash(operation.Backend))
@@ -197,6 +199,17 @@ func writeStorageInventory(cmd *cobra.Command, result application.StorageStateRe
 			valueOrDash(volume.ID), valueOrDash(volume.Name), valueOrDash(volume.PoolID), valueOrDash(volume.FileSystem),
 			valueOrDash(volume.Status), valueOrDash(volume.Health), formatBytes(volume.SizeBytes), formatBytes(volume.UsedBytes), yesNo(volume.ReadOnly),
 		)
+	}
+
+	if len(result.Storage.Caches) > 0 {
+		fmt.Fprintln(writer, "\nSSD CACHES")
+		fmt.Fprintln(writer, "ID\tVOLUME\tMODE\tRAID\tSTATUS\tHEALTH\tSIZE\tDISKS")
+		for _, cache := range result.Storage.Caches {
+			fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				valueOrDash(cache.ID), valueOrDash(cache.VolumeID), valueOrDash(cache.CacheType), valueOrDash(cache.ProtectionRAID),
+				valueOrDash(cache.Status), valueOrDash(cache.Health), formatBytes(cache.SizeBytes), valueOrDash(strings.Join(cache.DiskIDs, ",")),
+			)
+		}
 	}
 	return writer.Flush()
 }
