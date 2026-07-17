@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
-	"strings"
 )
 
 // Config is the user-visible configuration shared by the CLI and MCP server.
@@ -59,9 +58,6 @@ func (c *Config) Validate() error {
 	for name, profile := range c.NAS {
 		if err := ValidateName(name); err != nil {
 			return fmt.Errorf("NAS profile %q: %w", name, err)
-		}
-		if strings.TrimSpace(profile.Username) == "" {
-			return fmt.Errorf("NAS profile %q: username is required", name)
 		}
 		parsed, err := url.ParseRequestURI(profile.URL)
 		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {

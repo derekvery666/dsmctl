@@ -79,7 +79,7 @@ func NewClient(options Options) (*Client, error) {
 	if err != nil || baseURL.Host == "" || (baseURL.Scheme != "http" && baseURL.Scheme != "https") {
 		return nil, errors.New("base URL must be an absolute http or https URL")
 	}
-	if strings.TrimSpace(options.Username) == "" {
+	if options.SessionID == "" && strings.TrimSpace(options.Username) == "" {
 		return nil, errors.New("username is required")
 	}
 	if options.Password == "" && options.SessionID == "" {
