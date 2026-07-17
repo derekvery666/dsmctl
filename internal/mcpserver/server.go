@@ -17,6 +17,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/domain/packagecenter"
 	"github.com/ychiu1211/dsmctl/internal/domain/resmon"
 	"github.com/ychiu1211/dsmctl/internal/domain/san"
+	"github.com/ychiu1211/dsmctl/internal/domain/servicediscovery"
 	"github.com/ychiu1211/dsmctl/internal/domain/share"
 	"github.com/ychiu1211/dsmctl/internal/domain/storage"
 	"github.com/ychiu1211/dsmctl/internal/domain/syslog"
@@ -179,6 +180,35 @@ type applyNFSExportPlanInput struct {
 
 type applyNFSExportPlanOutput struct {
 	Result application.NFSExportApplyResult `json:"result" jsonschema:"NFS export mutation result after stale-state and postcondition checks"`
+}
+
+type getServiceDiscoveryStateOutput struct {
+	NAS              string                         `json:"nas" jsonschema:"NAS profile used for the request"`
+	ServiceDiscovery synology.ServiceDiscoveryState `json:"service_discovery" jsonschema:"Normalized service-discovery configuration"`
+}
+
+type getServiceDiscoveryCapabilitiesOutput struct {
+	NAS          string                                `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.ServiceDiscoveryCapabilities `json:"capabilities" jsonschema:"Selected Time Machine and WS-Discovery operations"`
+	Report       synology.CompatibilityReport          `json:"report" jsonschema:"Discovered APIs and selected service-discovery backends"`
+}
+
+type planServiceDiscoveryChangeInput struct {
+	NAS     string                  `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request servicediscovery.Change `json:"request" jsonschema:"Patch-only service-discovery intent"`
+}
+
+type planServiceDiscoveryChangeOutput struct {
+	Plan application.ServiceDiscoveryPlan `json:"plan" jsonschema:"Validated plan bound to the complete observed state and approval hash"`
+}
+
+type applyServiceDiscoveryPlanInput struct {
+	Plan         application.ServiceDiscoveryPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_service_discovery_change"`
+	ApprovalHash string                          `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved service discovery plan"`
+}
+
+type applyServiceDiscoveryPlanOutput struct {
+	Result application.ServiceDiscoveryApplyResult `json:"result" jsonschema:"Service discovery mutation result after stale-state and postcondition checks"`
 }
 
 type getStorageInput struct {
@@ -716,6 +746,58 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, applyNFSExportPlanOutput{}, err
 		}
 		return nil, applyNFSExportPlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_service_discovery_capabilities",
+		Title:       "Get service discovery capabilities",
+		Description: "Report whether File Services Time Machine advertising and WS-Discovery can be read and changed on the selected NAS, and the DSM backend selected.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getFileServicesInput) (*mcp.CallToolResult, getServiceDiscoveryCapabilitiesOutput, error) {
+		result, err := service.GetServiceDiscoveryCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getServiceDiscoveryCapabilitiesOutput{}, err
+		}
+		return nil, getServiceDiscoveryCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_service_discovery_state",
+		Title:       "Get service discovery state",
+		Description: "Read Time Machine advertising (over SMB and AFP) and WS-Discovery settings without changing DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getFileServicesInput) (*mcp.CallToolResult, getServiceDiscoveryStateOutput, error) {
+		result, err := service.GetServiceDiscoveryState(ctx, input.NAS)
+		if err != nil {
+			return nil, getServiceDiscoveryStateOutput{}, err
+		}
+		return nil, getServiceDiscoveryStateOutput{NAS: result.NAS, ServiceDiscovery: result.ServiceDiscovery}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_service_discovery_change",
+		Title:       "Plan a service discovery change",
+		Description: "Validate one patch-only service-discovery request (Time Machine advertising, WS-Discovery), read the current state, and return a hash-bound approval plan. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planServiceDiscoveryChangeInput) (*mcp.CallToolResult, planServiceDiscoveryChangeOutput, error) {
+		plan, err := service.PlanServiceDiscoveryChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planServiceDiscoveryChangeOutput{}, err
+		}
+		return nil, planServiceDiscoveryChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_service_discovery_plan",
+		Title:       "Apply an approved service discovery plan",
+		Description: "Apply an unmodified service-discovery plan only while its approval hash and complete observed state still match, then verify the requested postcondition.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyServiceDiscoveryPlanInput) (*mcp.CallToolResult, applyServiceDiscoveryPlanOutput, error) {
+		result, err := service.ApplyServiceDiscoveryPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyServiceDiscoveryPlanOutput{}, err
+		}
+		return nil, applyServiceDiscoveryPlanOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

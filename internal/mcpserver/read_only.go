@@ -22,6 +22,7 @@ func NewReadOnly(service *application.Service, version string) *mcp.Server {
 		"plan_package_change",
 		"plan_resource_recording_change",
 		"plan_san_change",
+		"plan_service_discovery_change",
 		"plan_share_change",
 		"plan_storage_change",
 		"apply_account_plan",
@@ -31,6 +32,7 @@ func NewReadOnly(service *application.Service, version string) *mcp.Server {
 		"apply_package_plan",
 		"apply_resource_recording_plan",
 		"apply_san_plan",
+		"apply_service_discovery_plan",
 		"apply_share_plan",
 		"apply_storage_plan",
 	)

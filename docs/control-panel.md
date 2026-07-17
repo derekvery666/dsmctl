@@ -192,6 +192,39 @@ MCP exposes `get_nfs_export_capabilities`, `get_nfs_export_state`,
 `plan_nfs_export_change`, and `apply_nfs_export_plan` over the identical
 application contract.
 
+## File Services discovery
+
+The File Services "Advanced" discovery toggles are a separate module because
+they are separate DSM APIs from SMB and NFS: Time Machine advertising lives on
+`SYNO.Core.FileServ.ServiceDiscovery` (over SMB and AFP) and WS-Discovery on
+`SYNO.Core.FileServ.ServiceDiscovery.WSTransfer`. The two are selected
+independently, so a backend can expose Time Machine advertising while
+WS-Discovery is absent (reported as `(not supported)` and `null`).
+
+```console
+dsmctl control-panel file-services discovery capabilities --nas office
+dsmctl control-panel file-services discovery state --nas office --json
+```
+
+Changes are patch-only through the same hash-bound plan/apply flow: Time Machine
+fields are merged into a freshly read pair and submitted as one
+`ServiceDiscovery` set, and WS-Discovery is submitted to its own backend.
+Disabling an advertisement (which stops client discovery) and enabling
+WS-Discovery (which advertises the NAS on the local network) are high risk;
+enabling Time Machine advertising is medium.
+
+```json
+{ "smb_time_machine": true, "ws_discovery": false }
+```
+
+```console
+dsmctl control-panel file-services discovery plan --nas office --file discovery.json --output discovery.plan.json
+dsmctl control-panel file-services discovery apply --file discovery.plan.json --approve <hash-from-plan>
+```
+
+MCP exposes `get_service_discovery_capabilities`, `get_service_discovery_state`,
+`plan_service_discovery_change`, and `apply_service_discovery_plan`.
+
 ## Adding another module
 
 Add a dedicated type under `internal/domain/controlpanel`, an operation package

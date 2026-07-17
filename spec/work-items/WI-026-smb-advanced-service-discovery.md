@@ -1,9 +1,9 @@
 ---
 id: WI-026
 title: Guarded SMB advanced settings and service discovery
-status: proposed
+status: in_progress
 priority: P2
-owner: ""
+owner: "claude"
 depends_on: [WI-012]
 parallel_group: C
 touches:
@@ -80,12 +80,22 @@ flow.
 
 ## Acceptance criteria
 
+Service-discovery sub-slice (implemented):
+
+- [x] Service discovery is an independent module with Time Machine and
+      WS-Discovery selected independently and reported in capabilities.
+- [x] Time Machine apply merges into a freshly read pair; WS-Discovery uses its
+      own backend; request-capture tests lock each set shape.
+- [x] CLI (`control-panel file-services discovery`) and MCP expose the module
+      through one hash-bound plan/apply application contract.
+- [x] No live service-discovery mutation ran without new explicit authorization.
+
+SMB advanced sub-slice (not started):
+
 - [ ] SMB advanced fields decode with strict validation and semantic names.
-- [ ] Service discovery is an independent module with its own capability row.
-- [ ] Advanced/discovery apply preserves every unspecified snapshot field.
-- [ ] Request-capture tests lock each enabled set shape.
-- [ ] CLI and MCP reuse the file-service application contract.
-- [ ] No live mutation ran without new explicit authorization.
+- [ ] SMB advanced apply preserves every unspecified snapshot field.
+- [ ] Request-capture test locks the SMB advanced set shape.
+- [ ] DSM 7.3.x read-only verification for both sub-slices.
 
 ## Verification
 
@@ -97,3 +107,24 @@ flow.
 
 Shares the fileservices package with WI-012/WI-025 and `server.go` with the
 other file-protocol items. Confirm the ServiceDiscovery API surface first.
+
+## Handoff
+
+Service-discovery sub-slice is implemented and verified offline; the SMB
+advanced sub-slice is not started.
+
+- Done: `internal/domain/servicediscovery`, operation package
+  `internal/synology/operations/servicediscovery` (Time Machine + WS-Discovery
+  read/set with request-capture tests), facade
+  `internal/synology/servicediscovery.go`, application plan/apply
+  `internal/application/service_discovery.go` (+ tests), CLI under
+  `control-panel file-services discovery`, four MCP tools + read-only gating,
+  and `docs/control-panel.md`.
+- Verified: `go test ./...`, `go vet ./...`, both builds; CLI tree and offline
+  empty-patch validation exercised through the built binary.
+- Pending: read-only `get` for both `ServiceDiscovery` and `WSTransfer` on a
+  real DSM 7.3.x NAS; then start the SMB advanced sub-slice, which extends the
+  WI-012 `SYNO.Core.FileServ.SMB` snapshot (touches its decoder/encoder and the
+  `TestSMBV3ReadAndSetContract` request-capture test — mirror the WI-025 full-
+  snapshot merge-and-submit pattern). No live service-discovery `set` is
+  authorized yet.
