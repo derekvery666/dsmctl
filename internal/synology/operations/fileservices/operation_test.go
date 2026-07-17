@@ -104,12 +104,50 @@ func TestNFSV3ReadBaseSetAndAdvancedReadContract(t *testing.T) {
 	}
 }
 
-func TestNFSAdvancedSetFailsClosed(t *testing.T) {
+func TestNFSAdvancedSetSelectionAndFailClosed(t *testing.T) {
+	withAPI := compatibility.NewTarget()
+	withAPI.SetAPI(NFSAdvancedAPIName, compatibility.APIInfo{MinVersion: 1, MaxVersion: 1})
+	selection, err := SelectNFSAdvancedSet(withAPI)
+	if err != nil || !selection.Supported || selection.Backend != "core-fileserv-nfs-advanced-v1" {
+		t.Fatalf("SelectNFSAdvancedSet() with API = %#v, %v", selection, err)
+	}
+
+	withoutAPI := compatibility.NewTarget()
+	selection, err = SelectNFSAdvancedSet(withoutAPI)
+	if err == nil || selection.Supported || !compatibility.IsUnsupported(err) {
+		t.Fatalf("SelectNFSAdvancedSet() without API = %#v, %v", selection, err)
+	}
+}
+
+func TestNFSAdvancedSnapshotReadAndDomainSetContract(t *testing.T) {
 	target := compatibility.NewTarget()
 	target.SetAPI(NFSAdvancedAPIName, compatibility.APIInfo{MinVersion: 1, MaxVersion: 1})
-	selection, err := SelectNFSAdvancedSet(target)
-	if err == nil || selection.Supported || !compatibility.IsUnsupported(err) {
-		t.Fatalf("SelectNFSAdvancedSet() = %#v, %v", selection, err)
+	executor := &captureExecutor{responses: map[string]json.RawMessage{
+		NFSAdvancedAPIName + ".get": json.RawMessage(`{
+			"enable_nfs":true,"custom_port_enable":false,"read_size":8192,"write_size":8192,
+			"unix_pri_enable":true,"statd_port":0,"nlm_port":0,"nfs_v4_domain":"old.example"
+		}`),
+	}}
+
+	snapshot, selection, err := ExecuteNFSAdvancedSnapshotRead(context.Background(), target, executor)
+	if err != nil {
+		t.Fatalf("ExecuteNFSAdvancedSnapshotRead() error = %v", err)
+	}
+	if selection.Backend != "core-fileserv-nfs-advanced-v1" || snapshot.ReadSize != 8192 || snapshot.WriteSize != 8192 || !snapshot.UnixPermissions || !snapshot.EnableNFS || snapshot.Domain != "old.example" {
+		t.Fatalf("snapshot = %#v (selection %#v)", snapshot, selection)
+	}
+
+	snapshot.Domain = "new.example"
+	if _, _, err := ExecuteNFSAdvancedSet(context.Background(), target, executor, snapshot); err != nil {
+		t.Fatalf("ExecuteNFSAdvancedSet() error = %v", err)
+	}
+	want := map[string]any{
+		"enable_nfs": true, "custom_port_enable": false, "read_size": 8192, "write_size": 8192,
+		"unix_pri_enable": true, "statd_port": 0, "nlm_port": 0, "nfs_v4_domain": "new.example",
+	}
+	request := executor.requests[len(executor.requests)-1]
+	if request.API != NFSAdvancedAPIName || request.Method != "set" || !reflect.DeepEqual(request.JSONParameters, want) {
+		t.Fatalf("advanced set request = %#v, want parameters %#v", request, want)
 	}
 }
 

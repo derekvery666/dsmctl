@@ -81,6 +81,22 @@ func encodeNFSBaseChange(change controlpanel.NFSChange) (map[string]any, error) 
 	return parameters, nil
 }
 
+// encodeNFSAdvancedSnapshot renders the complete advanced snapshot for a set.
+// Every field DSM's AdvancedSetting get/set exchange is resubmitted so a change
+// to one field (today, the NFSv4 domain) never resets another.
+func encodeNFSAdvancedSnapshot(snapshot NFSAdvancedSnapshot) map[string]any {
+	return map[string]any{
+		"enable_nfs":         snapshot.EnableNFS,
+		"custom_port_enable": snapshot.CustomPortEnable,
+		"read_size":          snapshot.ReadSize,
+		"write_size":         snapshot.WriteSize,
+		"unix_pri_enable":    snapshot.UnixPermissions,
+		"statd_port":         snapshot.StatdPort,
+		"nlm_port":           snapshot.NLMPort,
+		"nfs_v4_domain":      snapshot.Domain,
+	}
+}
+
 func encodeSMBSigningPolicy(value controlpanel.SMBSigningPolicy) (int, error) {
 	switch value {
 	case controlpanel.SMBSigningDisabledForSMB1:

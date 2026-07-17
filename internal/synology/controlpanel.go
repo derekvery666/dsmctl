@@ -267,7 +267,12 @@ func (c *Client) ApplyFileServiceChange(ctx context.Context, request FileService
 			return FileServiceMutationResult{}, fmt.Errorf("NFS mutation requires only the nfs patch")
 		}
 		if request.NFS.NFSv4Domain != nil {
-			result, _, err := fileservices.ExecuteNFSAdvancedSet(ctx, c.target, lockedExecutor{client: c}, *request.NFS)
+			snapshot, _, err := fileservices.ExecuteNFSAdvancedSnapshotRead(ctx, c.target, lockedExecutor{client: c})
+			if err != nil {
+				return FileServiceMutationResult{}, fmt.Errorf("refresh NFS advanced configuration before apply: %w", err)
+			}
+			snapshot.Domain = strings.TrimSpace(*request.NFS.NFSv4Domain)
+			result, _, err := fileservices.ExecuteNFSAdvancedSet(ctx, c.target, lockedExecutor{client: c}, snapshot)
 			if err != nil {
 				return FileServiceMutationResult{}, fmt.Errorf("apply NFS advanced configuration: %w", err)
 			}

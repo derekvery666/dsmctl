@@ -106,15 +106,67 @@ func decodeNFSAdvanced(data json.RawMessage) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return decodeNFSAdvancedDomain(raw), nil
+}
+
+func decodeNFSAdvancedDomain(raw map[string]json.RawMessage) string {
 	value, ok := raw["nfs_v4_domain"]
 	if !ok || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
-		return "", nil
+		return ""
 	}
 	var domain string
 	if err := json.Unmarshal(value, &domain); err != nil {
-		return "", fmt.Errorf("decode NFS advanced field %q: %w", "nfs_v4_domain", err)
+		return ""
 	}
-	return strings.TrimSpace(domain), nil
+	return strings.TrimSpace(domain)
+}
+
+// decodeNFSAdvancedSnapshot strictly decodes the complete advanced snapshot so
+// an advanced write can preserve every field it does not change. The
+// packet-size and UNIX-permission fields are required because they are always
+// present in the DSM AdvancedSetting response; the custom-port fields are
+// optional because they are meaningful only when custom ports are enabled.
+func decodeNFSAdvancedSnapshot(data json.RawMessage) (NFSAdvancedSnapshot, error) {
+	raw, err := decodeObject(data, "NFS advanced")
+	if err != nil {
+		return NFSAdvancedSnapshot{}, err
+	}
+	enableNFS, err := requiredBool(raw, "enable_nfs", "NFS advanced")
+	if err != nil {
+		return NFSAdvancedSnapshot{}, err
+	}
+	readSize, err := requiredInt(raw, "read_size", "NFS advanced")
+	if err != nil {
+		return NFSAdvancedSnapshot{}, err
+	}
+	writeSize, err := requiredInt(raw, "write_size", "NFS advanced")
+	if err != nil {
+		return NFSAdvancedSnapshot{}, err
+	}
+	unixPermissions, err := requiredBool(raw, "unix_pri_enable", "NFS advanced")
+	if err != nil {
+		return NFSAdvancedSnapshot{}, err
+	}
+	customPort := false
+	if value, ok := raw["custom_port_enable"]; ok {
+		if err := json.Unmarshal(value, &customPort); err != nil {
+			if parsed, boolErr := requiredBool(raw, "custom_port_enable", "NFS advanced"); boolErr == nil {
+				customPort = parsed
+			}
+		}
+	}
+	statdPort, _ := optionalInt(raw, "statd_port")
+	nlmPort, _ := optionalInt(raw, "nlm_port")
+	return NFSAdvancedSnapshot{
+		EnableNFS:        enableNFS,
+		CustomPortEnable: customPort,
+		ReadSize:         readSize,
+		WriteSize:        writeSize,
+		UnixPermissions:  unixPermissions,
+		StatdPort:        statdPort,
+		NLMPort:          nlmPort,
+		Domain:           decodeNFSAdvancedDomain(raw),
+	}, nil
 }
 
 func supportedNFSProtocols(raw map[string]json.RawMessage, configured controlpanel.NFSProtocol) []controlpanel.NFSProtocol {

@@ -30,6 +30,22 @@ type NFSAdvancedState struct {
 	Domain string
 }
 
+// NFSAdvancedSnapshot is the complete NFS advanced-setting configuration DSM's
+// SYNO.Core.FileServ.NFS.AdvancedSetting get/set exchange. Writing any single
+// advanced field requires resubmitting this whole snapshot so no unspecified
+// field is reset, which is why WI-012 kept advanced writes fail-closed until
+// every preserved field had a typed home.
+type NFSAdvancedSnapshot struct {
+	EnableNFS        bool
+	CustomPortEnable bool
+	ReadSize         int
+	WriteSize        int
+	UnixPermissions  bool
+	StatdPort        int
+	NLMPort          int
+	Domain           string
+}
+
 type MutationResult struct {
 	Protocol controlpanel.FileProtocol `json:"protocol" jsonschema:"Changed file service"`
 	Backend  string                    `json:"backend" jsonschema:"Selected DSM compatibility backend"`
@@ -78,8 +94,22 @@ var nfsAdvancedReadOperation = compatibility.Operation[Input, NFSAdvancedState]{
 	},
 }
 
-var nfsAdvancedSetOperation = compatibility.Operation[controlpanel.NFSChange, MutationResult]{
+// nfsAdvancedSnapshotReadOperation reads the complete advanced snapshot used to
+// preserve unspecified fields on an advanced write. It is distinct from
+// nfsAdvancedReadOperation, which projects only the domain for the normalized
+// NFS state so the existing read path stays permissive across DSM versions.
+var nfsAdvancedSnapshotReadOperation = compatibility.Operation[Input, NFSAdvancedSnapshot]{
+	Name: "controlpanel.fileservices.nfs.advanced.snapshot.read",
+	Variants: []compatibility.Variant[Input, NFSAdvancedSnapshot]{
+		nfsAdvancedSnapshotReadVariant(),
+	},
+}
+
+var nfsAdvancedSetOperation = compatibility.Operation[NFSAdvancedSnapshot, MutationResult]{
 	Name: "controlpanel.fileservices.nfs.advanced.set",
+	Variants: []compatibility.Variant[NFSAdvancedSnapshot, MutationResult]{
+		nfsAdvancedSetVariant(),
+	},
 }
 
 func APINames() []string {
@@ -116,6 +146,10 @@ func SelectNFSAdvancedSet(target compatibility.Target) (compatibility.Selection,
 	return selection, err
 }
 
+func ExecuteNFSAdvancedSnapshotRead(ctx context.Context, target compatibility.Target, executor compatibility.Executor) (NFSAdvancedSnapshot, compatibility.Selection, error) {
+	return nfsAdvancedSnapshotReadOperation.Run(ctx, target, executor, Input{})
+}
+
 func ExecuteSMBRead(ctx context.Context, target compatibility.Target, executor compatibility.Executor) (controlpanel.SMBState, compatibility.Selection, error) {
 	return smbReadOperation.Run(ctx, target, executor, Input{})
 }
@@ -144,8 +178,8 @@ func ExecuteNFSAdvancedRead(ctx context.Context, target compatibility.Target, ex
 	return nfsAdvancedReadOperation.Run(ctx, target, executor, Input{})
 }
 
-func ExecuteNFSAdvancedSet(ctx context.Context, target compatibility.Target, executor compatibility.Executor, change controlpanel.NFSChange) (MutationResult, compatibility.Selection, error) {
-	result, selection, err := nfsAdvancedSetOperation.Run(ctx, target, executor, change)
+func ExecuteNFSAdvancedSet(ctx context.Context, target compatibility.Target, executor compatibility.Executor, snapshot NFSAdvancedSnapshot) (MutationResult, compatibility.Selection, error) {
+	result, selection, err := nfsAdvancedSetOperation.Run(ctx, target, executor, snapshot)
 	if err == nil {
 		result.Backend, result.API, result.Version, result.Method = selection.Backend, selection.API, selection.Version, "set"
 	}
@@ -225,6 +259,34 @@ func nfsAdvancedReadVariant() compatibility.Variant[Input, NFSAdvancedState] {
 			}
 			domain, err := decodeNFSAdvanced(data)
 			return NFSAdvancedState{Domain: domain}, err
+		},
+	}
+}
+
+func nfsAdvancedSnapshotReadVariant() compatibility.Variant[Input, NFSAdvancedSnapshot] {
+	return compatibility.Variant[Input, NFSAdvancedSnapshot]{
+		Name: "core-fileserv-nfs-advanced-v1", API: NFSAdvancedAPIName, Version: 1, Priority: 10,
+		Match: compatibility.APIVersion(NFSAdvancedAPIName, 1),
+		Execute: func(ctx context.Context, executor compatibility.Executor, _ Input) (NFSAdvancedSnapshot, error) {
+			data, err := executor.Execute(ctx, compatibility.Request{API: NFSAdvancedAPIName, Version: 1, Method: "get"})
+			if err != nil {
+				return NFSAdvancedSnapshot{}, fmt.Errorf("call %s.get v1: %w", NFSAdvancedAPIName, err)
+			}
+			return decodeNFSAdvancedSnapshot(data)
+		},
+	}
+}
+
+func nfsAdvancedSetVariant() compatibility.Variant[NFSAdvancedSnapshot, MutationResult] {
+	return compatibility.Variant[NFSAdvancedSnapshot, MutationResult]{
+		Name: "core-fileserv-nfs-advanced-v1", API: NFSAdvancedAPIName, Version: 1, Priority: 10,
+		Match: compatibility.APIVersion(NFSAdvancedAPIName, 1),
+		Execute: func(ctx context.Context, executor compatibility.Executor, snapshot NFSAdvancedSnapshot) (MutationResult, error) {
+			parameters := encodeNFSAdvancedSnapshot(snapshot)
+			if _, err := executor.Execute(ctx, compatibility.Request{API: NFSAdvancedAPIName, Version: 1, Method: "set", JSONParameters: parameters}); err != nil {
+				return MutationResult{}, fmt.Errorf("call %s.set v1: %w", NFSAdvancedAPIName, err)
+			}
+			return MutationResult{Protocol: controlpanel.FileProtocolNFS}, nil
 		},
 	}
 }

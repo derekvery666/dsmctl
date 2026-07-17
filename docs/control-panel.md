@@ -120,10 +120,25 @@ MCP exposes `get_file_service_capabilities`, `get_smb_state`, `get_nfs_state`,
 application contract.
 
 DSM's NFS advanced-setting form submits its complete port, packet-size, UNIX
-permission, service-state, and domain snapshot. The current domain model reads
-`nfsv4_domain` but deliberately reports `set_advanced: false`; domain writes
-remain fail-closed until all required preservation fields have a stable typed
-contract (tracked by WI-025).
+permission, service-state, and domain snapshot in one
+`SYNO.Core.FileServ.NFS.AdvancedSetting` set. The NFSv4 domain is writable
+through the same file-service plan/apply flow: apply reads the whole advanced
+snapshot, overrides only the domain, and resubmits the full snapshot so no
+other advanced field is reset. `set_advanced` is `true` only when the advanced
+set backend is selected, and a domain change is still planned separately from
+the NFS base settings.
+
+```json
+{
+  "protocol": "nfs",
+  "nfs": { "nfsv4_domain": "lab.example" }
+}
+```
+
+The remaining advanced fields (read/write packet size, custom NFS ports, and the
+UNIX-permission switch) are modeled only to preserve them across a domain write;
+exposing them as mutations is deferred (WI-025) until their DSM-permitted value
+sets are confirmed.
 
 ### Per-shared-folder NFS export rules
 
