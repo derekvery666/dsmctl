@@ -13,6 +13,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/domain/discovery"
 	"github.com/ychiu1211/dsmctl/internal/domain/driveadmin"
 	"github.com/ychiu1211/dsmctl/internal/domain/identity"
+	"github.com/ychiu1211/dsmctl/internal/domain/nfsexport"
 	"github.com/ychiu1211/dsmctl/internal/domain/packagecenter"
 	"github.com/ychiu1211/dsmctl/internal/domain/resmon"
 	"github.com/ychiu1211/dsmctl/internal/domain/san"
@@ -144,6 +145,40 @@ type applyFileServicePlanInput struct {
 
 type applyFileServicePlanOutput struct {
 	Result application.FileServiceApplyResult `json:"result" jsonschema:"File Services mutation result after stale-state and postcondition checks"`
+}
+
+type getNFSExportStateInput struct {
+	NAS   string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Share string `json:"share" jsonschema:"Shared-folder name whose NFS export rules are read"`
+}
+
+type getNFSExportStateOutput struct {
+	NAS    string                  `json:"nas" jsonschema:"NAS profile used for the request"`
+	Export synology.NFSShareExport `json:"export" jsonschema:"Complete NFS export rule set for the shared folder"`
+}
+
+type getNFSExportCapabilitiesOutput struct {
+	NAS          string                         `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.NFSExportCapabilities `json:"capabilities" jsonschema:"Selected NFS export read and set operations"`
+	Report       synology.CompatibilityReport   `json:"report" jsonschema:"Discovered APIs and selected NFS export backend"`
+}
+
+type planNFSExportChangeInput struct {
+	NAS     string                  `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request nfsexport.ChangeRequest `json:"request" jsonschema:"Complete desired NFS export rule set for one shared folder"`
+}
+
+type planNFSExportChangeOutput struct {
+	Plan application.NFSExportPlan `json:"plan" jsonschema:"Validated plan bound to the complete observed rule set and approval hash"`
+}
+
+type applyNFSExportPlanInput struct {
+	Plan         application.NFSExportPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_nfs_export_change"`
+	ApprovalHash string                   `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved NFS export plan"`
+}
+
+type applyNFSExportPlanOutput struct {
+	Result application.NFSExportApplyResult `json:"result" jsonschema:"NFS export mutation result after stale-state and postcondition checks"`
 }
 
 type getStorageInput struct {
@@ -629,6 +664,58 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, applyFileServicePlanOutput{}, err
 		}
 		return nil, applyFileServicePlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_nfs_export_capabilities",
+		Title:       "Get NFS export capabilities",
+		Description: "Report whether per-shared-folder NFS export rules can be read and changed on the selected NAS, and the DSM backend selected.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getFileServicesInput) (*mcp.CallToolResult, getNFSExportCapabilitiesOutput, error) {
+		result, err := service.GetNFSExportCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getNFSExportCapabilitiesOutput{}, err
+		}
+		return nil, getNFSExportCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_nfs_export_state",
+		Title:       "Get NFS export rules",
+		Description: "Read the complete NFS export rule set (client, privilege, squash, security, async) of one shared folder without changing DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getNFSExportStateInput) (*mcp.CallToolResult, getNFSExportStateOutput, error) {
+		result, err := service.GetNFSExportState(ctx, input.NAS, input.Share)
+		if err != nil {
+			return nil, getNFSExportStateOutput{}, err
+		}
+		return nil, getNFSExportStateOutput{NAS: result.NAS, Export: result.Export}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_nfs_export_change",
+		Title:       "Plan an NFS export change",
+		Description: "Validate a complete desired NFS export rule set for one shared folder, read the current rules, and return a hash-bound approval plan. This tool never mutates DSM. The rule set fully replaces the shared folder's existing rules.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planNFSExportChangeInput) (*mcp.CallToolResult, planNFSExportChangeOutput, error) {
+		plan, err := service.PlanNFSExportChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planNFSExportChangeOutput{}, err
+		}
+		return nil, planNFSExportChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_nfs_export_plan",
+		Title:       "Apply an approved NFS export plan",
+		Description: "Apply an unmodified NFS export plan only while its approval hash and complete observed rule set still match, then verify the resulting rules. The plan replaces the shared folder's entire NFS export rule set.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyNFSExportPlanInput) (*mcp.CallToolResult, applyNFSExportPlanOutput, error) {
+		result, err := service.ApplyNFSExportPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyNFSExportPlanOutput{}, err
+		}
+		return nil, applyNFSExportPlanOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

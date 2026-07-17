@@ -1,9 +1,9 @@
 ---
 id: WI-024
 title: Guarded per-shared-folder NFS export rules
-status: proposed
+status: in_progress
 priority: P1
-owner: ""
+owner: "claude"
 depends_on: [WI-012]
 parallel_group: C
 touches:
@@ -76,17 +76,41 @@ NFS host export rules").
 
 ## Acceptance criteria
 
-- [ ] Export decoder exposes only stable semantic fields and rejects malformed
+- [x] Export decoder exposes only stable semantic fields and rejects malformed
       responses instead of returning an empty rule set.
-- [ ] Read and set support is selected independently and reported in
+- [x] Read and set support is selected independently and reported in
       capabilities with API/version evidence.
-- [ ] CLI and MCP share the same application plan/apply contract.
-- [ ] Apply rejects stale observed state, submits the full desired rule set,
+- [x] CLI and MCP share the same application plan/apply contract.
+- [x] Apply rejects stale observed state, submits the full desired rule set,
       and verifies a fresh postcondition.
-- [ ] Request-capture tests lock the `save` request shape, including `id`
+- [x] Request-capture tests lock the `save` request shape, including `id`
       handling for create versus rename.
 - [ ] DSM 7.3.x read-only `load` verification passes on a real shared folder.
-- [ ] No live `save` ran without new explicit authorization.
+- [x] No live `save` ran without new explicit authorization.
+
+## Handoff
+
+Implementation is complete and fully verified offline; only live DSM
+verification remains.
+
+- Last good state: committed on branch `claude/file-protocol-integration-93a0ad`
+  after `spec` commit `1efbf61`.
+- Done: `internal/domain/nfsexport`, operation package
+  `internal/synology/operations/nfsexport` (load/save + decode/encode +
+  request-capture tests), facade `internal/synology/nfsexport.go`, application
+  plan/apply `internal/application/nfs_export.go` (+ tests), CLI under
+  `control-panel file-services nfs export`, four MCP tools, read-only gating,
+  and `docs/control-panel.md`.
+- Verified: `go test ./...`, `go vet ./...`, both builds; CLI command tree and
+  offline request validation (duplicate client, bad enum, empty share) exercised
+  through the built binary.
+- Pending: read-only `load` against a real DSM 7.3.x shared folder to confirm
+  the response `rule` array shape and enum values, then flip `status: done`. No
+  live `save` is authorized yet.
+- Assumption still to confirm live: the `load` response returns the rule array
+  under the `rule` key (from `webapi-NFS/src/share_privilege.cpp:229`,
+  `output[APIPARAM_NFS_RULE]`), and DSM accepts a full-replacement `save` with
+  per-rule `id` = old client for edits and `""` for creations.
 
 ## Verification
 

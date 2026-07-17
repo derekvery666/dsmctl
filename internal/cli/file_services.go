@@ -35,8 +35,8 @@ func newSMBCommand(opts *options) *cobra.Command {
 }
 
 func newNFSCommand(opts *options) *cobra.Command {
-	command := &cobra.Command{Use: "nfs", Short: "Inspect global NFS service settings"}
-	command.AddCommand(newNFSStateCommand(opts))
+	command := &cobra.Command{Use: "nfs", Short: "Inspect global NFS service settings and per-shared-folder export rules"}
+	command.AddCommand(newNFSStateCommand(opts), newNFSExportCommand(opts))
 	return command
 }
 

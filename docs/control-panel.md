@@ -123,8 +123,59 @@ DSM's NFS advanced-setting form submits its complete port, packet-size, UNIX
 permission, service-state, and domain snapshot. The current domain model reads
 `nfsv4_domain` but deliberately reports `set_advanced: false`; domain writes
 remain fail-closed until all required preservation fields have a stable typed
-contract. Per-shared-folder NFS host/export rules are also a separate future
-share module.
+contract (tracked by WI-025).
+
+### Per-shared-folder NFS export rules
+
+Each shared folder owns an independent NFS export rule set, exposed separately
+from the global NFS switch because it is a different DSM API
+(`SYNO.Core.FileServ.NFS.SharePrivilege`) keyed by shared-folder name:
+
+```console
+dsmctl control-panel file-services nfs export capabilities --nas office
+dsmctl control-panel file-services nfs export list --nas office --share backup --json
+```
+
+Each normalized rule has a client pattern (hostname, IP, IP/mask, or a wildcard
+such as `*`), a privilege (`read_write` or `read_only`), a squash mapping
+(`no_mapping`, `map_root_to_admin`, `map_root_to_guest`, `map_all_to_admin`,
+`map_all_to_guest`), a security flavor (`sys`, `kerberos`,
+`kerberos_integrity`, `kerberos_privacy`), and the `async`,
+`allow_nonprivileged_ports`, and `allow_subfolder_access` switches.
+
+Unlike the patch-only base settings, an export change owns the **complete
+desired rule set** for one shared folder: the `rules` array fully replaces the
+folder's existing rules, and an empty array removes every rule. The plan records
+and hashes the complete observed rule set; apply rejects a changed set, submits
+the whole desired set (existing clients as edits, new clients as creations), and
+re-reads to verify. Removing a rule, granting read-write to a wildcard client,
+or broadening a client from read-only to read-write is high risk.
+
+```json
+{
+  "share": "backup",
+  "rules": [
+    {
+      "client": "10.0.0.0/24",
+      "privilege": "read_write",
+      "squash": "map_all_to_admin",
+      "security": "sys",
+      "async": true,
+      "allow_nonprivileged_ports": false,
+      "allow_subfolder_access": true
+    }
+  ]
+}
+```
+
+```console
+dsmctl control-panel file-services nfs export plan --nas office --file export.json --output export.plan.json
+dsmctl control-panel file-services nfs export apply --file export.plan.json --approve <hash-from-plan>
+```
+
+MCP exposes `get_nfs_export_capabilities`, `get_nfs_export_state`,
+`plan_nfs_export_change`, and `apply_nfs_export_plan` over the identical
+application contract.
 
 ## Adding another module
 
