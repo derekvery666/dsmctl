@@ -24,6 +24,11 @@ type ResumeInput struct {
 	SessionName     string
 	ClientID        string
 	DeviceID        string
+	// SID is the last-known session id. The webui session refreshes an existing
+	// (active or suspended) session identified by this id rather than minting one
+	// from scratch, so DSM rejects a resume that omits it (error 400). A sid that
+	// DSM no longer recognizes also fails, leaving the caller to re-login.
+	SID             string
 	ServerPublicKey []byte
 	LocalPublicKey  []byte
 	LocalPrivateKey []byte
@@ -69,11 +74,18 @@ func Resume(ctx context.Context, baseURL string, in ResumeInput, httpClient *htt
 		"version":           {"7"},
 		"client_id":         {clientID},
 		"session":           {sessionName},
+		"format":            {"sid"},
 		"kk_message":        {base64.URLEncoding.EncodeToString(kkMessage)},
 		"enable_syno_token": {"yes"},
 	}
 	if in.Account != "" {
 		form.Set("account", in.Account)
+	}
+	if in.DeviceID != "" {
+		form.Set("device_id", in.DeviceID)
+	}
+	if in.SID != "" {
+		form.Set("_sid", in.SID)
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/webapi/entry.cgi", strings.NewReader(form.Encode()))
 	if err != nil {
@@ -88,6 +100,10 @@ func Resume(ctx context.Context, baseURL string, in ResumeInput, httpClient *htt
 	}
 	defer response.Body.Close()
 
+	raw, err := io.ReadAll(io.LimitReader(response.Body, maxBodySize))
+	if err != nil {
+		return Result{}, fmt.Errorf("read resume response: %w", err)
+	}
 	var decoded struct {
 		Success bool `json:"success"`
 		Error   *struct {
@@ -101,15 +117,14 @@ func Resume(ctx context.Context, baseURL string, in ResumeInput, httpClient *htt
 			KKMessage string `json:"kk_message"`
 		} `json:"data"`
 	}
-	if err := json.NewDecoder(io.LimitReader(response.Body, maxBodySize)).Decode(&decoded); err != nil {
-		return Result{}, fmt.Errorf("decode resume response: %w", err)
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return Result{}, fmt.Errorf("decode resume response: %w (body: %s)", err, truncate(raw, 400))
 	}
-	if !decoded.Success || decoded.Data.SID == "" {
-		code := 0
+	if !decoded.Success {
 		if decoded.Error != nil {
-			code = decoded.Error.Code
+			return Result{}, fmt.Errorf("DSM rejected the session resume (error %d)", decoded.Error.Code)
 		}
-		return Result{}, fmt.Errorf("DSM rejected the session resume (error %d)", code)
+		return Result{}, fmt.Errorf("DSM returned no session on resume (body: %s)", truncate(raw, 400))
 	}
 	if decoded.Data.KKMessage != "" {
 		if serverMessage, err := decodeB64URL(decoded.Data.KKMessage); err == nil {
@@ -124,13 +139,26 @@ func Resume(ctx context.Context, baseURL string, in ResumeInput, httpClient *htt
 	if deviceID == "" {
 		deviceID = in.DeviceID
 	}
+	// Resume refreshes the existing session in place: DSM rotates the synotoken
+	// but usually omits the sid, since the session identified by _sid is unchanged.
+	sid := decoded.Data.SID
+	if sid == "" {
+		sid = in.SID
+	}
 	return Result{
 		Account:         account,
-		SID:             decoded.Data.SID,
+		SID:             sid,
 		SynoToken:       decoded.Data.SynoToken,
 		DeviceID:        deviceID,
 		ServerPublicKey: in.ServerPublicKey,
 		LocalPublicKey:  in.LocalPublicKey,
 		LocalPrivateKey: in.LocalPrivateKey,
 	}, nil
+}
+
+func truncate(b []byte, n int) string {
+	if len(b) <= n {
+		return string(b)
+	}
+	return string(b[:n]) + "…"
 }

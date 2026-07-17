@@ -209,13 +209,6 @@ func (m *Manager) sessionClient(ctx context.Context, name string, profile config
 	if session.SID == "" {
 		return nil, false, nil
 	}
-	resumeInput := weblogin.ResumeInput{
-		Account:         session.Account,
-		DeviceID:        session.DeviceID,
-		ServerPublicKey: session.ServerPublicKey,
-		LocalPublicKey:  session.LocalPublicKey,
-		LocalPrivateKey: session.LocalPrivateKey,
-	}
 	client, err := synology.NewClient(synology.Options{
 		BaseURL:    profile.URL,
 		Username:   profile.Username,
@@ -223,18 +216,27 @@ func (m *Manager) sessionClient(ctx context.Context, name string, profile config
 		SynoToken:  session.SynoToken,
 		HTTPClient: httpClient(profile),
 		Resume: func(ctx context.Context) (string, string, error) {
-			if len(resumeInput.LocalPrivateKey) == 0 || len(resumeInput.ServerPublicKey) == 0 {
+			if len(session.LocalPrivateKey) == 0 || len(session.ServerPublicKey) == 0 {
 				return "", "", fmt.Errorf("the stored session for NAS %q cannot be renewed; run 'dsmctl auth login --nas %s'", name, name)
 			}
-			refreshed, err := weblogin.Resume(ctx, profile.URL, resumeInput, httpClient(profile))
+			// The webui session resumes an existing session keyed by its sid, so
+			// pass the latest known sid. On success DSM returns a fresh sid; mutate
+			// the captured session so the next resume uses it.
+			refreshed, err := weblogin.Resume(ctx, profile.URL, weblogin.ResumeInput{
+				Account:         session.Account,
+				DeviceID:        session.DeviceID,
+				SID:             session.SID,
+				ServerPublicKey: session.ServerPublicKey,
+				LocalPublicKey:  session.LocalPublicKey,
+				LocalPrivateKey: session.LocalPrivateKey,
+			}, httpClient(profile))
 			if err != nil {
 				return "", "", fmt.Errorf("could not renew the session for NAS %q; run 'dsmctl auth login --nas %s': %w", name, name, err)
 			}
-			updated := session
-			updated.SID = refreshed.SID
-			updated.SynoToken = refreshed.SynoToken
-			updated.LastVerified = time.Now()
-			_ = m.sessions.SaveSession(ctx, name, updated)
+			session.SID = refreshed.SID
+			session.SynoToken = refreshed.SynoToken
+			session.LastVerified = time.Now()
+			_ = m.sessions.SaveSession(ctx, name, session)
 			return refreshed.SID, refreshed.SynoToken, nil
 		},
 	})
