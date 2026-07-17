@@ -79,12 +79,16 @@ func (operation Operation[I, O]) Select(target Target) (Variant[I, O], Selection
 	var selected Variant[I, O]
 	var reason string
 	found := false
+	mismatches := make([]string, 0, len(operation.Variants))
 	for _, candidate := range operation.Variants {
 		if candidate.Name == "" || candidate.Match == nil || candidate.Execute == nil {
 			continue
 		}
 		matched, candidateReason := candidate.Match(target)
 		if !matched {
+			if candidateReason != "" {
+				mismatches = append(mismatches, fmt.Sprintf("%s: %s", candidate.Name, candidateReason))
+			}
 			continue
 		}
 		if found && candidate.Priority == selected.Priority {
@@ -100,10 +104,17 @@ func (operation Operation[I, O]) Select(target Target) (Variant[I, O], Selection
 		}
 	}
 	if !found {
+		// Carrying each candidate's mismatch reason makes an unsupported
+		// operation diagnosable from the capability report alone (for example
+		// "package SynologyDrive is not installed" versus a missing API).
+		reason := "no compatible implementation matched the discovered target"
+		if len(mismatches) > 0 {
+			reason += ": " + strings.Join(mismatches, "; ")
+		}
 		selection := Selection{
 			Operation: operation.Name,
 			Supported: false,
-			Reason:    "no compatible implementation matched the discovered target",
+			Reason:    reason,
 		}
 		return Variant[I, O]{}, selection, &UnsupportedOperationError{Operation: operation.Name}
 	}
@@ -168,6 +179,49 @@ func DSMVersionRange(minimum, maximum DSMVersion) Matcher {
 			return false, fmt.Sprintf("DSM %s is at or above the exclusive maximum %s", target.DSM.String(), maximum.String())
 		}
 		return true, fmt.Sprintf("DSM %s is in the required release range", target.DSM.String())
+	}
+}
+
+// PackageInstalled matches when the installed-package catalog has been loaded
+// and contains the package. A target whose catalog was never loaded does not
+// match: absence of evidence must fail closed for package-scoped operations.
+func PackageInstalled(id string) Matcher {
+	return func(target Target) (bool, string) {
+		if !target.PackageCatalogKnown() {
+			return false, "installed-package catalog was not loaded for this target"
+		}
+		entry, ok := target.InstalledPackage(id)
+		if !ok {
+			return false, fmt.Sprintf("package %s is not installed", id)
+		}
+		return true, fmt.Sprintf("package %s %s is installed", id, entry.Version.String())
+	}
+}
+
+// PackageVersionRange matches an installed package whose version is in
+// [minimum, maximum). A zero minimum or maximum is unbounded. Like the DSM
+// release rule, prefer advertised API versions when they move and use a
+// package range for a verified per-package-version behavior difference or
+// supported baseline.
+func PackageVersionRange(id string, minimum, maximum PackageVersion) Matcher {
+	return func(target Target) (bool, string) {
+		if !target.PackageCatalogKnown() {
+			return false, "installed-package catalog was not loaded for this target"
+		}
+		entry, ok := target.InstalledPackage(id)
+		if !ok {
+			return false, fmt.Sprintf("package %s is not installed", id)
+		}
+		if !entry.Version.Known() {
+			return false, fmt.Sprintf("package %s reports no parseable version", id)
+		}
+		if minimum.Known() && entry.Version.Compare(minimum) < 0 {
+			return false, fmt.Sprintf("package %s %s is below the minimum %s", id, entry.Version.String(), minimum.String())
+		}
+		if maximum.Known() && entry.Version.Compare(maximum) >= 0 {
+			return false, fmt.Sprintf("package %s %s is at or above the exclusive maximum %s", id, entry.Version.String(), maximum.String())
+		}
+		return true, fmt.Sprintf("package %s %s is in the required version range", id, entry.Version.String())
 	}
 }
 

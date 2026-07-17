@@ -60,11 +60,82 @@ func (version DSMVersion) Compare(other DSMVersion) int {
 	return 0
 }
 
+// PackageVersion is an installed Synology package version such as
+// "4.0.3-27892". Synology package versions are dot/dash-separated numeric
+// segments; they are compared segment-wise with missing segments treated as
+// zero, so "3.5" < "3.5.0-1" and "3.9.9-9999" < "4.0.0".
+type PackageVersion struct {
+	Raw      string `json:"raw,omitempty"`
+	segments []int
+}
+
+var packageVersionSegmentPattern = regexp.MustCompile(`\d+`)
+
+func ParsePackageVersion(value string) PackageVersion {
+	version := PackageVersion{Raw: strings.TrimSpace(value)}
+	for _, segment := range packageVersionSegmentPattern.FindAllString(version.Raw, -1) {
+		number, err := strconv.Atoi(segment)
+		if err != nil {
+			// A segment beyond the int range is out of scope for real Synology
+			// package versions; treat the whole version as unknown.
+			return PackageVersion{Raw: version.Raw}
+		}
+		version.segments = append(version.segments, number)
+	}
+	return version
+}
+
+func (version PackageVersion) Known() bool {
+	return len(version.segments) > 0
+}
+
+func (version PackageVersion) Compare(other PackageVersion) int {
+	length := len(version.segments)
+	if len(other.segments) > length {
+		length = len(other.segments)
+	}
+	for index := 0; index < length; index++ {
+		left, right := 0, 0
+		if index < len(version.segments) {
+			left = version.segments[index]
+		}
+		if index < len(other.segments) {
+			right = other.segments[index]
+		}
+		if left < right {
+			return -1
+		}
+		if left > right {
+			return 1
+		}
+	}
+	return 0
+}
+
+func (version PackageVersion) String() string {
+	if version.Raw != "" {
+		return version.Raw
+	}
+	return "unknown"
+}
+
+// InstalledPackage is one entry of the installed-package catalog used for
+// package-scoped operation selection.
+type InstalledPackage struct {
+	ID      string         `json:"id"`
+	Version PackageVersion `json:"version"`
+	Running bool           `json:"running"`
+}
+
 type Target struct {
 	DSM          DSMVersion
 	APIs         map[string]APIInfo
 	capabilities map[string]struct{}
 	quirks       map[string]struct{}
+	packages     map[string]InstalledPackage
+	// packagesKnown distinguishes "catalog loaded and package absent" from
+	// "catalog never loaded"; matchers must not treat the latter as evidence.
+	packagesKnown bool
 }
 
 func NewTarget() Target {
@@ -72,6 +143,7 @@ func NewTarget() Target {
 		APIs:         make(map[string]APIInfo),
 		capabilities: make(map[string]struct{}),
 		quirks:       make(map[string]struct{}),
+		packages:     make(map[string]InstalledPackage),
 	}
 }
 
@@ -84,6 +156,9 @@ func (target *Target) Normalize() {
 	}
 	if target.quirks == nil {
 		target.quirks = make(map[string]struct{})
+	}
+	if target.packages == nil {
+		target.packages = make(map[string]InstalledPackage)
 	}
 }
 
@@ -112,6 +187,34 @@ func (target Target) HasCapability(name string) bool {
 	return ok
 }
 
+// SetInstalledPackages replaces the complete installed-package catalog. An
+// empty list is a valid loaded catalog (no packages installed); callers must
+// pass the full inventory, never a partial view.
+func (target *Target) SetInstalledPackages(packages []InstalledPackage) {
+	target.Normalize()
+	target.packages = make(map[string]InstalledPackage, len(packages))
+	for _, entry := range packages {
+		id := strings.TrimSpace(entry.ID)
+		if id == "" {
+			continue
+		}
+		entry.ID = id
+		target.packages[id] = entry
+	}
+	target.packagesKnown = true
+}
+
+func (target Target) InstalledPackage(id string) (InstalledPackage, bool) {
+	entry, ok := target.packages[id]
+	return entry, ok
+}
+
+// PackageCatalogKnown reports whether SetInstalledPackages has provided a
+// complete inventory for this target.
+func (target Target) PackageCatalogKnown() bool {
+	return target.packagesKnown
+}
+
 func (target *Target) AddQuirk(name string) {
 	target.Normalize()
 	target.quirks[name] = struct{}{}
@@ -130,12 +233,21 @@ type APIReport struct {
 	RequestFormat string `json:"request_format,omitempty"`
 }
 
+// PackageReport is the observed installed-package evidence carried by a
+// compatibility report when the package catalog has been loaded.
+type PackageReport struct {
+	ID      string `json:"id"`
+	Version string `json:"version,omitempty"`
+	Running bool   `json:"running"`
+}
+
 type Report struct {
-	DSM          DSMVersion  `json:"dsm"`
-	APIs         []APIReport `json:"apis"`
-	Capabilities []string    `json:"capabilities"`
-	Quirks       []string    `json:"quirks,omitempty"`
-	Operations   []Selection `json:"operations"`
+	DSM          DSMVersion      `json:"dsm"`
+	APIs         []APIReport     `json:"apis"`
+	Packages     []PackageReport `json:"packages,omitempty"`
+	Capabilities []string        `json:"capabilities"`
+	Quirks       []string        `json:"quirks,omitempty"`
+	Operations   []Selection     `json:"operations"`
 }
 
 func (target Target) Report(selections ...Selection) Report {
@@ -161,9 +273,18 @@ func (target Target) Report(selections ...Selection) Report {
 	sort.Slice(operations, func(i, j int) bool {
 		return operations[i].Operation < operations[j].Operation
 	})
+	var packages []PackageReport
+	if target.packagesKnown {
+		packages = make([]PackageReport, 0, len(target.packages))
+		for _, entry := range target.packages {
+			packages = append(packages, PackageReport{ID: entry.ID, Version: entry.Version.Raw, Running: entry.Running})
+		}
+		sort.Slice(packages, func(i, j int) bool { return packages[i].ID < packages[j].ID })
+	}
 	return Report{
 		DSM:          target.DSM,
 		APIs:         apis,
+		Packages:     packages,
 		Capabilities: capabilities,
 		Quirks:       quirks,
 		Operations:   operations,

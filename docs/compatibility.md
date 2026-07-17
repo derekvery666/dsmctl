@@ -52,6 +52,56 @@ compatibility.Variant[Input, Result]{
 
 Other operations continue using their common implementations on the same NAS.
 
+## Package-scoped operations
+
+Functionality provided by an installed package (Synology Drive, and later other
+packages) versions with the **package release**, not the DSM release: the same
+DSM build behaves differently under different installed versions of the same
+package, sometimes without the advertised WebAPI version moving. Package-scoped
+operations therefore add a third selection axis.
+
+The compatibility target carries an installed-package catalog (stable package
+id, parsed version, running flag) loaded from the verified Package Center
+inventory operation. Matchers compose with the existing API and DSM matchers:
+
+```go
+compatibility.Variant[Input, Result]{
+    Name:     "drive-connection-v1",
+    API:      "SYNO.SynologyDrive.Connection",
+    Version:  1,
+    Priority: 10,
+    Match: compatibility.All(
+        compatibility.APIVersion("SYNO.SynologyDrive.Connection", 1),
+        compatibility.PackageVersionRange(
+            "SynologyDrive",
+            compatibility.ParsePackageVersion("3.0"),
+            compatibility.PackageVersion{}, // unbounded maximum
+        ),
+    ),
+    Execute: executeList,
+}
+```
+
+`PackageVersionRange(id, min, max)` matches an installed package version in
+`[min, max)`; `PackageInstalled(id)` only requires presence. Both fail closed
+when the catalog was never loaded, so missing evidence can never select a
+backend. Package versions such as `4.0.3-27892` compare segment-wise with
+missing segments as zero.
+
+Two rules keep this axis honest:
+
+1. **The catalog is refreshed before every package-scoped command.** The client
+   façade re-reads the installed-package inventory before selecting a
+   package-scoped operation, so a package updated mid-session cannot keep a
+   stale variant selection, and the observed version is recorded in the
+   selection reason and the report's `packages` list as evidence.
+2. **Prefer advertised API versions when they move.** Like the DSM release
+   rule, a package-version range is for a verified behavioral baseline or a
+   verified per-package-version difference — not a substitute for API/version
+   matching. A version-specific variant replaces only the affected operation
+   and older, unverified package generations fail closed instead of receiving
+   untested requests.
+
 ## Shared versus versioned code
 
 Keep these concerns shared:
