@@ -7,6 +7,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/config"
 	"github.com/ychiu1211/dsmctl/internal/credentials"
 	"github.com/ychiu1211/dsmctl/internal/domain/identity"
+	"github.com/ychiu1211/dsmctl/internal/domain/syslog"
 	"github.com/ychiu1211/dsmctl/internal/runtime"
 	"github.com/ychiu1211/dsmctl/internal/synology"
 )
@@ -85,6 +86,17 @@ type SANCapabilitiesResult struct {
 	NAS          string                       `json:"nas" jsonschema:"NAS profile used for the request"`
 	Capabilities synology.SANCapabilities     `json:"capabilities" jsonschema:"SAN inventory and management operations currently exposed by dsmctl"`
 	Report       synology.CompatibilityReport `json:"report" jsonschema:"Discovered APIs and selected SAN compatibility backends"`
+}
+
+type LogStateResult struct {
+	NAS  string            `json:"nas" jsonschema:"NAS profile used for the request"`
+	Logs synology.LogState `json:"logs" jsonschema:"Normalized DSM system log entries and severity counts"`
+}
+
+type LogCapabilitiesResult struct {
+	NAS          string                       `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.LogCapabilities     `json:"capabilities" jsonschema:"DSM log read operations currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport `json:"report" jsonschema:"Discovered APIs and selected log compatibility backend"`
 }
 
 type ServiceOption func(*Service)
@@ -270,6 +282,30 @@ func (s *Service) GetSANCapabilities(ctx context.Context, requestedNAS string) (
 		return SANCapabilitiesResult{}, authenticationError(name, err)
 	}
 	return SANCapabilitiesResult{NAS: name, Capabilities: capabilities, Report: report}, nil
+}
+
+func (s *Service) GetLogState(ctx context.Context, requestedNAS string, query syslog.StateQuery) (LogStateResult, error) {
+	name, client, err := s.manager.Client(ctx, requestedNAS)
+	if err != nil {
+		return LogStateResult{}, err
+	}
+	state, err := client.LogState(ctx, query)
+	if err != nil {
+		return LogStateResult{}, authenticationError(name, err)
+	}
+	return LogStateResult{NAS: name, Logs: state}, nil
+}
+
+func (s *Service) GetLogCapabilities(ctx context.Context, requestedNAS string) (LogCapabilitiesResult, error) {
+	name, client, err := s.manager.Client(ctx, requestedNAS)
+	if err != nil {
+		return LogCapabilitiesResult{}, err
+	}
+	capabilities, report, err := client.LogCapabilities(ctx)
+	if err != nil {
+		return LogCapabilitiesResult{}, authenticationError(name, err)
+	}
+	return LogCapabilitiesResult{NAS: name, Capabilities: capabilities, Report: report}, nil
 }
 
 func authenticationError(name string, err error) error {

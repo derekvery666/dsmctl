@@ -1,0 +1,32 @@
+{
+  "total": 357,
+  "errorCount": 1,
+  "infoCount": 300,
+  "warnCount": 56,
+  "items": [
+    {
+      "descr": "System successfully removed the SSD cache from [Volume 1].",
+      "level": "info",
+      "logtype": "系統",
+      "orginalLogType": "system",
+      "time": "2026/07/17 13:35:55",
+      "who": "deryck"
+    },
+    {
+      "descr": "User [deryck] from [10.17.36.69] signed in to DSM successfully via [DSM].",
+      "level": "info",
+      "logtype": "連線",
+      "orginalLogType": "connection",
+      "time": "2026/07/17 13:00:12",
+      "who": "deryck"
+    },
+    {
+      "descr": "Volume [1] has entered read-only mode.",
+      "level": "warning",
+      "logtype": "系統",
+      "orginalLogType": "system",
+      "time": "2026/07/16 09:14:03",
+      "who": "system"
+    }
+  ]
+}

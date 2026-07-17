@@ -13,6 +13,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/domain/san"
 	"github.com/ychiu1211/dsmctl/internal/domain/share"
 	"github.com/ychiu1211/dsmctl/internal/domain/storage"
+	"github.com/ychiu1211/dsmctl/internal/domain/syslog"
 	"github.com/ychiu1211/dsmctl/internal/synology"
 )
 
@@ -225,6 +226,26 @@ type getSANCapabilitiesOutput struct {
 	NAS          string                       `json:"nas" jsonschema:"NAS profile used for the request"`
 	Capabilities synology.SANCapabilities     `json:"capabilities" jsonschema:"SAN inventory and management operations currently exposed by dsmctl"`
 	Report       synology.CompatibilityReport `json:"report" jsonschema:"Discovered APIs and selected SAN compatibility backends"`
+}
+
+type getLogsInput struct {
+	NAS     string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Limit   int    `json:"limit,omitempty" jsonschema:"Maximum number of log entries to return; defaults to a bounded page size"`
+	Offset  int    `json:"offset,omitempty" jsonschema:"Number of newest entries to skip for pagination"`
+	Level   string `json:"level,omitempty" jsonschema:"Client-side severity filter over the retrieved page: info, warn, or error"`
+	Keyword string `json:"keyword,omitempty" jsonschema:"Case-insensitive substring filter applied by DSM"`
+	LogType string `json:"log_type,omitempty" jsonschema:"DSM log category: system, connection, or fileTransfer"`
+}
+
+type getLogsOutput struct {
+	NAS  string            `json:"nas" jsonschema:"NAS profile used for the request"`
+	Logs synology.LogState `json:"logs" jsonschema:"Normalized DSM system log entries and severity counts"`
+}
+
+type getLogCapabilitiesOutput struct {
+	NAS          string                       `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.LogCapabilities     `json:"capabilities" jsonschema:"DSM log read operations currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport `json:"report" jsonschema:"Discovered APIs and selected log compatibility backend"`
 }
 
 type planSANChangeInput struct {
@@ -590,6 +611,34 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getSANStateOutput{}, err
 		}
 		return nil, getSANStateOutput{NAS: result.NAS, SAN: result.SAN}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_log_capabilities",
+		Title:       "Get DSM log capabilities",
+		Description: "Report whether DSM system log reading is available on a selected NAS and the DSM backend selected for it.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getSANInput) (*mcp.CallToolResult, getLogCapabilitiesOutput, error) {
+		result, err := service.GetLogCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getLogCapabilitiesOutput{}, err
+		}
+		return nil, getLogCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_logs",
+		Title:       "Get DSM system logs",
+		Description: "Read normalized DSM system log entries (SYNO.Core.SyslogClient.Log) with optional keyword, log-type, severity, and paging filters. Returns each entry's time, level, category, actor, and message plus whole-log severity counts. This tool never mutates or clears DSM logs.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getLogsInput) (*mcp.CallToolResult, getLogsOutput, error) {
+		result, err := service.GetLogState(ctx, input.NAS, syslog.StateQuery{
+			Limit: input.Limit, Offset: input.Offset, Keyword: input.Keyword, LogType: input.LogType, Level: input.Level,
+		})
+		if err != nil {
+			return nil, getLogsOutput{}, err
+		}
+		return nil, getLogsOutput{NAS: result.NAS, Logs: result.Logs}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

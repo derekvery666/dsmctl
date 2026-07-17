@@ -19,6 +19,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/storageinventory"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/storagemodelconstraints"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/storagepoolmutation"
+	"github.com/ychiu1211/dsmctl/internal/synology/operations/syslogread"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/systeminfo"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/volumemutation"
 )
@@ -51,6 +52,7 @@ func (c *Client) Compatibility(ctx context.Context) (CompatibilityReport, error)
 	apiNames = append(apiNames, fileservices.APINames()...)
 	apiNames = append(apiNames, saninventory.APINames()...)
 	apiNames = append(apiNames, sanmutation.APINames()...)
+	apiNames = append(apiNames, syslogread.APINames()...)
 	if err := c.prepareCompatibilityTargetLocked(ctx, apiNames...); err != nil {
 		return CompatibilityReport{}, fmt.Errorf("discover compatibility target: %w", err)
 	}
@@ -135,6 +137,10 @@ func (c *Client) Compatibility(ctx context.Context) (CompatibilityReport, error)
 	if selectionErr != nil {
 		return CompatibilityReport{}, selectionErr
 	}
+	logSelection, selectionErr := syslogread.Select(c.target)
+	if selectionErr != nil && !compatibility.IsUnsupported(selectionErr) {
+		return CompatibilityReport{}, selectionErr
+	}
 	c.updateDerivedCapabilitiesLocked()
 	selections := []compatibility.Selection{systemSelection, storageSelection, storageModelSelection}
 	selections = append(selections, storageMutationSelections...)
@@ -150,6 +156,7 @@ func (c *Client) Compatibility(ctx context.Context) (CompatibilityReport, error)
 	selections = append(selections, fileServiceSelections...)
 	selections = append(selections, sanSelections...)
 	selections = append(selections, sanMutationSelections...)
+	selections = append(selections, logSelection)
 	return c.target.Report(selections...), nil
 }
 
@@ -183,6 +190,9 @@ func (c *Client) updateDerivedCapabilitiesLocked() {
 	}
 	if _, err := storageinventory.Select(c.target); err == nil {
 		c.target.AddCapability(storageinventory.CapabilityName)
+	}
+	if selection, err := syslogread.Select(c.target); err == nil && selection.Supported {
+		c.target.AddCapability(syslogread.CapabilityName)
 	}
 	if selection, err := storagemodelconstraints.Select(c.target); err == nil && selection.Supported {
 		c.target.AddCapability(storagemodelconstraints.CapabilityName)

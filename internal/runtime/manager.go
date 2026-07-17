@@ -15,6 +15,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/credentials"
 	"github.com/ychiu1211/dsmctl/internal/domain/identity"
 	"github.com/ychiu1211/dsmctl/internal/domain/share"
+	"github.com/ychiu1211/dsmctl/internal/domain/syslog"
 	"github.com/ychiu1211/dsmctl/internal/synology"
 )
 
@@ -38,6 +39,8 @@ type Client interface {
 	SANState(ctx context.Context) (synology.SANState, error)
 	SANCapabilities(ctx context.Context) (synology.SANCapabilities, synology.CompatibilityReport, error)
 	ApplySANChange(ctx context.Context, input synology.SANMutationInput) (synology.SANMutationResult, error)
+	LogState(ctx context.Context, query syslog.StateQuery) (synology.LogState, error)
+	LogCapabilities(ctx context.Context) (synology.LogCapabilities, synology.CompatibilityReport, error)
 }
 
 type OTPProvider func(ctx context.Context, profileName string) (string, error)

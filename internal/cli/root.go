@@ -29,6 +29,7 @@ func New(version string) *cobra.Command {
 		newAccountCommand(opts),
 		newAuthCommand(opts),
 		newControlPanelCommand(opts),
+		newLogCommand(opts),
 		newNASCommand(opts),
 		newSANCommand(opts),
 		newShareCommand(opts),
