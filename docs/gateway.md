@@ -43,12 +43,17 @@ environment variable is resolved only when that NAS is first contacted; it is
 never included in profile listings or logs. Environment passwords are a
 development bridge, not the final package vault.
 
-This preview has no browser enrollment flow and deliberately does not connect
-to a host desktop keyring. It therefore cannot complete an interactive DSM OTP
+This preview has no enrollment flow and deliberately does not connect to a
+host desktop keyring: a web-login session created by `dsmctl auth login` lives
+in that desktop user's OS keyring and is never readable by the gateway, so a
+`DSMCTL_PASSWORD_<NAME>` variable is currently the only way a gateway profile
+can authenticate. The preview also cannot complete an interactive DSM OTP
 challenge or persist a trusted-device credential. Use only a narrowly
-privileged read-only automation account that can authenticate non-interactively
-for development. WI-015 adds encrypted password and trusted-device enrollment
-inside the gateway vault.
+privileged read-only automation account that can authenticate
+non-interactively for development. WI-015 replaces this bridge with the
+encrypted gateway vault: web-login session enrollment through the admin flow,
+renewed headlessly via session resume, plus password/OTP enrollment for
+automation accounts.
 
 The MCP URL is `http://127.0.0.1:18765/mcp`. Send the contents of
 `secrets/dev-token` as `Authorization: Bearer <token>`. `/healthz` is local

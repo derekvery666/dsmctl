@@ -31,8 +31,9 @@ amd64 Linux host.
    profiles, including the NAS hosting the package when explicitly configured.
 2. Keep the core image portable across Synology and ordinary amd64 Linux.
 3. Preserve the existing CLI/MCP/application/DSM compatibility boundaries.
-4. Keep passwords, OTPs, trusted-device IDs, tokens, and master keys out of
-   MCP arguments, plans, display models, and logs.
+4. Keep passwords, OTPs, trusted-device IDs, DSM sessions and their resume
+   keys, tokens, and master keys out of MCP arguments, plans, display models,
+   and logs.
 5. Make install, start, stop, reboot, upgrade, backup, and uninstall behavior
    deterministic and testable.
 6. Fail closed when authentication, authorization, TLS trust, approval, or
@@ -168,9 +169,13 @@ state; apply rejects a removed or materially changed profile.
   smaller transactional store better satisfies migrations and audit queries.
 - Store profiles, secret metadata, token hashes, approvals, audit events, and
   schema version in the database.
-- Store password and trusted-device payloads as AES-256-GCM ciphertext with a
-  unique random nonce and authenticated metadata binding secret type and
+- Store password, trusted-device, and DSM web-login session payloads (SID,
+  SynoToken, and the durable Noise resume keys) as AES-256-GCM ciphertext with
+  a unique random nonce and authenticated metadata binding secret type and
   profile identity.
+- Prefer a stored web-login session for a profile and renew it headlessly
+  through DSM session resume; passwords remain for automation accounts. The
+  desktop OS keyring used by the CLI is never read by the gateway.
 - Read the vault key from `/run/secrets/master.key`; never store it in the
   database or ordinary `/data` backup. Generic Linux supplies the file. The
   Synology wrapper generates it in the package-private home directory and
@@ -198,9 +203,12 @@ Administration is separate from MCP authorization.
   adapter and gateway share a dedicated assertion key that is separate from
   the vault master key. Assertions bind identity, administrator authorization,
   audience, issue/expiry time, and nonce; the gateway rejects replay.
-- The admin API supports profile CRUD, connection testing, password/OTP
-  enrollment, TLS fingerprint confirmation, credential removal/rotation,
-  token lifecycle, approvals, audit queries, and safe backup status.
+- The admin API supports profile CRUD, connection testing, web-login session
+  enrollment (the administrator signs in at the NAS's own page, the browser
+  relays the one-time code, and the gateway performs the code exchange and
+  stores the session), password/OTP enrollment, TLS fingerprint confirmation,
+  credential removal/rotation, token lifecycle, approvals, audit queries, and
+  safe backup status.
 - Password and OTP submissions are accepted only by authenticated admin
   endpoints, kept only for the enrollment transaction, and never accepted by
   MCP tools.
