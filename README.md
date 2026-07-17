@@ -6,7 +6,7 @@
 - `dsmctl-mcp`: a stdio MCP server for AI clients.
 - `dsmctl-gateway`: a portable amd64 Streamable HTTP MCP gateway; its current developer mode is read-only.
 
-The first milestone implements one complete connection slice: configure multiple NAS profiles, authenticate with password and DSM two-factor authentication, maintain independent sessions, and read basic system information. Management modules now cover storage and SAN inventory, guarded storage-pool, volume, and SAN lifecycles, local user/group/share management, effective-access explanation, a focused read-only Control Panel time module, and guarded global SMB/NFS File Services through the same CLI/MCP/application stack.
+The first milestone implements one complete connection slice: configure multiple NAS profiles, authenticate with password and DSM two-factor authentication, maintain independent sessions, and read basic system information. Management modules now cover storage and SAN inventory, guarded storage-pool, volume, and SAN lifecycles, local user/group/share management, effective-access explanation, a focused read-only Control Panel time module, guarded global SMB/NFS File Services, and Package Center inventory, read-only settings, and guarded package lifecycle through the same CLI/MCP/application stack.
 
 ## Architecture
 
@@ -94,6 +94,9 @@ dsmctl log list --nas office
 dsmctl log list --nas office --type connection --limit 50
 dsmctl log list --nas office --from "2026-07-01" --to "2026-07-08"
 dsmctl log list --nas office --keyword cache --level error --json
+dsmctl package capabilities --nas office
+dsmctl package inventory --nas office --json
+dsmctl package settings --nas office --json
 ```
 
 Account and shared-folder writes use a two-step plan/apply contract. Put the desired change in JSON, create a plan bound to the current DSM resource ID/state, review it, then apply that exact plan with its hash:
@@ -110,7 +113,15 @@ dsmctl control-panel file-services apply --file smb-change.plan.json --approve <
 
 dsmctl control-panel time plan --nas office --file time-change.json --output time-change.plan.json
 dsmctl control-panel time apply --file time-change.plan.json --approve <hash-from-plan>
+
+dsmctl package plan --nas office --file package-change.json --output package-change.plan.json
+dsmctl package apply --file package-change.plan.json --approve <hash-from-plan>
 ```
+
+Package Center lifecycle changes use the same plan/apply contract: a `lifecycle`
+action (`start`, `stop`, or `uninstall`) on one installed package. Package Center
+settings are read-only in this release (`dsmctl package settings`); settings
+changes are deferred. See [the Package Center guide](docs/package-center.md).
 
 User passwords are never included in requests or plans. A user create/change refers to an apply-time environment variable such as `"credential_ref":"env:DSMCTL_NEW_USER_PASSWORD"`. Request formats and examples are in [account and share management](docs/account-share-management.md).
 
@@ -197,8 +208,13 @@ Available tools:
 - `explain_effective_access`: explain one principal's share or application access with direct/group evidence and conservative indeterminate results for custom rules.
 - `get_log_capabilities`: report whether DSM system log reading is available and the selected backend.
 - `get_logs`: read normalized DSM system log entries with optional keyword, log-type, severity, and paging filters; never mutates or clears logs.
+- `get_package_capabilities`: report supported Package Center inventory, settings, and lifecycle operations plus the selected DSM backends; install, update, and settings changes report unsupported.
+- `get_package_state`: return the normalized installed-package inventory with run status and start/stop/uninstall eligibility without changing packages.
+- `get_package_settings`: return normalized global Package Center settings (publisher trust level and automatic-update policy); read-only.
+- `plan_package_change`: validate a start/stop/uninstall lifecycle action and return a state-bound approval plan without mutating DSM; install, update, and settings changes are rejected.
+- `apply_package_plan`: apply an approved, unchanged Package Center lifecycle plan and verify the terminal package-state postcondition.
 
-Storage-pool create, add-disk expansion, and delete, plus volume create, expansion, and delete, require independently selected backends and guarded plan/apply; storage-pool RAID migration remains fail-closed. SSD cache create and remove (read-only or read-write) are also guarded plan/apply on a `cache` resource; SSD cache expand and read-only/read-write conversion are modeled but fail closed on DSMs whose flashcache API exposes only create and remove. Local user/group CRUD, memberships, per-user/group quotas, explicit application access, shared-folder CRUD, normalized `none`/`read`/`write`/`deny` share permissions, and guarded SAN target/LUN/mapping lifecycles are also available only through plan/apply. SAN deletes refuse active sessions or mappings, mappings never cascade-delete endpoints, and LUN capacity is checked against the selected backing volume. Guarded time-module changes never write wall-clock values or switch to manual synchronization, and NTP servers are validated for syntax without any reachability claim. Encrypted shares, WORM, custom Windows ACLs, IP-specific application rules, and SAN snapshots/clones remain out of scope.
+Storage-pool create, add-disk expansion, and delete, plus volume create, expansion, and delete, require independently selected backends and guarded plan/apply; storage-pool RAID migration remains fail-closed. SSD cache create and remove (read-only or read-write) are also guarded plan/apply on a `cache` resource; SSD cache expand and read-only/read-write conversion are modeled but fail closed on DSMs whose flashcache API exposes only create and remove. Local user/group CRUD, memberships, per-user/group quotas, explicit application access, shared-folder CRUD, normalized `none`/`read`/`write`/`deny` share permissions, and guarded SAN target/LUN/mapping lifecycles are also available only through plan/apply. SAN deletes refuse active sessions or mappings, mappings never cascade-delete endpoints, and LUN capacity is checked against the selected backing volume. Guarded time-module changes never write wall-clock values or switch to manual synchronization, and NTP servers are validated for syntax without any reachability claim. Package Center exposes installed-package inventory, read-only global settings (publisher trust level and automatic-update policy), and guarded start/stop/uninstall on installed packages; uninstall is refused for packages DSM reports as non-removable, and start/stop/uninstall verify the terminal package state. Package install-from-repository, update, and settings changes are modeled but fail closed: install/update contact the online repository, run asynchronously, and download and run remote code, and the settings set surface is split across per-section DSM sub-APIs. The online catalog browse and per-package application-specific settings are also deferred. Encrypted shares, WORM, custom Windows ACLs, IP-specific application rules, and SAN snapshots/clones remain out of scope.
 
 Account expansion is opt-in because DSM exposes quota and application rules per principal. For large systems, filter `get_account_state` or `account inventory` with `principal_type` plus `principal` instead of reading every local principal. Membership expansion scales with local groups rather than users.
 

@@ -1,0 +1,206 @@
+package cli
+
+import (
+	"fmt"
+	"text/tabwriter"
+
+	"github.com/spf13/cobra"
+
+	"github.com/ychiu1211/dsmctl/internal/application"
+	"github.com/ychiu1211/dsmctl/internal/domain/packagecenter"
+)
+
+func newPackageCommand(opts *options) *cobra.Command {
+	command := &cobra.Command{
+		Use:     "package",
+		Aliases: []string{"pkg", "package-center"},
+		Short:   "Inspect and manage DSM Package Center packages and settings",
+	}
+	command.AddCommand(
+		newPackageCapabilitiesCommand(opts),
+		newPackageInventoryCommand(opts),
+		newPackageSettingsCommand(opts),
+		newPackagePlanCommand(opts),
+		newPackageApplyCommand(opts),
+	)
+	return command
+}
+
+func newPackageCapabilitiesCommand(opts *options) *cobra.Command {
+	var jsonOutput bool
+	command := &cobra.Command{
+		Use:   "capabilities",
+		Short: "Show Package Center operation support and selected DSM backends",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.GetPackageCapabilities(cmd.Context(), opts.nas)
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return encodeIndentedJSON(cmd.OutOrStdout(), result)
+			}
+			return writePackageCapabilities(cmd, result)
+		},
+	}
+	command.Flags().BoolVar(&jsonOutput, "json", false, "output structured JSON")
+	return command
+}
+
+func newPackageInventoryCommand(opts *options) *cobra.Command {
+	var jsonOutput bool
+	command := &cobra.Command{
+		Use:   "inventory",
+		Short: "List installed packages and their run status",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.GetPackageState(cmd.Context(), opts.nas)
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return encodeIndentedJSON(cmd.OutOrStdout(), result)
+			}
+			return writePackageInventory(cmd, result)
+		},
+	}
+	command.Flags().BoolVar(&jsonOutput, "json", false, "output structured JSON")
+	return command
+}
+
+func newPackageSettingsCommand(opts *options) *cobra.Command {
+	var jsonOutput bool
+	command := &cobra.Command{
+		Use:   "settings",
+		Short: "Show global Package Center settings",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.GetPackageSettings(cmd.Context(), opts.nas)
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return encodeIndentedJSON(cmd.OutOrStdout(), result)
+			}
+			return writePackageSettings(cmd, result)
+		},
+	}
+	command.Flags().BoolVar(&jsonOutput, "json", false, "output structured JSON")
+	return command
+}
+
+func newPackagePlanCommand(opts *options) *cobra.Command {
+	var inputPath, outputPath string
+	command := &cobra.Command{
+		Use:   "plan",
+		Short: "Validate a settings or lifecycle change and emit an approval plan as JSON",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var request packagecenter.ChangeRequest
+			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
+				return fmt.Errorf("read Package Center change: %w", err)
+			}
+			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			plan, err := service.PlanPackageChange(cmd.Context(), opts.nas, request)
+			if err != nil {
+				return err
+			}
+			return encodeJSONOutput(cmd, outputPath, plan)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "Package Center change JSON file, or - for stdin")
+	command.Flags().StringVarP(&outputPath, "output", "o", "-", "plan JSON file, or - for stdout")
+	return command
+}
+
+func newPackageApplyCommand(opts *options) *cobra.Command {
+	var inputPath, approvalHash string
+	command := &cobra.Command{
+		Use:   "apply",
+		Short: "Apply a Package Center plan after hash and stale-state validation",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var plan application.PackagePlan
+			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
+				return fmt.Errorf("read Package Center plan: %w", err)
+			}
+			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.ApplyPackagePlan(cmd.Context(), plan, approvalHash)
+			if err != nil {
+				return err
+			}
+			return encodeIndentedJSON(cmd.OutOrStdout(), result)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "Package Center plan JSON file, or - for stdin")
+	command.Flags().StringVar(&approvalHash, "approve", "", "exact SHA-256 hash printed by package plan")
+	_ = command.MarkFlagRequired("approve")
+	return command
+}
+
+func writePackageCapabilities(cmd *cobra.Command, result application.PackageCapabilitiesResult) error {
+	writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+	fmt.Fprintf(writer, "NAS:\t%s\n", result.NAS)
+	fmt.Fprintln(writer, "OPERATION\tSUPPORTED")
+	fmt.Fprintf(writer, "inventory read\t%s\n", yesNo(result.Capabilities.InventoryRead))
+	fmt.Fprintf(writer, "settings read\t%s\n", yesNo(result.Capabilities.SettingsRead))
+	fmt.Fprintf(writer, "settings set\t%s\n", yesNo(result.Capabilities.SettingsSet))
+	fmt.Fprintf(writer, "start\t%s\n", yesNo(result.Capabilities.Start))
+	fmt.Fprintf(writer, "stop\t%s\n", yesNo(result.Capabilities.Stop))
+	fmt.Fprintf(writer, "uninstall\t%s\n", yesNo(result.Capabilities.Uninstall))
+	fmt.Fprintf(writer, "install\t%s\n", yesNo(result.Capabilities.Install))
+	fmt.Fprintf(writer, "update\t%s\n", yesNo(result.Capabilities.Update))
+	fmt.Fprintln(writer, "\nOPERATION\tSUPPORTED\tBACKEND\tAPI\tVERSION")
+	for _, operation := range result.Report.Operations {
+		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\tv%d\n", operation.Operation, yesNo(operation.Supported), valueOrDash(operation.Backend), valueOrDash(operation.API), operation.Version)
+	}
+	return writer.Flush()
+}
+
+func writePackageInventory(cmd *cobra.Command, result application.PackageStateResult) error {
+	writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+	fmt.Fprintf(writer, "NAS:\t%s\n", result.NAS)
+	if len(result.State.Packages) == 0 {
+		fmt.Fprintln(writer, "No packages installed.")
+		return writer.Flush()
+	}
+	fmt.Fprintln(writer, "\nID\tNAME\tVERSION\tSTATUS\tBETA\tSTART\tSTOP\tUNINSTALL")
+	for _, pkg := range result.State.Packages {
+		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			pkg.ID, valueOrDash(pkg.Name), valueOrDash(pkg.Version), string(pkg.Status),
+			yesNo(pkg.Beta), yesNo(pkg.CanStart), yesNo(pkg.CanStop), yesNo(pkg.CanUninstall))
+	}
+	return writer.Flush()
+}
+
+func writePackageSettings(cmd *cobra.Command, result application.PackageSettingsResult) error {
+	writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+	fmt.Fprintf(writer, "NAS:\t%s\n", result.NAS)
+	fmt.Fprintf(writer, "Trust level:\t%s\n", string(result.Settings.TrustLevel))
+	fmt.Fprintf(writer, "Automatic updates:\t%s\n", yesNo(result.Settings.AutoUpdateEnabled))
+	fmt.Fprintf(writer, "Important updates only:\t%s\n", yesNo(result.Settings.AutoUpdateImportantOnly))
+	return writer.Flush()
+}

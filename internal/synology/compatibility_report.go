@@ -12,6 +12,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/identitymembership"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/identitymutation"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/identityquota"
+	pkgops "github.com/ychiu1211/dsmctl/internal/synology/operations/packagecenter"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/saninventory"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/sanmutation"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/shareinventory"
@@ -53,6 +54,7 @@ func (c *Client) Compatibility(ctx context.Context) (CompatibilityReport, error)
 	apiNames = append(apiNames, saninventory.APINames()...)
 	apiNames = append(apiNames, sanmutation.APINames()...)
 	apiNames = append(apiNames, syslogread.APINames()...)
+	apiNames = append(apiNames, pkgops.APINames()...)
 	if err := c.prepareCompatibilityTargetLocked(ctx, apiNames...); err != nil {
 		return CompatibilityReport{}, fmt.Errorf("discover compatibility target: %w", err)
 	}
@@ -141,6 +143,10 @@ func (c *Client) Compatibility(ctx context.Context) (CompatibilityReport, error)
 	if selectionErr != nil && !compatibility.IsUnsupported(selectionErr) {
 		return CompatibilityReport{}, selectionErr
 	}
+	packageSelections, selectionErr := pkgops.Select(c.target)
+	if selectionErr != nil {
+		return CompatibilityReport{}, selectionErr
+	}
 	c.updateDerivedCapabilitiesLocked()
 	selections := []compatibility.Selection{systemSelection, storageSelection, storageModelSelection}
 	selections = append(selections, storageMutationSelections...)
@@ -157,6 +163,7 @@ func (c *Client) Compatibility(ctx context.Context) (CompatibilityReport, error)
 	selections = append(selections, sanSelections...)
 	selections = append(selections, sanMutationSelections...)
 	selections = append(selections, logSelection)
+	selections = append(selections, packageSelections...)
 	return c.target.Report(selections...), nil
 }
 
@@ -301,6 +308,9 @@ func (c *Client) updateDerivedCapabilitiesLocked() {
 	}
 	if selections, err := sanmutation.Select(c.target); err == nil {
 		c.addSANMutationCapabilitiesLocked(selections)
+	}
+	if selections, err := pkgops.Select(c.target); err == nil {
+		c.addPackageCapabilitiesLocked(selections)
 	}
 	// Sending session credentials in both documented parameters and the web UI
 	// cookie/header locations is safe across tested DSM versions and fixes Core

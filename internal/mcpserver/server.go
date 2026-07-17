@@ -10,6 +10,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/domain/access"
 	"github.com/ychiu1211/dsmctl/internal/domain/controlpanel"
 	"github.com/ychiu1211/dsmctl/internal/domain/identity"
+	"github.com/ychiu1211/dsmctl/internal/domain/packagecenter"
 	"github.com/ychiu1211/dsmctl/internal/domain/san"
 	"github.com/ychiu1211/dsmctl/internal/domain/share"
 	"github.com/ychiu1211/dsmctl/internal/domain/storage"
@@ -295,6 +296,44 @@ type applySharePlanInput struct {
 
 type applySharePlanOutput struct {
 	Result application.ShareApplyResult `json:"result" jsonschema:"Shared-folder mutation result after postcondition verification"`
+}
+
+type getPackageInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getPackageCapabilitiesOutput struct {
+	NAS          string                       `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.PackageCapabilities `json:"capabilities" jsonschema:"Package Center operations currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport `json:"report" jsonschema:"Discovered APIs and selected Package Center backends"`
+}
+
+type getPackageStateOutput struct {
+	NAS   string                `json:"nas" jsonschema:"NAS profile used for the request"`
+	State synology.PackageState `json:"state" jsonschema:"Normalized installed-package inventory"`
+}
+
+type getPackageSettingsOutput struct {
+	NAS      string                   `json:"nas" jsonschema:"NAS profile used for the request"`
+	Settings synology.PackageSettings `json:"settings" jsonschema:"Normalized global Package Center settings"`
+}
+
+type planPackageChangeInput struct {
+	NAS     string                      `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request packagecenter.ChangeRequest `json:"request" jsonschema:"Settings patch or package lifecycle intent; install and update are deferred and rejected"`
+}
+
+type planPackageChangeOutput struct {
+	Plan application.PackagePlan `json:"plan" jsonschema:"Validated plan bound to the observed settings or package state and approval hash"`
+}
+
+type applyPackagePlanInput struct {
+	Plan         application.PackagePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_package_change"`
+	ApprovalHash string                  `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved Package Center plan"`
+}
+
+type applyPackagePlanOutput struct {
+	Result application.PackageApplyResult `json:"result" jsonschema:"Package Center mutation result after stale-state and postcondition checks"`
 }
 
 func New(service *application.Service, version string) *mcp.Server {
@@ -728,6 +767,71 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getShareStateOutput{}, err
 		}
 		return nil, getShareStateOutput{NAS: result.NAS, Shares: result.Shares}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_package_capabilities",
+		Title:       "Get Package Center capabilities",
+		Description: "Report which Package Center operations dsmctl supports on the selected NAS and the DSM backend for each. Install and update are deferred and always report false.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getPackageInput) (*mcp.CallToolResult, getPackageCapabilitiesOutput, error) {
+		result, err := service.GetPackageCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getPackageCapabilitiesOutput{}, err
+		}
+		return nil, getPackageCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_package_state",
+		Title:       "Get installed-package inventory",
+		Description: "Read the normalized inventory of installed DSM packages: id, display name, version, run status, running flag, beta flag, install volume, and whether each package can be started, stopped, or uninstalled. This tool never changes packages.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getPackageInput) (*mcp.CallToolResult, getPackageStateOutput, error) {
+		result, err := service.GetPackageState(ctx, input.NAS)
+		if err != nil {
+			return nil, getPackageStateOutput{}, err
+		}
+		return nil, getPackageStateOutput{NAS: result.NAS, State: result.State}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_package_settings",
+		Title:       "Get Package Center settings",
+		Description: "Read the global Package Center configuration: publisher trust level, automatic-update state, automatic-important-only state, beta channel state, and default install volume. This tool never changes settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getPackageInput) (*mcp.CallToolResult, getPackageSettingsOutput, error) {
+		result, err := service.GetPackageSettings(ctx, input.NAS)
+		if err != nil {
+			return nil, getPackageSettingsOutput{}, err
+		}
+		return nil, getPackageSettingsOutput{NAS: result.NAS, Settings: result.Settings}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_package_change",
+		Title:       "Plan a Package Center change",
+		Description: "Validate a patch-only global-settings change or a package lifecycle action (start, stop, uninstall) and return an approval plan bound to the observed settings or package state. Uninstall is refused when DSM reports the package is not removable; install and update are deferred and rejected. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planPackageChangeInput) (*mcp.CallToolResult, planPackageChangeOutput, error) {
+		plan, err := service.PlanPackageChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planPackageChangeOutput{}, err
+		}
+		return nil, planPackageChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_package_plan",
+		Title:       "Apply an approved Package Center plan",
+		Description: "Apply an unmodified Package Center plan only while its approval hash and the observed settings or package state still match, then verify the postcondition. Start, stop, and uninstall verify the terminal package state; a still-transitional package returns a not-yet-confirmed error rather than a false success.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyPackagePlanInput) (*mcp.CallToolResult, applyPackagePlanOutput, error) {
+		result, err := service.ApplyPackagePlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyPackagePlanOutput{}, err
+		}
+		return nil, applyPackagePlanOutput{Result: result}, nil
 	})
 
 	return server
