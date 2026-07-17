@@ -40,11 +40,15 @@ type Options struct {
 
 	// SessionID and SynoToken seed the client with a session obtained elsewhere
 	// (for example a web login). When SessionID is set the client reuses it
-	// instead of logging in, so a password is not required. If that session
-	// later expires the client can only re-authenticate when a password is also
-	// configured.
+	// instead of logging in, so a password is not required.
 	SessionID string
 	SynoToken string
+
+	// Resume, when set, refreshes an expired injected session without a
+	// password (for web login, a browserless Noise resume). It returns the new
+	// session ID and SynoToken. It is tried before the password path when a
+	// session error occurs.
+	Resume func(ctx context.Context) (sid, synoToken string, err error)
 }
 
 type APIInfo = compatibility.APIInfo
@@ -57,6 +61,7 @@ type Client struct {
 	deviceID     string
 	otp          OTPProvider
 	saveDeviceID DeviceIDSaver
+	resume       func(ctx context.Context) (string, string, error)
 	httpClient   *http.Client
 
 	mu         sync.Mutex
@@ -101,6 +106,7 @@ func NewClient(options Options) (*Client, error) {
 		deviceID:     options.DeviceID,
 		otp:          options.OTPProvider,
 		saveDeviceID: options.SaveDeviceID,
+		resume:       options.Resume,
 		httpClient:   httpClient,
 		target:       compatibility.NewTarget(),
 		apiChecked:   make(map[string]bool),
@@ -270,6 +276,22 @@ func (c *Client) Authenticate(ctx context.Context) error {
 	return c.loginLocked(ctx)
 }
 
+// reestablishLocked recovers a lost session. An injected session with a resume
+// function is refreshed without a password first; otherwise it falls back to
+// the password login path (which errors when no password is configured).
+func (c *Client) reestablishLocked(ctx context.Context) error {
+	if c.resume != nil {
+		sid, synoToken, err := c.resume(ctx)
+		if err != nil {
+			return err
+		}
+		c.sid = sid
+		c.synoToken = synoToken
+		return nil
+	}
+	return c.loginLocked(ctx)
+}
+
 // ValidateSession reports whether the session currently held by the client is
 // still accepted by DSM. It issues one cheap authenticated request and, unlike
 // the normal request path, never tries to re-authenticate: an expired or
@@ -350,8 +372,8 @@ func (c *Client) executeLocked(ctx context.Context, call compatibility.Request) 
 	if isSessionError(err) {
 		c.sid = ""
 		c.synoToken = ""
-		if loginErr := c.loginLocked(ctx); loginErr != nil {
-			return nil, loginErr
+		if reErr := c.reestablishLocked(ctx); reErr != nil {
+			return nil, reErr
 		}
 		params.Set("_sid", c.sid)
 		params.Del("SynoToken")

@@ -18,6 +18,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/domain/share"
 	"github.com/ychiu1211/dsmctl/internal/domain/syslog"
 	"github.com/ychiu1211/dsmctl/internal/synology"
+	"github.com/ychiu1211/dsmctl/internal/weblogin"
 )
 
 type Client interface {
@@ -208,12 +209,34 @@ func (m *Manager) sessionClient(ctx context.Context, name string, profile config
 	if session.SID == "" {
 		return nil, false, nil
 	}
+	resumeInput := weblogin.ResumeInput{
+		Account:         session.Account,
+		DeviceID:        session.DeviceID,
+		ServerPublicKey: session.ServerPublicKey,
+		LocalPublicKey:  session.LocalPublicKey,
+		LocalPrivateKey: session.LocalPrivateKey,
+	}
 	client, err := synology.NewClient(synology.Options{
 		BaseURL:    profile.URL,
 		Username:   profile.Username,
 		SessionID:  session.SID,
 		SynoToken:  session.SynoToken,
 		HTTPClient: httpClient(profile),
+		Resume: func(ctx context.Context) (string, string, error) {
+			if len(resumeInput.LocalPrivateKey) == 0 || len(resumeInput.ServerPublicKey) == 0 {
+				return "", "", fmt.Errorf("the stored session for NAS %q cannot be renewed; run 'dsmctl auth login --nas %s'", name, name)
+			}
+			refreshed, err := weblogin.Resume(ctx, profile.URL, resumeInput, httpClient(profile))
+			if err != nil {
+				return "", "", fmt.Errorf("could not renew the session for NAS %q; run 'dsmctl auth login --nas %s': %w", name, name, err)
+			}
+			updated := session
+			updated.SID = refreshed.SID
+			updated.SynoToken = refreshed.SynoToken
+			updated.LastVerified = time.Now()
+			_ = m.sessions.SaveSession(ctx, name, updated)
+			return refreshed.SID, refreshed.SynoToken, nil
+		},
 	})
 	if err != nil {
 		return nil, false, fmt.Errorf("create client for NAS %q from stored session: %w", name, err)
