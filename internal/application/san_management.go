@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -17,11 +16,10 @@ import (
 
 const minimumLUNSizeBytes = uint64(1 << 30)
 
-var sanSecretReferencePattern = regexp.MustCompile(`^env:[A-Za-z_][A-Za-z0-9_]*$`)
-
 type SANPlan struct {
 	APIVersion        string              `json:"api_version" jsonschema:"Plan schema version"`
 	NAS               string              `json:"nas" jsonschema:"NAS profile selected during planning"`
+	ProfileRevision   uint64              `json:"profile_revision,omitempty" jsonschema:"Persistent gateway profile revision selected during planning"`
 	Request           san.ChangeRequest   `json:"request" jsonschema:"Validated and canonical SAN intent"`
 	Precondition      ChangePrecondition  `json:"precondition" jsonschema:"Observed stable resource or mapping state that must still match"`
 	References        SANStableReferences `json:"references" jsonschema:"Stable DSM identifiers and resolved volume path used by the operation"`
@@ -87,11 +85,22 @@ func (s *Service) PlanSANChange(ctx context.Context, requestedNAS string, reques
 			return SANPlan{}, authenticationError(name, err)
 		}
 	}
-	return BuildSANPlan(name, state, storageState, request)
+	plan, err := BuildSANPlan(name, state, storageState, request)
+	if err != nil {
+		return SANPlan{}, err
+	}
+	plan.ProfileRevision, err = s.profileRevision(ctx, name)
+	if err == nil {
+		plan.Hash, err = sanPlanHash(plan)
+	}
+	return plan, err
 }
 
 func (s *Service) ApplySANPlan(ctx context.Context, plan SANPlan, approvalHash string) (SANApplyResult, error) {
 	if err := validateSANPlan(plan, approvalHash); err != nil {
+		return SANApplyResult{}, err
+	}
+	if err := s.verifyProfileRevision(ctx, plan.NAS, plan.ProfileRevision); err != nil {
 		return SANApplyResult{}, err
 	}
 	name, client, err := s.manager.Client(ctx, plan.NAS)
@@ -112,6 +121,11 @@ func (s *Service) ApplySANPlan(ctx context.Context, plan SANPlan, approvalHash s
 	replanned, err := BuildSANPlan(name, state, storageState, plan.Request)
 	if err != nil {
 		return SANApplyResult{}, fmt.Errorf("revalidate SAN plan: %w", err)
+	}
+	replanned.ProfileRevision = plan.ProfileRevision
+	replanned.Hash, err = sanPlanHash(replanned)
+	if err != nil {
+		return SANApplyResult{}, err
 	}
 	if replanned.Hash != plan.Hash || !reflect.DeepEqual(replanned.Precondition, plan.Precondition) || !reflect.DeepEqual(replanned.References, plan.References) {
 		return SANApplyResult{}, errors.New("SAN state changed after planning; generate and approve a fresh plan")
@@ -598,15 +612,15 @@ func validateAuthentication(mode string, change *san.TargetChange) error {
 			return errors.New("none authentication cannot contain CHAP fields")
 		}
 	case san.AuthenticationCHAP:
-		if change.CHAPUser == "" || !sanSecretReferencePattern.MatchString(change.CHAPPasswordRef) {
-			return errors.New("CHAP authentication requires chap_user and chap_password_ref using env:NAME")
+		if change.CHAPUser == "" || !validSecretReference(change.CHAPPasswordRef) {
+			return errors.New("CHAP authentication requires chap_user and chap_password_ref using env:NAME or vault:<id>")
 		}
 		if change.MutualCHAPUser != "" || change.MutualCHAPPasswordRef != "" {
 			return errors.New("CHAP authentication cannot contain mutual CHAP fields")
 		}
 	case san.AuthenticationMutualCHAP:
-		if change.CHAPUser == "" || change.MutualCHAPUser == "" || !sanSecretReferencePattern.MatchString(change.CHAPPasswordRef) || !sanSecretReferencePattern.MatchString(change.MutualCHAPPasswordRef) {
-			return errors.New("mutual_chap requires both usernames and both password references using env:NAME")
+		if change.CHAPUser == "" || change.MutualCHAPUser == "" || !validSecretReference(change.CHAPPasswordRef) || !validSecretReference(change.MutualCHAPPasswordRef) {
+			return errors.New("mutual_chap requires both usernames and both password references using env:NAME or vault:<id>")
 		}
 	default:
 		return fmt.Errorf("unsupported target authentication %q", mode)

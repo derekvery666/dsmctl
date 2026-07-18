@@ -29,25 +29,27 @@ type ChangePrecondition struct {
 }
 
 type IdentityPlan struct {
-	APIVersion   string                 `json:"api_version" jsonschema:"Plan schema version"`
-	NAS          string                 `json:"nas" jsonschema:"NAS profile selected during planning"`
-	Request      identity.ChangeRequest `json:"request" jsonschema:"Validated identity change intent"`
-	Precondition ChangePrecondition     `json:"precondition" jsonschema:"Observed state that must still match during apply"`
-	Destructive  bool                   `json:"destructive" jsonschema:"Whether the plan can remove or restrict access"`
-	Risk         string                 `json:"risk" jsonschema:"Plan risk level: medium or high"`
-	Summary      []string               `json:"summary" jsonschema:"Human-readable actions the plan will perform"`
-	Hash         string                 `json:"hash" jsonschema:"SHA-256 approval hash covering the plan and precondition"`
+	APIVersion      string                 `json:"api_version" jsonschema:"Plan schema version"`
+	NAS             string                 `json:"nas" jsonschema:"NAS profile selected during planning"`
+	ProfileRevision uint64                 `json:"profile_revision,omitempty" jsonschema:"Persistent gateway profile revision selected during planning"`
+	Request         identity.ChangeRequest `json:"request" jsonschema:"Validated identity change intent"`
+	Precondition    ChangePrecondition     `json:"precondition" jsonschema:"Observed state that must still match during apply"`
+	Destructive     bool                   `json:"destructive" jsonschema:"Whether the plan can remove or restrict access"`
+	Risk            string                 `json:"risk" jsonschema:"Plan risk level: medium or high"`
+	Summary         []string               `json:"summary" jsonschema:"Human-readable actions the plan will perform"`
+	Hash            string                 `json:"hash" jsonschema:"SHA-256 approval hash covering the plan and precondition"`
 }
 
 type SharePlan struct {
-	APIVersion   string              `json:"api_version" jsonschema:"Plan schema version"`
-	NAS          string              `json:"nas" jsonschema:"NAS profile selected during planning"`
-	Request      share.ChangeRequest `json:"request" jsonschema:"Validated shared-folder change intent"`
-	Precondition ChangePrecondition  `json:"precondition" jsonschema:"Observed state that must still match during apply"`
-	Destructive  bool                `json:"destructive" jsonschema:"Whether the plan can remove data or restrict access"`
-	Risk         string              `json:"risk" jsonschema:"Plan risk level: medium or high"`
-	Summary      []string            `json:"summary" jsonschema:"Human-readable actions the plan will perform"`
-	Hash         string              `json:"hash" jsonschema:"SHA-256 approval hash covering the plan and precondition"`
+	APIVersion      string              `json:"api_version" jsonschema:"Plan schema version"`
+	NAS             string              `json:"nas" jsonschema:"NAS profile selected during planning"`
+	ProfileRevision uint64              `json:"profile_revision,omitempty" jsonschema:"Persistent gateway profile revision selected during planning"`
+	Request         share.ChangeRequest `json:"request" jsonschema:"Validated shared-folder change intent"`
+	Precondition    ChangePrecondition  `json:"precondition" jsonschema:"Observed state that must still match during apply"`
+	Destructive     bool                `json:"destructive" jsonschema:"Whether the plan can remove data or restrict access"`
+	Risk            string              `json:"risk" jsonschema:"Plan risk level: medium or high"`
+	Summary         []string            `json:"summary" jsonschema:"Human-readable actions the plan will perform"`
+	Hash            string              `json:"hash" jsonschema:"SHA-256 approval hash covering the plan and precondition"`
 }
 
 type IdentityApplyResult struct {
@@ -91,6 +93,10 @@ func (s *Service) PlanIdentityChange(ctx context.Context, requestedNAS string, r
 		Risk:         riskLevel(destructive),
 		Summary:      identitySummary(state, request),
 	}
+	plan.ProfileRevision, err = s.profileRevision(ctx, name)
+	if err != nil {
+		return IdentityPlan{}, err
+	}
 	plan.Hash, err = identityPlanHash(plan)
 	if err != nil {
 		return IdentityPlan{}, err
@@ -100,6 +106,9 @@ func (s *Service) PlanIdentityChange(ctx context.Context, requestedNAS string, r
 
 func (s *Service) ApplyIdentityPlan(ctx context.Context, plan IdentityPlan, approveHash string) (IdentityApplyResult, error) {
 	if err := validateIdentityPlan(plan, approveHash); err != nil {
+		return IdentityApplyResult{}, err
+	}
+	if err := s.verifyProfileRevision(ctx, plan.NAS, plan.ProfileRevision); err != nil {
 		return IdentityApplyResult{}, err
 	}
 	current, err := s.PlanIdentityChange(ctx, plan.NAS, plan.Request)
@@ -171,6 +180,10 @@ func (s *Service) PlanShareChange(ctx context.Context, requestedNAS string, requ
 		Risk:         riskLevel(destructive),
 		Summary:      shareSummary(request),
 	}
+	plan.ProfileRevision, err = s.profileRevision(ctx, name)
+	if err != nil {
+		return SharePlan{}, err
+	}
 	plan.Hash, err = sharePlanHash(plan)
 	if err != nil {
 		return SharePlan{}, err
@@ -180,6 +193,9 @@ func (s *Service) PlanShareChange(ctx context.Context, requestedNAS string, requ
 
 func (s *Service) ApplySharePlan(ctx context.Context, plan SharePlan, approveHash string) (ShareApplyResult, error) {
 	if err := validateSharePlan(plan, approveHash); err != nil {
+		return ShareApplyResult{}, err
+	}
+	if err := s.verifyProfileRevision(ctx, plan.NAS, plan.ProfileRevision); err != nil {
 		return ShareApplyResult{}, err
 	}
 	current, err := s.PlanShareChange(ctx, plan.NAS, plan.Request)
@@ -358,8 +374,8 @@ func validateIdentityRequest(request identity.ChangeRequest) error {
 		if request.Action == identity.ActionCreate && request.User.CredentialRef == "" {
 			return fmt.Errorf("creating a user requires credential_ref")
 		}
-		if request.User.CredentialRef != "" && !strings.HasPrefix(request.User.CredentialRef, "env:") {
-			return fmt.Errorf("credential_ref must use env:NAME")
+		if request.User.CredentialRef != "" && !validSecretReference(request.User.CredentialRef) {
+			return fmt.Errorf("credential_ref must use env:NAME or vault:<id>")
 		}
 		if request.User.Expired != nil && *request.User.Expired != "normal" && *request.User.Expired != "now" && !expirationPattern.MatchString(*request.User.Expired) {
 			return fmt.Errorf("expired must be normal, now, or YYYY/M/D")

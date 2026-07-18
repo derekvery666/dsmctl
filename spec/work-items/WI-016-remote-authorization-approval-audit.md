@@ -1,7 +1,7 @@
 ---
 id: WI-016
 title: Enforce remote authorization, approval, and audit
-status: blocked
+status: ready
 priority: P0
 owner: ""
 depends_on: [WI-014, WI-015]

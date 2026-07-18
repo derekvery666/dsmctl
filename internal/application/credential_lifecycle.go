@@ -12,9 +12,8 @@ import (
 )
 
 // CredentialStore is the credential presence surface the application layer
-// needs. It is implemented by *credentials.SecureStore and never exposes
-// secret values to its callers. Credential removal is a CLI concern handled
-// directly against the concrete store.
+// needs. It is implemented by the desktop OS store and the gateway encrypted
+// vault, and never exposes secret values to its callers.
 type CredentialStore interface {
 	HasPassword(ctx context.Context, profileName string) (bool, error)
 	HasTrustedDevice(ctx context.Context, profileName string) (bool, error)
@@ -37,16 +36,16 @@ func WithCredentialStore(store CredentialStore) ServiceOption {
 type AuthStatus struct {
 	NAS                 string `json:"nas" jsonschema:"NAS profile name"`
 	Default             bool   `json:"default" jsonschema:"Whether this is the default NAS"`
-	PasswordStored      bool   `json:"password_stored" jsonschema:"A password for this profile exists in the OS credential store; the value is never returned"`
-	TrustedDeviceStored bool   `json:"trusted_device_stored" jsonschema:"A DSM trusted-device credential exists in the OS credential store; name and ID are never returned"`
+	PasswordStored      bool   `json:"password_stored" jsonschema:"A password for this profile exists in the configured credential store; the value is never returned"`
+	TrustedDeviceStored bool   `json:"trusted_device_stored" jsonschema:"A DSM trusted-device credential exists in the configured credential store; name and ID are never returned"`
 	PasswordEnv         string `json:"password_env" jsonschema:"Environment variable name consulted as the password fallback; only the name is reported"`
 	PasswordEnvSet      bool   `json:"password_env_set" jsonschema:"Whether that variable is currently set to a non-empty value in this process"`
-	SessionStored       bool   `json:"session_stored" jsonschema:"A web-login session is stored in the OS credential store; secrets are never returned"`
+	SessionStored       bool   `json:"session_stored" jsonschema:"A web-login session is stored in the configured credential store; secrets are never returned"`
 	SessionRenewable    bool   `json:"session_renewable" jsonschema:"The stored session carries renewal (Noise resume) keys so it can be refreshed without a browser"`
 	Account             string `json:"account,omitempty" jsonschema:"DSM account the stored session belongs to"`
 	ClientCached        bool   `json:"client_cached" jsonschema:"A DSM client for this profile exists in this process"`
 	SessionHeld         bool   `json:"session_held" jsonschema:"The in-process client holds a DSM session ID from an earlier login; it may have expired server-side and is reported without contacting the NAS"`
-	StoreError          string `json:"store_error,omitempty" jsonschema:"OS credential store probe failure, if any; never contains secret values"`
+	StoreError          string `json:"store_error,omitempty" jsonschema:"Credential store probe failure, if any; never contains secret values"`
 }
 
 type AuthStatusResult struct {
@@ -59,9 +58,13 @@ type AuthStatusResult struct {
 // probe failure is reported per profile instead of failing the listing.
 func (s *Service) GetAuthStatus(ctx context.Context, requestedNAS string) (AuthStatusResult, error) {
 	if s.credentialStore == nil {
-		return AuthStatusResult{}, errors.New("credential status requires the OS credential store, which is not configured for this process")
+		return AuthStatusResult{}, errors.New("credential status requires a configured credential store")
 	}
-	summaries := s.config.Summaries(credentials.DefaultEnvironmentVariable)
+	cfg, err := s.configSnapshot(ctx)
+	if err != nil {
+		return AuthStatusResult{}, err
+	}
+	summaries := cfg.Summaries(credentials.DefaultEnvironmentVariable)
 	requested := strings.TrimSpace(requestedNAS)
 	if requested != "" {
 		var match *config.Summary
@@ -79,7 +82,7 @@ func (s *Service) GetAuthStatus(ctx context.Context, requestedNAS string) (AuthS
 	result := AuthStatusResult{Statuses: make([]AuthStatus, 0, len(summaries))}
 	for _, summary := range summaries {
 		status := AuthStatus{NAS: summary.Name, Default: summary.Default}
-		profile := s.config.NAS[summary.Name]
+		profile := cfg.NAS[summary.Name]
 		status.PasswordEnv, status.PasswordEnvSet = s.credentialStore.PasswordEnvironment(summary.Name, profile)
 		var probeErrors []error
 		if stored, err := s.credentialStore.HasPassword(ctx, summary.Name); err != nil {
@@ -121,7 +124,7 @@ type LogoutResult struct {
 	// blocks the local removal: the session then stays valid server-side only
 	// until its own expiry.
 	RevocationError string `json:"revocation_error,omitempty" jsonschema:"Why the DSM session could not be revoked server-side; the local copy is still removed"`
-	Removed         bool   `json:"removed" jsonschema:"A stored session existed and was deleted from the OS credential store"`
+	Removed         bool   `json:"removed" jsonschema:"A stored session existed and was deleted from the configured credential store"`
 	// Configured reports whether the profile exists in the configuration. An
 	// orphaned session (profile already removed) can only be deleted locally,
 	// because the NAS URL is unknown.
@@ -144,11 +147,15 @@ const revocationTimeout = 10 * time.Second
 // by an earlier profile removal stays removable.
 func (s *Service) Logout(ctx context.Context, requestedNAS string) (LogoutResult, error) {
 	if s.credentialStore == nil {
-		return LogoutResult{}, errors.New("sign-out requires the OS credential store, which is not configured for this process")
+		return LogoutResult{}, errors.New("sign-out requires a configured credential store")
 	}
 	name := strings.TrimSpace(requestedNAS)
+	cfg, err := s.configSnapshot(ctx)
+	if err != nil {
+		return LogoutResult{}, err
+	}
 	if name == "" {
-		resolved, _, err := s.config.Resolve("")
+		resolved, _, err := cfg.Resolve("")
 		if err != nil {
 			return LogoutResult{}, err
 		}
@@ -157,7 +164,7 @@ func (s *Service) Logout(ctx context.Context, requestedNAS string) (LogoutResult
 		return LogoutResult{}, fmt.Errorf("invalid NAS name %q: %w", name, err)
 	}
 	result := LogoutResult{NAS: name}
-	_, result.Configured = s.config.NAS[name]
+	_, result.Configured = cfg.NAS[name]
 
 	revokeCtx, cancel := context.WithTimeout(ctx, revocationTimeout)
 	revoked, err := s.manager.RevokeStoredSession(revokeCtx, name)

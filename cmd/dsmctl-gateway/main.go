@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"errors"
 	"flag"
 	"fmt"
@@ -14,11 +16,14 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
 
 	"github.com/ychiu1211/dsmctl/internal/application"
 	"github.com/ychiu1211/dsmctl/internal/buildinfo"
 	"github.com/ychiu1211/dsmctl/internal/config"
 	"github.com/ychiu1211/dsmctl/internal/gateway"
+	"github.com/ychiu1211/dsmctl/internal/gateway/admin"
+	gatewaystate "github.com/ychiu1211/dsmctl/internal/gateway/state"
 	"github.com/ychiu1211/dsmctl/internal/mcpserver"
 	"github.com/ychiu1211/dsmctl/internal/runtime"
 )
@@ -38,6 +43,10 @@ func run(arguments []string, logger *slog.Logger) error {
 	flags := flag.NewFlagSet("dsmctl-gateway", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
 	configPath := flags.String("config", config.DefaultPath(), "configuration file path")
+	statePath := flags.String("state", "", "managed gateway state database path; enables dynamic administration")
+	masterKeyPath := flags.String("master-key-file", "", "32-byte managed gateway vault key file")
+	bootstrapPath := flags.String("bootstrap-file", "", "one-time generic Linux administrator bootstrap token file")
+	adminPublicURL := flags.String("admin-public-url", "", "public gateway origin used as the DSM web-login opener")
 	listenAddress := flags.String("listen", "127.0.0.1:18765", "HTTP listen address")
 	tokenPath := flags.String("dev-read-only-token-file", "", "required local bearer-token file for explicit read-only developer mode")
 	allowedHosts := flags.String("allowed-hosts", "localhost,127.0.0.1,::1", "comma-separated allowed HTTP Host names or addresses")
@@ -59,10 +68,6 @@ func run(arguments []string, logger *slog.Logger) error {
 		return errors.New("max-body-bytes must be at least 1")
 	}
 
-	cfg, err := loadRequiredConfig(*configPath)
-	if err != nil {
-		return err
-	}
 	token, err := gateway.ReadDevelopmentToken(*tokenPath)
 	if err != nil {
 		return err
@@ -73,42 +78,171 @@ func run(arguments []string, logger *slog.Logger) error {
 		return err
 	}
 
-	secrets := gateway.NewEnvironmentCredentials()
-	manager := runtime.NewManager(cfg, secrets)
-	service := application.NewService(cfg, manager, application.WithCredentialStore(secrets))
+	var (
+		cfg          *config.Config
+		manager      *runtime.Manager
+		service      *application.Service
+		adminHandler http.Handler
+		ready        func(context.Context) error
+		closeState   func() error
+		mode         string
+	)
+	if strings.TrimSpace(*statePath) != "" {
+		masterKey, err := gatewaystate.ReadMasterKey(*masterKeyPath)
+		if err != nil {
+			return err
+		}
+		masterDigest := sha256.Sum256(masterKey)
+		repository, err := gatewaystate.Open(*statePath, masterKey)
+		for index := range masterKey {
+			masterKey[index] = 0
+		}
+		if err != nil {
+			return err
+		}
+		closeState = repository.Close
+		health, err := repository.Health(context.Background())
+		if err != nil {
+			_ = repository.Close()
+			return err
+		}
+		if !health.Initialized {
+			bootstrap, err := readBootstrapToken(*bootstrapPath)
+			if err != nil {
+				_ = repository.Close()
+				return err
+			}
+			if err := repository.ConfigureBootstrap(context.Background(), bootstrap); err != nil {
+				_ = repository.Close()
+				return err
+			}
+		}
+		cfg, err = repository.Snapshot(context.Background())
+		if err != nil {
+			_ = repository.Close()
+			return err
+		}
+		manager = runtime.NewManager(cfg, repository,
+			runtime.WithConfigSource(repository),
+			runtime.WithDeviceStore(repository),
+			runtime.WithSessionStore(repository),
+		)
+		service = application.NewService(cfg, manager,
+			application.WithConfigSource(repository),
+			application.WithCredentialStore(repository),
+			application.WithSecretReferenceResolver(repository),
+		)
+		adminApplication, err := admin.New(admin.Options{Repository: repository, Manager: manager, PublicURL: *adminPublicURL})
+		if err != nil {
+			_ = service.Close(context.Background())
+			_ = repository.Close()
+			return err
+		}
+		adminHandler = adminApplication
+		ready = managedReadiness(repository, *masterKeyPath, masterDigest, *tokenPath, tokenDigest)
+		mode = "managed-read-only"
+	} else {
+		cfg, err = loadRequiredConfig(*configPath)
+		if err != nil {
+			return err
+		}
+		secrets := gateway.NewEnvironmentCredentials()
+		manager = runtime.NewManager(cfg, secrets)
+		service = application.NewService(cfg, manager, application.WithCredentialStore(secrets))
+		ready = localReadiness(*configPath, *tokenPath, tokenDigest)
+		mode = "development-read-only"
+	}
 	mcpServer := mcpserver.NewReadOnly(service, buildinfo.Version)
-	ready := localReadiness(*configPath, *tokenPath, tokenDigest)
 	httpServer, err := gateway.New(gateway.Options{
-		MCPServer:       mcpServer,
-		BearerToken:     token,
-		AllowedHosts:    splitCSV(*allowedHosts),
-		AllowedOrigins:  splitCSV(*allowedOrigins),
-		TrustedProxies:  proxies,
-		MaxBodyBytes:    *maxBodyBytes,
-		MaxConcurrent:   *maxConcurrent,
-		Ready:           ready,
-		Close:           service.Close,
+		MCPServer:      mcpServer,
+		AdminHandler:   adminHandler,
+		BearerToken:    token,
+		AllowedHosts:   splitCSV(*allowedHosts),
+		AllowedOrigins: splitCSV(*allowedOrigins),
+		TrustedProxies: proxies,
+		MaxBodyBytes:   *maxBodyBytes,
+		MaxConcurrent:  *maxConcurrent,
+		Ready:          ready,
+		Close: func(ctx context.Context) error {
+			serviceErr := service.Close(ctx)
+			var stateErr error
+			if closeState != nil {
+				stateErr = closeState()
+			}
+			return errors.Join(serviceErr, stateErr)
+		},
 		Logger:          logger,
 		ShutdownTimeout: *shutdownTimeout,
 	})
 	if err != nil {
 		_ = service.Close(context.Background())
+		if closeState != nil {
+			_ = closeState()
+		}
 		return err
 	}
 	listener, err := net.Listen("tcp", *listenAddress)
 	if err != nil {
 		_ = service.Close(context.Background())
+		if closeState != nil {
+			_ = closeState()
+		}
 		return fmt.Errorf("listen on %s: %w", *listenAddress, err)
 	}
 	logger.Info("gateway listening",
 		"address", listener.Addr().String(),
 		"version", buildinfo.Version,
-		"mode", "development-read-only",
+		"mode", mode,
 		"profiles", len(cfg.NAS),
 	)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return httpServer.Serve(ctx, listener)
+}
+
+func managedReadiness(repository *gatewaystate.Repository, masterKeyPath string, expectedMasterKey [sha256.Size]byte, tokenPath string, expectedToken [sha256.Size]byte) func(context.Context) error {
+	return func(ctx context.Context) error {
+		if err := repository.Ready(ctx); err != nil {
+			return err
+		}
+		masterKey, err := gatewaystate.ReadMasterKey(masterKeyPath)
+		if err != nil {
+			return err
+		}
+		actualMasterKey := sha256.Sum256(masterKey)
+		for index := range masterKey {
+			masterKey[index] = 0
+		}
+		if subtle.ConstantTimeCompare(expectedMasterKey[:], actualMasterKey[:]) != 1 {
+			return errors.New("master key file changed; restart the gateway")
+		}
+		current, err := gateway.ReadDevelopmentToken(tokenPath)
+		if err != nil {
+			return err
+		}
+		if !gateway.DevelopmentTokenMatches(expectedToken, current) {
+			return errors.New("development token file changed; restart the gateway")
+		}
+		return nil
+	}
+}
+
+func readBootstrapToken(path string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", errors.New("bootstrap file is required until the first gateway administrator is established")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read bootstrap file: %w", err)
+	}
+	if len(data) > 4096 {
+		return "", errors.New("bootstrap file is too large")
+	}
+	token := strings.TrimSpace(string(data))
+	if len(token) < 32 || strings.IndexFunc(token, unicode.IsSpace) >= 0 {
+		return "", errors.New("bootstrap token must be at least 32 bytes and contain no whitespace")
+	}
+	return token, nil
 }
 
 func localReadiness(configPath, tokenPath string, expectedToken [32]byte) func(context.Context) error {

@@ -1,7 +1,7 @@
 ---
 id: WI-015
 title: Add persistent gateway profiles, vault, and administration
-status: in_progress
+status: done
 priority: P0
 owner: "gateway-admin"
 depends_on: [WI-014]
@@ -104,34 +104,34 @@ clients.
 
 ## Acceptance criteria
 
-- [ ] Profile CRUD and default selection take effect without process restart.
-- [ ] URL, username, TLS, or credential changes evict and close the old client;
+- [x] Profile CRUD and default selection take effect without process restart.
+- [x] URL, username, TLS, or credential changes evict and close the old client;
       unrelated NAS sessions remain active.
-- [ ] At least 32 profiles can be stored and listed deterministically.
-- [ ] Password, trusted-device, and session values are encrypted at rest with
+- [x] At least 32 profiles can be stored and listed deterministically.
+- [x] Password, trusted-device, and session values are encrypted at rest with
       distinct nonces and cannot be found in the database, backups, logs, or
       API output.
-- [ ] Missing, malformed, or wrong master keys prevent readiness and do not
+- [x] Missing, malformed, or wrong master keys prevent readiness and do not
       overwrite existing encrypted data.
-- [ ] The first generic-Linux bootstrap succeeds exactly once; replay and
+- [x] The first generic-Linux bootstrap succeeds exactly once; replay and
       absent-bootstrap attempts fail closed.
-- [ ] Password plus OTP enrollment stores a trusted device through the existing
+- [x] Password plus OTP enrollment stores a trusted device through the existing
       authentication flow without exposing either secret.
-- [ ] Web-login enrollment through the admin flow stores a session that serves
+- [x] Web-login enrollment through the admin flow stores a session that serves
       MCP reads with no `DSMCTL_PASSWORD_*` variable set, and the session
       survives a gateway restart.
-- [ ] An expired vaulted session renews through Noise_KK resume without a
+- [x] An expired vaulted session renews through Noise_KK resume without a
       browser or password; the rotated SID/SynoToken is persisted and the
       cached client is not evicted.
-- [ ] The gateway has no OS-keyring code path; sessions resolve only through
+- [x] The gateway has no OS-keyring code path; sessions resolve only through
       the vault store or environment passwords.
-- [ ] `vault:<id>` resolves only at apply time and is unavailable to MCP result
+- [x] `vault:<id>` resolves only at apply time and is unavailable to MCP result
       encoding or plan hashing.
-- [ ] System-CA and pinned-fingerprint TLS modes are tested, including explicit
+- [x] System-CA and pinned-fingerprint TLS modes are tested, including explicit
       mismatch and certificate-rotation failures.
-- [ ] A failed schema migration leaves the original database and backup
+- [x] A failed schema migration leaves the original database and backup
       recoverable and keeps `/readyz` false.
-- [ ] Existing CLI config and OS-keyring tests continue to pass.
+- [x] Existing CLI config and OS-keyring tests continue to pass.
 
 ## Verification
 
@@ -155,6 +155,29 @@ clients.
 Depends on WI-014's gateway lifecycle. It also touches `internal/application`
 and `internal/runtime/manager.go`; coordinate with any active management work
 before changing shared constructors or service interfaces.
+
+## Completion notes
+
+- Selected `go.etcd.io/bbolt` rather than a pure-Go SQLite driver. It supplies
+  serializable ACID write transactions and consistent transaction backups with
+  a smaller static dependency/runtime surface; bucket indexes are sufficient
+  for the bounded profile, token, approval, and audit queries in WI-016.
+- Gateway profile revisions use one persistent monotonic counter, so deleting
+  and recreating a NAS under the same name cannot make an old plan current.
+  Nonzero revisions participate in every plan hash and are checked before
+  apply; static CLI profiles retain revision zero and existing behavior.
+- `go test ./... -count=1`, `go vet ./...`, Compose rendering, and a final
+  `CGO_ENABLED=0 linux/amd64` image build passed. Final tested image:
+  `sha256:0aaefcdae4ff53e677e53fe7b78f2a3f3416e8956710bdbba36c9ec067315e3c`,
+  numeric user `10001:10001`, size 4,763,431 bytes.
+- A hardened real-container test verified pre-bootstrap readiness failure,
+  one-time admin establishment, globally increasing revisions, encrypted
+  apply-secret persistence, profile persistence, and restart readiness after
+  removing the bootstrap file. Temporary containers and fixtures were removed.
+- Web-login PKCE/state/Noise_IK relay and Noise_KK renewal are covered by local
+  DSM protocol fakes. A real non-loopback DSM opener test was not run because
+  no exact live NAS authentication target was authorized; password/OTP remains
+  the documented fallback if a DSM build restricts the opener origin.
 
 ## Handoff
 

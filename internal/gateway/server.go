@@ -39,6 +39,7 @@ const (
 // WI-016.
 type Options struct {
 	MCPServer      *mcp.Server
+	AdminHandler   http.Handler
 	BearerToken    string
 	AllowedHosts   []string
 	AllowedOrigins []string
@@ -118,6 +119,10 @@ func New(options Options) (*Server, error) {
 			requireMCPRequest(maxBodyBytes, mcpHandler))))
 	mux.HandleFunc("/healthz", healthHandler)
 	mux.HandleFunc("/readyz", readinessHandler(ready, logger))
+	if options.AdminHandler != nil {
+		mux.Handle("/admin", options.AdminHandler)
+		mux.Handle("/admin/", options.AdminHandler)
+	}
 
 	handler := correlateAndLog(logger, options.TrustedProxies,
 		protectHostAndOrigin(allowedHosts, allowedOrigins, mux))

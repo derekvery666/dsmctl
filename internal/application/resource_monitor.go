@@ -18,6 +18,7 @@ const resourceRecordingAPIVersion = "dsmctl.io/v1alpha1"
 type ResourceRecordingPlan struct {
 	APIVersion          string                            `json:"api_version" jsonschema:"Plan schema version"`
 	NAS                 string                            `json:"nas" jsonschema:"NAS profile selected during planning"`
+	ProfileRevision     uint64                            `json:"profile_revision,omitempty" jsonschema:"Persistent gateway profile revision selected during planning"`
 	Request             resmon.RecordingChange            `json:"request" jsonschema:"Validated history-recording toggle intent"`
 	Observed            synology.ResourceRecordingSetting `json:"observed" jsonschema:"History-recording setting observed during planning"`
 	ObservedFingerprint string                            `json:"observed_fingerprint" jsonschema:"SHA-256 hash of the observed setting"`
@@ -48,11 +49,22 @@ func (s *Service) PlanResourceRecordingChange(ctx context.Context, requestedNAS 
 	if err != nil {
 		return ResourceRecordingPlan{}, err
 	}
-	return planResourceRecordingChangeWithClient(ctx, name, client, change)
+	plan, err := planResourceRecordingChangeWithClient(ctx, name, client, change)
+	if err != nil {
+		return ResourceRecordingPlan{}, err
+	}
+	plan.ProfileRevision, err = s.profileRevision(ctx, name)
+	if err == nil {
+		plan.Hash, err = resourceRecordingPlanHash(plan)
+	}
+	return plan, err
 }
 
 func (s *Service) ApplyResourceRecordingPlan(ctx context.Context, plan ResourceRecordingPlan, approvalHash string) (ResourceRecordingApplyResult, error) {
 	if err := validateResourceRecordingPlan(plan, approvalHash); err != nil {
+		return ResourceRecordingApplyResult{}, err
+	}
+	if err := s.verifyProfileRevision(ctx, plan.NAS, plan.ProfileRevision); err != nil {
 		return ResourceRecordingApplyResult{}, err
 	}
 	name, client, err := s.resourceRecordingClient(ctx, plan.NAS)
@@ -109,6 +121,11 @@ func applyResourceRecordingPlanWithClient(ctx context.Context, client resourceRe
 	current, err := planResourceRecordingChangeWithClient(ctx, plan.NAS, client, plan.Request)
 	if err != nil {
 		return ResourceRecordingApplyResult{}, fmt.Errorf("recording plan precondition no longer holds: %w", err)
+	}
+	current.ProfileRevision = plan.ProfileRevision
+	current.Hash, err = resourceRecordingPlanHash(current)
+	if err != nil {
+		return ResourceRecordingApplyResult{}, err
 	}
 	if current.ObservedFingerprint != plan.ObservedFingerprint || current.Hash != plan.Hash {
 		return ResourceRecordingApplyResult{}, fmt.Errorf("recording plan is stale; create a new plan")

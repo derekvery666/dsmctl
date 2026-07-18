@@ -1,8 +1,15 @@
-# Gateway development secrets
+# Gateway secrets
 
-Create `dev-token` with a random value of at least 32 bytes. Optionally create
-`dsm-passwords.env` with one `DSMCTL_PASSWORD_<PROFILE>=...` entry per NAS.
-Files in this directory are mounted read-only and ignored by Git.
+Create these owner-readable files before first start:
 
-The environment-password mechanism is only the WI-014 read-only development
-bootstrap. WI-015 replaces it with the encrypted gateway vault.
+- `master.key`: exactly 32 random binary bytes; never place it in `/data` or a
+  normal database backup;
+- `bootstrap`: at least 32 random non-whitespace characters, used exactly once
+  to establish the first local administrator;
+- `dev-token`: at least 32 random non-whitespace characters for the temporary
+  read-only MCP boundary (WI-016 replaces this with scoped tokens).
+
+An optional `dsm-passwords.env` may retain the environment-password fallback
+for narrowly scoped automation accounts, but the admin web-login/password+OTP
+enrollment and encrypted vault are the normal managed path. Files in this
+directory are mounted read-only and ignored by Git.

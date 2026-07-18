@@ -20,6 +20,7 @@ var ErrStorageMutationBackendUnavailable = errors.New("storage mutation backend 
 type StoragePlan struct {
 	APIVersion              string                          `json:"api_version" jsonschema:"Plan schema version"`
 	NAS                     string                          `json:"nas" jsonschema:"NAS profile selected during planning"`
+	ProfileRevision         uint64                          `json:"profile_revision,omitempty" jsonschema:"Persistent gateway profile revision selected during planning"`
 	Request                 storage.ChangeRequest           `json:"request" jsonschema:"Validated and canonical storage change intent"`
 	Precondition            ChangePrecondition              `json:"precondition" jsonschema:"Observed resource state that must still match during apply"`
 	References              StorageStableReferences         `json:"references" jsonschema:"Stable DSM identifiers resolved while planning"`
@@ -85,7 +86,15 @@ func (s *Service) PlanStorageChange(ctx context.Context, requestedNAS string, re
 	if err != nil {
 		return StoragePlan{}, err
 	}
-	return planStorageChangeWithClient(ctx, name, client, canonical)
+	plan, err := planStorageChangeWithClient(ctx, name, client, canonical)
+	if err != nil {
+		return StoragePlan{}, err
+	}
+	plan.ProfileRevision, err = s.profileRevision(ctx, name)
+	if err == nil {
+		plan.Hash, err = storagePlanHash(plan)
+	}
+	return plan, err
 }
 
 func (s *Service) ApplyStoragePlan(ctx context.Context, plan StoragePlan, approvalHash string) (StorageApplyResult, error) {
@@ -100,6 +109,9 @@ func (s *Service) ApplyStoragePlan(ctx context.Context, plan StoragePlan, approv
 	}
 	if s.manager == nil {
 		return StorageApplyResult{}, ErrStorageMutationBackendUnavailable
+	}
+	if err := s.verifyProfileRevision(ctx, plan.NAS, plan.ProfileRevision); err != nil {
+		return StorageApplyResult{}, err
 	}
 	name, client, err := s.manager.Client(ctx, plan.NAS)
 	if err != nil {
@@ -151,6 +163,11 @@ func applyStoragePlanWithClient(ctx context.Context, client storageManagementCli
 	refreshed, err := BuildStoragePlan(plan.NAS, current, plan.Request)
 	if err != nil {
 		return StorageApplyResult{}, fmt.Errorf("storage plan precondition failed: %w", err)
+	}
+	refreshed.ProfileRevision = plan.ProfileRevision
+	refreshed.Hash, err = storagePlanHash(refreshed)
+	if err != nil {
+		return StorageApplyResult{}, err
 	}
 	if refreshed.Hash != plan.Hash || refreshed.TopologyFingerprint != plan.TopologyFingerprint || refreshed.SafetyFingerprint != plan.SafetyFingerprint ||
 		!reflect.DeepEqual(refreshed.Precondition, plan.Precondition) || !reflect.DeepEqual(refreshed.References, plan.References) {

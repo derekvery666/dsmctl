@@ -2,7 +2,10 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/tls"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -75,23 +78,44 @@ func WithSessionStore(store credentials.SessionStore) Option {
 	}
 }
 
+// WithConfigSource replaces the static CLI configuration with a dynamic,
+// snapshot-based source such as the gateway state repository.
+func WithConfigSource(source config.Source) Option {
+	return func(manager *Manager) {
+		if source != nil {
+			manager.source = source
+		}
+	}
+}
+
+type clientEntry struct {
+	client   *synology.Client
+	revision uint64
+}
+
 type Manager struct {
 	config      *config.Config
+	source      config.Source
 	credentials credentials.Resolver
 	devices     credentials.DeviceStore
 	sessions    credentials.SessionStore
 	deviceName  string
 
-	mu      sync.Mutex
-	clients map[string]*synology.Client
+	// profileGate orders dynamic repository commits against client acquisition.
+	// Admin mutations hold it exclusively through commit and cache eviction;
+	// requests hold it for profile resolution and cache insertion.
+	profileGate sync.RWMutex
+	mu          sync.Mutex
+	clients     map[string]clientEntry
 }
 
 func NewManager(cfg *config.Config, resolver credentials.Resolver, options ...Option) *Manager {
 	manager := &Manager{
 		config:      cfg,
+		source:      config.StaticSource{Config: cfg},
 		credentials: resolver,
 		deviceName:  defaultDeviceName(),
-		clients:     make(map[string]*synology.Client),
+		clients:     make(map[string]clientEntry),
 	}
 	for _, option := range options {
 		option(manager)
@@ -103,17 +127,29 @@ func NewManager(cfg *config.Config, resolver credentials.Resolver, options ...Op
 // client per profile. Separate profiles can therefore hold independent DSM
 // sessions at the same time.
 func (m *Manager) Client(ctx context.Context, requested string) (string, Client, error) {
-	name, profile, err := m.config.Resolve(requested)
+	m.profileGate.RLock()
+	defer m.profileGate.RUnlock()
+
+	cfg, err := m.snapshot(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	name, profile, err := cfg.Resolve(requested)
 	if err != nil {
 		return "", nil, err
 	}
 
 	m.mu.Lock()
-	if client, ok := m.clients[name]; ok {
+	if entry, ok := m.clients[name]; ok && entry.revision == profile.Revision {
 		m.mu.Unlock()
-		return name, client, nil
+		return name, entry.client, nil
 	}
+	stale := m.clients[name]
+	delete(m.clients, name)
 	m.mu.Unlock()
+	if stale.client != nil {
+		_ = stale.client.Close(ctx)
+	}
 
 	// Prefer a persisted web-login session over the password path. A profile
 	// without a stored session (or configured only for password auth) falls
@@ -125,11 +161,13 @@ func (m *Manager) Client(ctx context.Context, requested string) (string, Client,
 		}
 		if ok {
 			m.mu.Lock()
-			defer m.mu.Unlock()
-			if existing, exists := m.clients[name]; exists {
-				return name, existing, nil
+			if existing, exists := m.clients[name]; exists && existing.revision == profile.Revision {
+				m.mu.Unlock()
+				_ = client.Close(ctx)
+				return name, existing.client, nil
 			}
-			m.clients[name] = client
+			m.clients[name] = clientEntry{client: client, revision: profile.Revision}
+			m.mu.Unlock()
 			return name, client, nil
 		}
 	}
@@ -171,12 +209,62 @@ func (m *Manager) Client(ctx context.Context, requested string) (string, Client,
 	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if existing, ok := m.clients[name]; ok {
-		return name, existing, nil
+	if existing, ok := m.clients[name]; ok && existing.revision == profile.Revision {
+		m.mu.Unlock()
+		_ = client.Close(ctx)
+		return name, existing.client, nil
 	}
-	m.clients[name] = client
+	m.clients[name] = clientEntry{client: client, revision: profile.Revision}
+	m.mu.Unlock()
 	return name, client, nil
+}
+
+func (m *Manager) snapshot(ctx context.Context) (*config.Config, error) {
+	if m.source == nil {
+		if m.config == nil {
+			return nil, errors.New("config is nil")
+		}
+		return m.config, nil
+	}
+	cfg, err := m.source.Snapshot(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load NAS profiles: %w", err)
+	}
+	if cfg == nil {
+		return nil, errors.New("profile source returned a nil config")
+	}
+	return cfg, nil
+}
+
+// MutateProfile serializes a persistent profile/credential commit with client
+// acquisition. After mutate succeeds, the named cached client is removed
+// before new requests may resolve the committed revision. Passing an empty
+// name is useful for default-selection changes that need ordering but no
+// client eviction.
+func (m *Manager) MutateProfile(ctx context.Context, name string, mutate func() error) error {
+	if mutate == nil {
+		return errors.New("profile mutation is required")
+	}
+	m.profileGate.Lock()
+	if err := mutate(); err != nil {
+		m.profileGate.Unlock()
+		return err
+	}
+	var stale clientEntry
+	if name != "" {
+		m.mu.Lock()
+		stale = m.clients[name]
+		delete(m.clients, name)
+		m.mu.Unlock()
+	}
+	m.profileGate.Unlock()
+	if stale.client != nil {
+		// The repository commit is already durable and cannot be rolled back.
+		// Cache removal is the security boundary; a best-effort close failure
+		// must not turn a successful admin mutation into an ambiguous response.
+		_ = stale.client.Close(ctx)
+	}
+	return nil
 }
 
 // sessionClient builds a client seeded with a persisted web-login session, so
@@ -270,7 +358,11 @@ func (m *Manager) RevokeStoredSession(ctx context.Context, name string) (bool, e
 	if m.sessions == nil {
 		return false, nil
 	}
-	profile, ok := m.config.NAS[name]
+	cfg, err := m.snapshot(ctx)
+	if err != nil {
+		return false, err
+	}
+	profile, ok := cfg.NAS[name]
 	if !ok || profile.URL == "" {
 		return false, nil
 	}
@@ -302,12 +394,12 @@ type SessionInfo struct {
 
 func (m *Manager) SessionInfo(profileName string) SessionInfo {
 	m.mu.Lock()
-	client, ok := m.clients[profileName]
+	entry, ok := m.clients[profileName]
 	m.mu.Unlock()
 	if !ok {
 		return SessionInfo{}
 	}
-	return SessionInfo{ClientCached: true, SessionHeld: client.HasSession()}
+	return SessionInfo{ClientCached: true, SessionHeld: entry.client.HasSession()}
 }
 
 func defaultDeviceName() string {
@@ -319,14 +411,16 @@ func defaultDeviceName() string {
 }
 
 func (m *Manager) Close(ctx context.Context) error {
+	m.profileGate.Lock()
+	defer m.profileGate.Unlock()
 	m.mu.Lock()
 	clients := m.clients
-	m.clients = make(map[string]*synology.Client)
+	m.clients = make(map[string]clientEntry)
 	m.mu.Unlock()
 
 	var closeErrors []error
-	for name, client := range clients {
-		if err := client.Close(ctx); err != nil {
+	for name, entry := range clients {
+		if err := entry.client.Close(ctx); err != nil {
 			closeErrors = append(closeErrors, fmt.Errorf("NAS %q: %w", name, err))
 		}
 	}
@@ -346,9 +440,30 @@ func httpClient(profile config.Profile) *http.Client {
 		timeout = time.Duration(profile.TimeoutSeconds) * time.Second
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.TLSClientConfig = &tls.Config{
-		MinVersion:         tls.VersionTLS12,
-		InsecureSkipVerify: profile.InsecureSkipTLSVerify, // Explicit per-profile opt-in for self-signed test NAS devices.
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: profile.InsecureSkipTLSVerify} //nolint:gosec // CLI-only explicit opt-in; production gateway validation rejects this field.
+	if profile.TLSMode == "pinned_fingerprint" {
+		expected, err := hex.DecodeString(strings.ReplaceAll(profile.CertificateFingerprint, ":", ""))
+		if err == nil && len(expected) == sha256.Size {
+			// Pin mode authenticates the exact leaf certificate. Standard chain
+			// verification is intentionally replaced by the explicit admin pin.
+			tlsConfig.InsecureSkipVerify = true //nolint:gosec
+			tlsConfig.VerifyConnection = func(state tls.ConnectionState) error {
+				if len(state.PeerCertificates) == 0 {
+					return errors.New("TLS peer did not provide a certificate")
+				}
+				actual := sha256.Sum256(state.PeerCertificates[0].Raw)
+				if subtle.ConstantTimeCompare(actual[:], expected) != 1 {
+					return errors.New("TLS server certificate does not match the pinned SHA-256 fingerprint")
+				}
+				return nil
+			}
+		} else {
+			tlsConfig.InsecureSkipVerify = false
+			tlsConfig.VerifyConnection = func(tls.ConnectionState) error {
+				return errors.New("pinned TLS profile has an invalid SHA-256 fingerprint")
+			}
+		}
 	}
+	transport.TLSClientConfig = tlsConfig
 	return &http.Client{Transport: transport, Timeout: timeout}
 }

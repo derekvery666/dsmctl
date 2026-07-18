@@ -42,6 +42,7 @@ var ianaTimeZoneAreas = []string{
 type ControlPanelTimePlan struct {
 	APIVersion          string                         `json:"api_version" jsonschema:"Plan schema version"`
 	NAS                 string                         `json:"nas" jsonschema:"NAS profile selected during planning"`
+	ProfileRevision     uint64                         `json:"profile_revision,omitempty" jsonschema:"Persistent gateway profile revision selected during planning"`
 	Request             controlpanel.TimeChange        `json:"request" jsonschema:"Validated patch-only time module intent"`
 	Observed            synology.ControlPanelTimeState `json:"observed" jsonschema:"Complete time module state observed during planning"`
 	ObservedFingerprint string                         `json:"observed_fingerprint" jsonschema:"SHA-256 hash of the complete observed module state"`
@@ -73,11 +74,22 @@ func (s *Service) PlanControlPanelTimeChange(ctx context.Context, requestedNAS s
 	if err != nil {
 		return ControlPanelTimePlan{}, err
 	}
-	return planControlPanelTimeChangeWithClient(ctx, name, client, request)
+	plan, err := planControlPanelTimeChangeWithClient(ctx, name, client, request)
+	if err != nil {
+		return ControlPanelTimePlan{}, err
+	}
+	plan.ProfileRevision, err = s.profileRevision(ctx, name)
+	if err == nil {
+		plan.Hash, err = controlPanelTimePlanHash(plan)
+	}
+	return plan, err
 }
 
 func (s *Service) ApplyControlPanelTimePlan(ctx context.Context, plan ControlPanelTimePlan, approvalHash string) (ControlPanelTimeApplyResult, error) {
 	if err := validateControlPanelTimePlan(plan, approvalHash); err != nil {
+		return ControlPanelTimeApplyResult{}, err
+	}
+	if err := s.verifyProfileRevision(ctx, plan.NAS, plan.ProfileRevision); err != nil {
 		return ControlPanelTimeApplyResult{}, err
 	}
 	name, client, err := s.controlPanelTimeClient(ctx, plan.NAS)
@@ -134,6 +146,11 @@ func applyControlPanelTimePlanWithClient(ctx context.Context, client controlPane
 	current, err := planControlPanelTimeChangeWithClient(ctx, plan.NAS, client, plan.Request)
 	if err != nil {
 		return ControlPanelTimeApplyResult{}, fmt.Errorf("time plan precondition no longer holds: %w", err)
+	}
+	current.ProfileRevision = plan.ProfileRevision
+	current.Hash, err = controlPanelTimePlanHash(current)
+	if err != nil {
+		return ControlPanelTimeApplyResult{}, err
 	}
 	if current.ObservedFingerprint != plan.ObservedFingerprint || current.Hash != plan.Hash {
 		return ControlPanelTimeApplyResult{}, fmt.Errorf("time plan is stale; create a new plan")

@@ -34,10 +34,12 @@ services:
       - /tmp:size=16m,mode=1777,uid=10001,gid=10001
     command:
       - --listen=0.0.0.0:8080
-      - --config=/data/config.json
+      - --state=/data/gateway.db
+      - --master-key-file=/run/secrets/master.key
+      - --bootstrap-file=/run/secrets/bootstrap
       - --dev-read-only-token-file=/run/secrets/dev-token
       - --allowed-hosts=${DSMCTL_ALLOWED_HOSTS:-localhost,127.0.0.1}
-      - --allowed-origins=${DSMCTL_ALLOWED_ORIGINS:-}
+      - --allowed-origins=${DSMCTL_ALLOWED_ORIGINS:-http://localhost:18765,http://127.0.0.1:18765}
       - --trusted-proxies=${DSMCTL_TRUSTED_PROXIES:-}
     logging:
       driver: json-file

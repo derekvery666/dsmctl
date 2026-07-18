@@ -444,8 +444,12 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_nas",
 		Description: "List configured Synology NAS connection profiles. Passwords are never returned.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, _ listNASInput) (*mcp.CallToolResult, listNASOutput, error) {
-		return nil, listNASOutput{NAS: service.ListNAS()}, nil
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ listNASInput) (*mcp.CallToolResult, listNASOutput, error) {
+		profiles, err := service.ListNASContext(ctx)
+		if err != nil {
+			return nil, listNASOutput{}, err
+		}
+		return nil, listNASOutput{NAS: profiles}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -464,7 +468,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_auth_status",
 		Title:       "Get authentication status",
-		Description: "Report, per configured NAS, whether a password and DSM trusted-device credential are stored in the OS credential store, the password environment variable name and whether it is set, and whether this process holds a DSM session. Never returns secret values, never accepts passwords or OTPs, and never contacts the NAS. If authentication material is missing, ask the user to run 'dsmctl auth login' in a terminal.",
+		Description: "Report, per configured NAS, whether a password, trusted-device credential, or web-login session is stored, the password environment fallback name and whether it is set, and whether this process holds a DSM session. Never returns secret values, never accepts passwords or OTPs, and never contacts the NAS. Missing authentication is enrolled through the local CLI or the gateway administration page.",
 		Annotations: localReadOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getAuthStatusInput) (*mcp.CallToolResult, getAuthStatusOutput, error) {
 		result, err := service.GetAuthStatus(ctx, input.NAS)

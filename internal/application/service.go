@@ -15,6 +15,7 @@ import (
 
 type Service struct {
 	config           *config.Config
+	configSource     config.Source
 	manager          *runtime.Manager
 	secretReferences credentials.ReferenceResolver
 	credentialStore  CredentialStore
@@ -131,9 +132,18 @@ func WithSecretReferenceResolver(resolver credentials.ReferenceResolver) Service
 	}
 }
 
+func WithConfigSource(source config.Source) ServiceOption {
+	return func(service *Service) {
+		if source != nil {
+			service.configSource = source
+		}
+	}
+}
+
 func NewService(cfg *config.Config, manager *runtime.Manager, options ...ServiceOption) *Service {
 	service := &Service{
 		config:           cfg,
+		configSource:     config.StaticSource{Config: cfg},
 		manager:          manager,
 		secretReferences: credentials.NewEnvironmentReferenceResolver(),
 	}
@@ -144,7 +154,56 @@ func NewService(cfg *config.Config, manager *runtime.Manager, options ...Service
 }
 
 func (s *Service) ListNAS() []config.Summary {
-	return s.config.Summaries(credentials.DefaultEnvironmentVariable)
+	summaries, _ := s.ListNASContext(context.Background())
+	return summaries
+}
+
+func (s *Service) ListNASContext(ctx context.Context) ([]config.Summary, error) {
+	cfg, err := s.configSnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return cfg.Summaries(credentials.DefaultEnvironmentVariable), nil
+}
+
+func (s *Service) configSnapshot(ctx context.Context) (*config.Config, error) {
+	if s.configSource == nil {
+		if s.config == nil {
+			return nil, fmt.Errorf("config is nil")
+		}
+		return s.config, nil
+	}
+	cfg, err := s.configSource.Snapshot(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load NAS profiles: %w", err)
+	}
+	if cfg == nil {
+		return nil, fmt.Errorf("profile source returned a nil config")
+	}
+	return cfg, nil
+}
+
+func (s *Service) profileRevision(ctx context.Context, name string) (uint64, error) {
+	cfg, err := s.configSnapshot(ctx)
+	if err != nil {
+		return 0, err
+	}
+	profile, ok := cfg.NAS[name]
+	if !ok {
+		return 0, fmt.Errorf("NAS profile %q is no longer configured", name)
+	}
+	return profile.Revision, nil
+}
+
+func (s *Service) verifyProfileRevision(ctx context.Context, name string, planned uint64) error {
+	current, err := s.profileRevision(ctx, name)
+	if err != nil {
+		return err
+	}
+	if current != planned {
+		return fmt.Errorf("NAS profile %q changed after planning (planned revision %d, current revision %d); create a new plan", name, planned, current)
+	}
+	return nil
 }
 
 func (s *Service) GetSystemInfo(ctx context.Context, requestedNAS string) (SystemInfoResult, error) {

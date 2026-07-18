@@ -39,6 +39,7 @@ type FileServiceObservedState struct {
 type FileServicePlan struct {
 	APIVersion          string                                `json:"api_version" jsonschema:"Plan schema version"`
 	NAS                 string                                `json:"nas" jsonschema:"NAS profile selected during planning"`
+	ProfileRevision     uint64                                `json:"profile_revision,omitempty" jsonschema:"Persistent gateway profile revision selected during planning"`
 	Request             controlpanel.FileServiceChangeRequest `json:"request" jsonschema:"Validated patch-only File Services intent"`
 	Observed            FileServiceObservedState              `json:"observed" jsonschema:"Complete selected module state observed during planning"`
 	ObservedFingerprint string                                `json:"observed_fingerprint" jsonschema:"SHA-256 hash of the complete observed module state"`
@@ -107,11 +108,22 @@ func (s *Service) PlanFileServiceChange(ctx context.Context, requestedNAS string
 	if err != nil {
 		return FileServicePlan{}, err
 	}
-	return planFileServiceChangeWithClient(ctx, name, client, request)
+	plan, err := planFileServiceChangeWithClient(ctx, name, client, request)
+	if err != nil {
+		return FileServicePlan{}, err
+	}
+	plan.ProfileRevision, err = s.profileRevision(ctx, name)
+	if err == nil {
+		plan.Hash, err = fileServicePlanHash(plan)
+	}
+	return plan, err
 }
 
 func (s *Service) ApplyFileServicePlan(ctx context.Context, plan FileServicePlan, approvalHash string) (FileServiceApplyResult, error) {
 	if err := validateFileServicePlan(plan, approvalHash); err != nil {
+		return FileServiceApplyResult{}, err
+	}
+	if err := s.verifyProfileRevision(ctx, plan.NAS, plan.ProfileRevision); err != nil {
 		return FileServiceApplyResult{}, err
 	}
 	name, client, err := s.fileServiceClient(ctx, plan.NAS)
@@ -128,6 +140,11 @@ func applyFileServicePlanWithClient(ctx context.Context, client fileServiceClien
 	current, err := planFileServiceChangeWithClient(ctx, plan.NAS, client, plan.Request)
 	if err != nil {
 		return FileServiceApplyResult{}, fmt.Errorf("File Services plan precondition no longer holds: %w", err)
+	}
+	current.ProfileRevision = plan.ProfileRevision
+	current.Hash, err = fileServicePlanHash(current)
+	if err != nil {
+		return FileServiceApplyResult{}, err
 	}
 	if current.ObservedFingerprint != plan.ObservedFingerprint || current.Hash != plan.Hash {
 		return FileServiceApplyResult{}, fmt.Errorf("File Services plan is stale; create a new plan")
