@@ -229,6 +229,46 @@ dsmctl control-panel file-services discovery apply --file discovery.plan.json --
 MCP exposes `get_service_discovery_capabilities`, `get_service_discovery_state`,
 `plan_service_discovery_change`, and `apply_service_discovery_plan`.
 
+## FTP, FTPS, and SFTP
+
+DSM groups three file-transfer protocols on one "FTP" page, but they are two
+independent DSM APIs and two compatibility boundaries: plain FTP and FTP over
+explicit TLS (FTPS) share `SYNO.Core.FileServ.FTP`, while SFTP (file transfer
+over SSH) is `SYNO.Core.FileServ.FTP.SFTP`. SFTP is selected independently, so a
+backend can expose the FTP switches while SFTP is absent (reported as
+`(not supported)` and a nil `sftp`).
+
+```console
+dsmctl control-panel file-services ftp capabilities --nas office
+dsmctl control-panel file-services ftp state --nas office --json
+```
+
+The normalized state carries the plain-FTP switch, the FTPS switch, and — when
+the SFTP backend is available — the SFTP switch and its listening port. Plain FTP
+and FTPS are independent: DSM can serve unencrypted FTP, FTPS, both, or neither.
+
+Changes are patch-only through the same hash-bound plan/apply flow. DSM's FTP set
+requires **both** the plain and FTPS switches on every write, so an FTP patch is
+merged into a freshly read pair before submitting; the SFTP set requires the
+enable switch and always resends the port to preserve it. The plan records and
+hashes the complete observed state; apply rejects a changed state, submits the
+merged values, and re-reads to verify. Enabling plain FTP (which transmits
+credentials without encryption) and disabling a service already in use (which
+disconnects clients) are high risk; enabling FTPS or changing the SFTP port is
+medium.
+
+```json
+{ "ftp": { "ftps": true }, "sftp": { "enabled": true, "port": 22 } }
+```
+
+```console
+dsmctl control-panel file-services ftp plan --nas office --file ftp.json --output ftp.plan.json
+dsmctl control-panel file-services ftp apply --file ftp.plan.json --approve <hash-from-plan>
+```
+
+MCP exposes `get_ftp_service_capabilities`, `get_ftp_service_state`,
+`plan_ftp_service_change`, and `apply_ftp_service_plan`.
+
 ## Adding another module
 
 Add a dedicated type under `internal/domain/controlpanel`, an operation package

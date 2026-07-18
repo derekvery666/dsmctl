@@ -23,6 +23,7 @@ func newFileServicesCommand(opts *options) *cobra.Command {
 		newSMBCommand(opts),
 		newNFSCommand(opts),
 		newServiceDiscoveryCommand(opts),
+		newFTPServicesCommand(opts),
 		newFileServicesPlanCommand(opts),
 		newFileServicesApplyCommand(opts),
 	)

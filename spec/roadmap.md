@@ -63,7 +63,7 @@ flowchart LR
 | [WI-024](work-items/WI-024-nfs-share-export-rules.md) | P1 | `done` | C | WI-012 | Guarded per-shared-folder NFS export rules (client, privilege, squash, security, async). |
 | [WI-025](work-items/WI-025-nfs-advanced-write.md) | P1 | `done` | C | WI-012 | Guarded NFSv4 domain write via full advanced-snapshot preservation (packet-size/port writes deferred). |
 | [WI-026](work-items/WI-026-smb-advanced-service-discovery.md) | P2 | `done` | C | WI-012 | Service discovery (Time Machine + WS-Discovery) and SMB advanced toggles (oplock, leases, durable handles, local master browser). |
-| [WI-027](work-items/WI-027-ftp-sftp.md) | P2 | `proposed` | C | WI-006 | Guarded FTP/FTPS and SFTP global file services. |
+| [WI-027](work-items/WI-027-ftp-sftp.md) | P2 | `done` | C | WI-006 | Guarded FTP/FTPS and SFTP service switches and SFTP port (advanced FTP "Others" fields deferred). |
 | [WI-028](work-items/WI-028-rsync-tftp.md) | P3 | `proposed` | C | WI-006 | Guarded rsync service and TFTP file services (AFP/WebDAV out of scope). |
 
 Parallel groups indicate likely file overlap. Items in different groups may run

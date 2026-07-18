@@ -12,6 +12,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/domain/controlpanel"
 	"github.com/ychiu1211/dsmctl/internal/domain/discovery"
 	"github.com/ychiu1211/dsmctl/internal/domain/driveadmin"
+	"github.com/ychiu1211/dsmctl/internal/domain/ftpservices"
 	"github.com/ychiu1211/dsmctl/internal/domain/identity"
 	"github.com/ychiu1211/dsmctl/internal/domain/nfsexport"
 	"github.com/ychiu1211/dsmctl/internal/domain/packagecenter"
@@ -209,6 +210,35 @@ type applyServiceDiscoveryPlanInput struct {
 
 type applyServiceDiscoveryPlanOutput struct {
 	Result application.ServiceDiscoveryApplyResult `json:"result" jsonschema:"Service discovery mutation result after stale-state and postcondition checks"`
+}
+
+type getFTPServicesStateOutput struct {
+	NAS         string                    `json:"nas" jsonschema:"NAS profile used for the request"`
+	FTPServices synology.FTPServicesState `json:"ftp_services" jsonschema:"Normalized FTP and SFTP configuration"`
+}
+
+type getFTPServicesCapabilitiesOutput struct {
+	NAS          string                           `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.FTPServicesCapabilities `json:"capabilities" jsonschema:"Selected FTP and SFTP operations"`
+	Report       synology.CompatibilityReport     `json:"report" jsonschema:"Discovered APIs and selected FTP/SFTP backends"`
+}
+
+type planFTPServicesChangeInput struct {
+	NAS     string             `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request ftpservices.Change `json:"request" jsonschema:"Patch-only FTP/SFTP intent"`
+}
+
+type planFTPServicesChangeOutput struct {
+	Plan application.FTPServicesPlan `json:"plan" jsonschema:"Validated plan bound to the complete observed state and approval hash"`
+}
+
+type applyFTPServicesPlanInput struct {
+	Plan         application.FTPServicesPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_ftp_service_change"`
+	ApprovalHash string                     `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved FTP services plan"`
+}
+
+type applyFTPServicesPlanOutput struct {
+	Result application.FTPServicesApplyResult `json:"result" jsonschema:"FTP services mutation result after stale-state and postcondition checks"`
 }
 
 type getStorageInput struct {
@@ -798,6 +828,58 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, applyServiceDiscoveryPlanOutput{}, err
 		}
 		return nil, applyServiceDiscoveryPlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_ftp_service_capabilities",
+		Title:       "Get FTP service capabilities",
+		Description: "Report whether FTP/FTPS and SFTP can be read and changed on the selected NAS, and the DSM backend selected for each.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getFileServicesInput) (*mcp.CallToolResult, getFTPServicesCapabilitiesOutput, error) {
+		result, err := service.GetFTPServicesCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getFTPServicesCapabilitiesOutput{}, err
+		}
+		return nil, getFTPServicesCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_ftp_service_state",
+		Title:       "Get FTP service state",
+		Description: "Read the plain FTP, FTPS, and SFTP service switches (and the SFTP port) without changing DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getFileServicesInput) (*mcp.CallToolResult, getFTPServicesStateOutput, error) {
+		result, err := service.GetFTPServicesState(ctx, input.NAS)
+		if err != nil {
+			return nil, getFTPServicesStateOutput{}, err
+		}
+		return nil, getFTPServicesStateOutput{NAS: result.NAS, FTPServices: result.FTPServices}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_ftp_service_change",
+		Title:       "Plan an FTP service change",
+		Description: "Validate one patch-only FTP/FTPS/SFTP request, read the current state, and return a hash-bound approval plan. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planFTPServicesChangeInput) (*mcp.CallToolResult, planFTPServicesChangeOutput, error) {
+		plan, err := service.PlanFTPServicesChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planFTPServicesChangeOutput{}, err
+		}
+		return nil, planFTPServicesChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_ftp_service_plan",
+		Title:       "Apply an approved FTP service plan",
+		Description: "Apply an unmodified FTP/SFTP plan only while its approval hash and complete observed state still match, then verify the requested postcondition.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyFTPServicesPlanInput) (*mcp.CallToolResult, applyFTPServicesPlanOutput, error) {
+		result, err := service.ApplyFTPServicesPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyFTPServicesPlanOutput{}, err
+		}
+		return nil, applyFTPServicesPlanOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
