@@ -23,7 +23,9 @@ flowchart LR
   WI014["WI-014 Portable gateway daemon"] --> WI015["WI-015 Gateway state/vault/admin"]
   WI014 --> WI016["WI-016 Remote authorization/approval/audit"]
   WI015 --> WI016
-  WI016 --> WI017["WI-017 amd64 Linux/Synology distribution"]
+  WI015 --> WI024["WI-024 Portable local administrator"]
+  WI016 --> WI024
+  WI024 --> WI017["WI-017 amd64 Linux/Synology distribution"]
   WI019["WI-019 Package Center"] --> WI022["WI-022 Package-scoped operations + Drive Admin"]
   WI023["WI-023 LAN device discovery"]
 ```
@@ -48,13 +50,14 @@ flowchart LR
 | [WI-014](work-items/WI-014-portable-gateway-daemon.md) | P0 | `done` | F | - | Establish a platform-neutral, read-only Streamable HTTP gateway and hardened amd64 container. |
 | [WI-015](work-items/WI-015-gateway-state-vault-admin.md) | P0 | `done` | F | WI-014 | Add transactional profiles, encrypted vault storage, administration, and runtime invalidation. |
 | [WI-016](work-items/WI-016-remote-authorization-approval-audit.md) | P0 | `done` | F | WI-014, WI-015 | Enforce scoped remote authorization, out-of-band high-risk approval, and redacted audit. |
-| [WI-017](work-items/WI-017-amd64-linux-synology-distribution.md) | P1 | `in_progress` | G | WI-014, WI-015, WI-016 | Ship the same amd64 image for generic Linux and an offline Synology x86_64 Container Manager SPK. |
+| [WI-017](work-items/WI-017-amd64-linux-synology-distribution.md) | P1 | `in_progress` | G | WI-014, WI-015, WI-016, WI-024 | Ship the same amd64 image for generic Linux and an offline Synology x86_64 Container Manager SPK. |
 | [WI-018](work-items/WI-018-system-log.md) | P2 | `done` | D | — | Read-only DSM system log (Log Center) inventory with keyword/type/level/paging filters. |
 | [WI-019](work-items/WI-019-package-center.md) | P1 | `done` | C | — | Package Center inventory, read-only settings, and guarded start/stop/uninstall (install/update/settings-set deferred). |
 | [WI-020](work-items/WI-020-package-settings-write.md) | P2 | `done` | C | WI-019 | Guarded Package Center automatic-update settings write (trust/beta/volume writes deferred). |
 | [WI-021](work-items/WI-021-resource-monitor.md) | P2 | `done` | D | — | Resource Monitor current utilization + recorded history reads and a guarded history-recording toggle. |
 | [WI-022](work-items/WI-022-package-scoped-operations.md) | P1 | `done` | C | WI-019 | Package-version-aware operation selection framework plus the read-only Drive Admin module. |
 | [WI-023](work-items/WI-023-lan-device-discovery.md) | P2 | `done` | H | — | Session-less findhost UDP broadcast discovery of Synology devices on the LAN. |
+| [WI-024](work-items/WI-024-gateway-local-administrator.md) | P0 | `in_progress` | G | WI-015, WI-016 | Replace bootstrap/platform administration with a portable one-hour local-account setup and browser sessions. |
 
 Parallel groups indicate likely file overlap. Items in different groups may run
 at the same time after checking their `touches` lists. Only one agent should

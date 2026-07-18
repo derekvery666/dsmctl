@@ -1,0 +1,146 @@
+---
+id: WI-024
+title: Replace platform administration with a portable local administrator
+status: in_progress
+priority: P0
+owner: "gateway-local-admin"
+depends_on: [WI-015, WI-016]
+parallel_group: G
+touches:
+  - internal/gateway/admin
+  - internal/gateway/state
+  - internal/gateway/platformauth
+  - internal/synologyauth
+  - cmd/dsmctl-gateway
+  - cmd/dsmctl-synology-auth
+  - deploy/linux
+  - deploy/synology
+  - docs/gateway.md
+  - docs/synology-package.md
+  - spec/gateway-deployment.md
+---
+
+# WI-024 - Replace platform administration with a portable local administrator
+
+## Outcome
+
+The same platform-neutral gateway presents a one-hour first-run setup window,
+creates its own local administrator username and password, and thereafter uses
+browser sessions for administration on generic amd64 Linux and Synology. DSM
+does not identify the gateway administrator and the NAS hosting an SPK receives
+no implicit profile, credential, or privilege.
+
+## Scope
+
+- Replace the generic bootstrap bearer token and Synology platform assertion
+  modes with one local administrator model shared by every deployment.
+- When no administrator exists, expose administrator creation for one hour
+  after each process start. Expiry closes setup until an uninitialized gateway
+  is restarted; the first successful transactional creation permanently closes
+  setup for that initialized state.
+- Store a normalized administrator username and an Argon2id password verifier;
+  never store or return the password.
+- Add login, logout, current-session, password-change, and revoke-other-session
+  flows. Browser session secrets are random, stored only as digests, bounded,
+  expiring, and sent through HttpOnly/SameSite cookies.
+- Require same-origin JSON requests plus a non-simple request header for every
+  state-changing admin API, and rate-limit setup and login attempts in memory.
+- Keep profile management, per-NAS DSM web login, MCP tokens, approvals, and
+  audit behind the local administrator session. These identities remain
+  independent and non-transitive.
+- Remove the Synology authentication proxy, signed platform assertion key, and
+  platform-admin runtime mode from the image and SPK. Synology retains only
+  package lifecycle, loopback publication, and DSM portal/reverse-proxy wiring.
+- Remove bootstrap-secret creation and mounts from generic Linux and Synology
+  deployment assets.
+- Update the state schema transactionally. Empty pre-release schema-3 states
+  may return to uninitialized; a schema-3 state containing profiles, MCP
+  tokens, or other managed data must fail closed with explicit reset/migration
+  guidance rather than silently expose a fresh setup window.
+- Make the uninitialized/expired/initialized UI states explicit. An
+  initialized unauthenticated gateway shows the ordinary login page; it cannot
+  infer whether the viewer was the original installer.
+
+## Non-goals
+
+- Setup codes, emailed recovery, password-reset questions, OIDC, DSM SSO,
+  multiple administrator accounts, roles, or multi-tenant ownership.
+- Detecting or automatically trusting the NAS that hosts the container.
+- Automatically discovering, adding, or authenticating any NAS.
+- Treating RFC1918 source addresses, proxy headers, or the first browser as a
+  durable identity proof.
+
+## Design constraints
+
+- The setup window is an explicit LAN/VPN single-owner product tradeoff. A
+  caller that wins the first setup race controls an otherwise empty gateway;
+  it receives no DSM credential or NAS authority. The UI and documentation
+  explain that an unexpected login page requires an operator-controlled data
+  reset before enrolling a NAS.
+- Setup availability is process-local time over persistent uninitialized state;
+  it is not extended by requests. Restart reopens it only while no local
+  administrator exists.
+- Administrator creation, password change, and session issuance are atomic.
+  Password change revokes every other administrator session.
+- Password verification uses bounded Argon2id parameters suitable for the
+  packaged memory limit, constant-time comparison, and a dummy verification
+  path for unknown usernames.
+- Cookies are Secure whenever the external request is HTTPS. Production docs
+  continue to require a trusted TLS reverse proxy and loopback-only backend.
+- The gateway image contains no DSM paths, commands, authentication calls, or
+  host-NAS assumptions. `localhost` continues to mean the container itself.
+- Existing CLI/MCP/application/runtime/Synology-operation boundaries and every
+  plan/apply, remote-scope, approval, and audit contract remain unchanged.
+
+## Acceptance criteria
+
+- [ ] A fresh gateway permits exactly one administrator creation during the
+      first process-hour without a setup code, DSM session, or platform header.
+- [ ] Setup expiry denies creation until restart; restart reopens setup only
+      when the database remains uninitialized.
+- [ ] Concurrent setup requests produce one administrator, one session, and no
+      partial or overwritten account state.
+- [ ] Password plaintext and browser session tokens cannot be found in the
+      database, backup, logs, audit output, or API responses.
+- [ ] Valid login creates an expiring HttpOnly/SameSite session; invalid login,
+      expired/revoked sessions, CSRF-like simple cross-origin requests, and
+      bounded rate-limit overflow fail closed.
+- [ ] Logout, password change, and revoke-other-sessions have the documented
+      effect, including revocation across gateway restart.
+- [ ] Profile, credential, MCP-token, approval, and audit APIs accept the local
+      admin session and no longer accept legacy admin bearer tokens or DSM
+      platform assertions.
+- [ ] Generic Linux and Synology use the identical image and first-run UI with
+      no bootstrap or platform key mount and no DSM authentication adapter.
+- [ ] The host NAS is absent after initialization and can be used only after
+      explicit profile creation plus that profile's own DSM Web Login.
+- [ ] Schema migration and pre-migration backup are tested; non-empty legacy
+      platform/token-admin state never silently opens unauthenticated setup.
+- [ ] `go test ./... -count=1`, `go vet ./...`, amd64 image build, generic
+      Docker lifecycle smoke, SPK validation, and offline-image validation pass.
+- [ ] User documentation explains the one-hour setup window, restart behavior,
+      unexpected initialized state, reset consequences, login sessions, and
+      explicit host-NAS enrollment.
+
+## Verification
+
+- Unit tests inject time, randomness, password-hash parameters, and concurrent
+  requests; persisted-byte and captured-log tests use secret canaries.
+- HTTP tests exercise setup, login, cookie/session lifecycle, origin/header
+  enforcement, rate limiting, and every existing admin API authorization path.
+- `go test ./... -count=1` and `go vet ./...`.
+- Build and run the same `linux/amd64` image through the generic hardened
+  Compose configuration before and after restart.
+- Build and validate the offline x86_64 SPK locally. Real DSM lifecycle
+  certification remains part of WI-017 and performs no disruptive NAS mutation.
+
+## Coordination
+
+This intentionally replaces the bootstrap-token portion of WI-015 and the DSM
+platform-authentication portion of WI-017. The current session owns both this
+item and the WI-017 implementation; WI-017 hardware certification/completion is
+paused until this item passes so it does not certify the superseded adapter.
+
+## Handoff
+
+Fill this only when pausing incomplete work.

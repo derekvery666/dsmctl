@@ -4,7 +4,7 @@ title: Ship generic Linux and Synology x86_64 distributions
 status: in_progress
 priority: P1
 owner: "synology-distribution"
-depends_on: [WI-014, WI-015, WI-016]
+depends_on: [WI-014, WI-015, WI-016, WI-024]
 parallel_group: G
 touches:
   - deploy/container
@@ -135,6 +135,9 @@ secured reverse-proxy endpoint, and pass the same gateway behavior suite.
 Depends on the completed gateway, state/vault, and authorization work. Most
 files are new deployment assets, but release documentation and workflows may
 overlap WI-010 reliability/release hardening if that item is later specified.
+WI-024 supersedes this item's DSM platform-authentication design. Real hardware
+certification and completion of this item are paused until WI-024 replaces the
+adapter and revalidates the shared image/SPK artifacts.
 
 ## Handoff
 
