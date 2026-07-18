@@ -1,9 +1,9 @@
 ---
 id: WI-016
 title: Enforce remote authorization, approval, and audit
-status: ready
+status: in_progress
 priority: P0
-owner: ""
+owner: "gateway-policy"
 depends_on: [WI-014, WI-015]
 parallel_group: F
 touches:
