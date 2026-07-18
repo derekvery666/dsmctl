@@ -62,6 +62,8 @@ shows `/mcp` as the client endpoint. Its overview reports NAS, token, and
 approval status, while separate NAS, MCP access, approval, Audit, and
 administrator views keep credentials and authority distinct. English,
 Traditional Chinese, Simplified Chinese, Japanese, and German are built in.
+The Traditional Chinese step-by-step operator guide is available in
+[`gateway-admin-guide.md`](gateway-admin-guide.md).
 The page initially uses the saved locale or browser preference, and the locale
 selector is available before and after login. Only the locale identifier is
 stored in browser-local storage; it is not authentication state. On narrow

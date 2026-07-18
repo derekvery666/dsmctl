@@ -334,7 +334,7 @@ func TestAdminUIHasNoEmbeddedCredential(t *testing.T) {
 	if recorder.Header().Get("Content-Security-Policy") == "" {
 		t.Fatal("UI response has no content security policy")
 	}
-	for _, forbidden := range []string{"sessionStorage", "admin_token", "platform assertion", "bootstrap token"} {
+	for _, forbidden := range []string{"sessionStorage", "admin_token", "platform assertion", "bootstrap token", "--blue:", "--navy:"} {
 		if strings.Contains(recorder.Body.String(), forbidden) {
 			t.Fatalf("UI contains superseded administrator mechanism %q", forbidden)
 		}
@@ -344,6 +344,8 @@ func TestAdminUIHasNoEmbeddedCredential(t *testing.T) {
 	}
 	for _, required := range []string{
 		`id="view-overview"`, `data-nav="nas"`, `aria-live="polite"`, `@media(max-width:760px)`,
+		`--brand-500:#2588df`, `--brand-950:#0d263f`, `--slate-900:#162334`,
+		`--color-action:var(--brand-500)`, `--color-nav:var(--brand-950)`,
 		`data-locale-select`, `localStorage.getItem('dsmctl.locale')`, `dataset.i18nDiagnostics`,
 		`English`, `繁體中文`, `简体中文`, `日本語`, `Deutsch`, `MCP endpoint`, `/mcp`,
 	} {

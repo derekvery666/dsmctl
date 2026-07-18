@@ -4,7 +4,7 @@ title: Ship generic Linux and Synology x86_64 distributions
 status: in_progress
 priority: P1
 owner: "synology-distribution"
-depends_on: [WI-014, WI-015, WI-016, WI-032, WI-033, WI-035]
+depends_on: [WI-014, WI-015, WI-016, WI-032, WI-033, WI-035, WI-037]
 parallel_group: G
 touches:
   - deploy/container
@@ -128,22 +128,24 @@ secured reverse-proxy endpoint, and pass the same gateway behavior suite.
 Depends on the completed gateway, state/vault, and authorization work. Most
 files are new deployment assets, but release documentation and workflows may
 overlap WI-010 reliability/release hardening if that item is later specified.
-WI-032 supersedes this item's DSM platform-authentication design. Real hardware
-certification and completion of this item are paused until WI-035 completes the
-final multilingual MCP Server product copy and revalidates the shared image/SPK
-artifacts.
+WI-032 supersedes this item's DSM platform-authentication design. WI-037 has
+completed the final tokenized MCP Server presentation and validated the shared
+`linux/amd64` image locally. Real Synology hardware certification remains before
+the distribution item can complete.
 
 ## Handoff
 
 Implementation and local verification are complete; real Synology hardware
 certification remains before this item can truthfully move to `done`.
 
-- Last known good state: WI-032 is complete. Generic Linux and Synology use the
+- Last known good state: WI-032 and WI-037 are complete. Generic Linux and Synology use the
   same portable local-administrator setup/login flow and exact image. The SPK
   owns only package lifecycle, master-key creation, offline image/project
   resources, and loopback DSM portal wiring; there is no DSM authentication
   adapter, platform assertion key, bootstrap secret, or implicit host-NAS
-  profile. Deterministic offline SPK assets, lifecycle scripts, release
+  profile. The final presentation uses shared deep brand-blue and neutral slate
+  tokens and was revalidated in an isolated `linux/amd64` container.
+  Deterministic offline SPK assets, lifecycle scripts, release
   workflow, supported matrix, and user documentation are present.
 - Verification: `go test ./... -count=1`, `go vet ./...`, and
   `git diff --check` pass. Two fixed-input `linux/amd64` builds were identical
