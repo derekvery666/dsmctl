@@ -1,9 +1,9 @@
 ---
 id: WI-017
 title: Ship generic Linux and Synology x86_64 distributions
-status: ready
+status: in_progress
 priority: P1
-owner: ""
+owner: "synology-distribution"
 depends_on: [WI-014, WI-015, WI-016]
 parallel_group: G
 touches:
