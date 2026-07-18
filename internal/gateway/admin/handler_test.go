@@ -41,6 +41,16 @@ func TestFirstRunSetupAndAuthenticatedProfileCRUD(t *testing.T) {
 	if adminSession == "" || strings.Contains(setupResponse.Body.String(), password) || strings.Contains(setupResponse.Body.String(), adminSession) {
 		t.Fatalf("setup response leaked a credential: %s", setupResponse.Body.String())
 	}
+	for path, field := range map[string]string{
+		"/admin/api/profiles":                        "profiles",
+		"/admin/api/mcp-tokens":                      "tokens",
+		"/admin/api/approvals?include_consumed=true": "approvals",
+	} {
+		emptyList := performJSON(handler, http.MethodGet, path, "", adminSession)
+		if emptyList.Code != http.StatusOK || !strings.Contains(emptyList.Body.String(), `"`+field+`":[]`) {
+			t.Fatalf("empty %s must be a JSON array: status=%d body=%s", field, emptyList.Code, emptyList.Body.String())
+		}
+	}
 	replay := performJSON(handler, http.MethodPost, "/admin/api/setup", `{"username":"other","password":"another correct horse password"}`, "")
 	if replay.Code != http.StatusConflict {
 		t.Fatalf("setup replay status = %d", replay.Code)

@@ -329,6 +329,9 @@ func (h *Handler) profiles(w http.ResponseWriter, req *http.Request) {
 			writeError(w, http.StatusInternalServerError, "list profiles")
 			return
 		}
+		if profiles == nil {
+			profiles = []state.Profile{}
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"profiles": profiles})
 	case http.MethodPost:
 		var input profileInput
@@ -408,6 +411,9 @@ func (h *Handler) mcpTokens(w http.ResponseWriter, req *http.Request) {
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "list MCP tokens")
 				return
+			}
+			if tokens == nil {
+				tokens = []state.MCPToken{}
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"tokens": tokens})
 		case http.MethodPost:
@@ -500,6 +506,9 @@ func (h *Handler) approvals(w http.ResponseWriter, req *http.Request) {
 			writeError(w, http.StatusInternalServerError, "list approvals")
 			return
 		}
+		if items == nil {
+			items = []state.Approval{}
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"approvals": items})
 	case http.MethodPost:
 		var input struct {
@@ -551,6 +560,9 @@ func (h *Handler) audit(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "read audit events")
 		return
+	}
+	if events == nil {
+		events = []state.AuditEvent{}
 	}
 	if req.URL.Path == "/admin/api/audit/export" {
 		w.Header().Set("Content-Type", "application/x-ndjson")
