@@ -1,9 +1,9 @@
 ---
 id: WI-035
 title: Add multilingual MCP Server product copy
-status: in_progress
+status: done
 priority: P1
-owner: "mcp-product-copy"
+owner: ""
 depends_on: [WI-033]
 parallel_group: G
 touches:
@@ -58,22 +58,22 @@ German with concise, professional, task-oriented copy.
 
 ## Acceptance criteria
 
-- [ ] Setup, login, top bar, and overview visibly identify the product as an
+- [x] Setup, login, top bar, and overview visibly identify the product as an
       MCP Server.
-- [ ] Overview explains multi-NAS management and exposes the `/mcp` endpoint in
+- [x] Overview explains multi-NAS management and exposes the `/mcp` endpoint in
       concise operational language.
-- [ ] Existing promotional or conversational copy is replaced with short,
+- [x] Existing promotional or conversational copy is replaced with short,
       task-oriented text.
-- [ ] English, Traditional Chinese, Simplified Chinese, Japanese, and German
+- [x] English, Traditional Chinese, Simplified Chinese, Japanese, and German
       cover every user-visible administration string, including dynamic states
       and confirmations.
-- [ ] Locale defaults from browser preference, can be changed before or after
+- [x] Locale defaults from browser preference, can be changed before or after
       login, persists across reload, and does not affect authentication state.
-- [ ] Existing actions, endpoints, IDs, confirmations, and security behavior
+- [x] Existing actions, endpoints, IDs, confirmations, and security behavior
       remain unchanged.
-- [ ] UI tests, full Go tests, vet, Docker build, and desktop/mobile browser
+- [x] UI tests, full Go tests, vet, Docker build, and desktop/mobile browser
       walkthrough pass without overflow or console errors.
-- [ ] User documentation uses the same product terminology.
+- [x] User documentation uses the same product terminology.
 
 ## Verification
 
@@ -88,6 +88,24 @@ German with concise, professional, task-oriented copy.
 WI-017 owns distribution and hardware certification. It must certify this final
 multilingual copy in the shared image; WI-035 does not change packaging or
 runtime behavior.
+
+## Completion notes
+
+- Renamed the visible product to `dsmctl MCP Server`, exposed `/mcp` on the
+  overview, and replaced promotional language with concise operational copy.
+- Added complete embedded catalogs for English, Traditional Chinese, Simplified
+  Chinese, Japanese, and German. Static copy, placeholders, dates, counts,
+  statuses, empty states, prompts, confirmations, and local feedback use the
+  selected locale with English fallback.
+- Locale selection is available before and after authentication, initializes
+  from a saved choice or browser preference, and stores only `dsmctl.locale` in
+  local storage. Translation insertion uses text properties rather than HTML.
+- Catalog diagnostics reported no missing or extra keys in all five locales.
+  Browser walkthrough covered every locale, persistence, setup, all management
+  views, dynamic empty states, logout, desktop, and 390-by-844 layouts with no
+  console errors or page-level horizontal overflow.
+- No NAS was contacted and no DSM mutation occurred. The isolated localhost
+  test container and temporary key are removed after final verification.
 
 ## Handoff
 

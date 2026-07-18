@@ -328,7 +328,7 @@ func TestAdminUIHasNoEmbeddedCredential(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/admin/", nil)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, req)
-	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "dsmctl Gateway") {
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "dsmctl MCP Server") {
 		t.Fatalf("UI response = %d %s", recorder.Code, recorder.Body.String())
 	}
 	if recorder.Header().Get("Content-Security-Policy") == "" {
@@ -342,7 +342,11 @@ func TestAdminUIHasNoEmbeddedCredential(t *testing.T) {
 	if !strings.Contains(recorder.Body.String(), "/setup/status") || !strings.Contains(recorder.Body.String(), "HttpOnly/SameSite") {
 		t.Fatal("UI does not expose the local administrator setup/login flow")
 	}
-	for _, required := range []string{`id="view-overview"`, `data-nav="nas"`, `aria-live="polite"`, `@media(max-width:760px)`} {
+	for _, required := range []string{
+		`id="view-overview"`, `data-nav="nas"`, `aria-live="polite"`, `@media(max-width:760px)`,
+		`data-locale-select`, `localStorage.getItem('dsmctl.locale')`, `dataset.i18nDiagnostics`,
+		`English`, `繁體中文`, `简体中文`, `日本語`, `Deutsch`, `MCP endpoint`, `/mcp`,
+	} {
 		if !strings.Contains(recorder.Body.String(), required) {
 			t.Fatalf("UI is missing redesigned application shell marker %q", required)
 		}

@@ -57,14 +57,16 @@ cannot determine whether that viewer was the installer. If the first visit is
 unexpectedly initialized, reset the empty deployment state before enrolling a
 NAS. Resetting a used state deletes its NAS sessions and MCP credentials.
 
-After login, the administration page opens on **總覽**, with fleet, token, and
-approval counts plus direct links to the most common tasks. The navigation
-separates **NAS**, **MCP 存取**, **核准**, **Audit**, and **管理員** so credentials,
-remote-client authority, high-risk authorization, history, and the local
-Gateway identity are not presented as one authority. On narrow screens the
-same navigation becomes a horizontally scrollable bar and data tables remain
-independently scrollable. The embedded page uses no CDN, remote font, or other
-external rendering asset.
+The administration page identifies the product as **dsmctl MCP Server** and
+shows `/mcp` as the client endpoint. Its overview reports NAS, token, and
+approval status, while separate NAS, MCP access, approval, Audit, and
+administrator views keep credentials and authority distinct. English,
+Traditional Chinese, Simplified Chinese, Japanese, and German are built in.
+The page initially uses the saved locale or browser preference, and the locale
+selector is available before and after login. Only the locale identifier is
+stored in browser-local storage; it is not authentication state. On narrow
+screens navigation and tables scroll independently. The embedded page uses no
+CDN, remote font, translation service, or other external rendering asset.
 
 Add each NAS from the page and choose one of two TLS policies: `system_ca`, or
 `pinned_fingerprint` with an explicitly confirmed SHA-256 leaf-certificate
