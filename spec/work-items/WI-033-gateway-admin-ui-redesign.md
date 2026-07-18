@@ -1,9 +1,9 @@
 ---
 id: WI-033
 title: Redesign the Gateway administration experience
-status: in_progress
+status: done
 priority: P1
-owner: "gateway-ui-redesign"
+owner: ""
 depends_on: [WI-032]
 parallel_group: G
 touches:
@@ -62,23 +62,23 @@ contract.
 
 ## Acceptance criteria
 
-- [ ] Setup and login render as polished, focused entry screens with the
+- [x] Setup and login render as polished, focused entry screens with the
       one-hour/reset guidance and no DSM identity implication.
-- [ ] Authenticated administration uses a top bar, navigation, overview, and
+- [x] Authenticated administration uses a top bar, navigation, overview, and
       separate NAS, MCP-token, approval, audit, and administrator views.
-- [ ] All existing administrator actions remain reachable and preserve current
+- [x] All existing administrator actions remain reachable and preserve current
       API behavior, confirmations, authentication, and secret handling.
-- [ ] Empty Profiles, Tokens, and Approvals show purposeful empty states and do
+- [x] Empty Profiles, Tokens, and Approvals show purposeful empty states and do
       not produce JavaScript errors.
-- [ ] Desktop and narrow-screen layouts are usable without clipped controls or
+- [x] Desktop and narrow-screen layouts are usable without clipped controls or
       horizontal page overflow.
-- [ ] Interactive controls have visible labels/focus, status messages are
+- [x] Interactive controls have visible labels/focus, status messages are
       announced, and destructive buttons remain visually distinct.
-- [ ] The page contains no external asset dependency and keeps the existing CSP
+- [x] The page contains no external asset dependency and keeps the existing CSP
       compatible with its inline implementation.
-- [ ] Admin UI tests, `go test ./... -count=1`, `go vet ./...`, Docker build,
+- [x] Admin UI tests, `go test ./... -count=1`, `go vet ./...`, Docker build,
       and browser walkthrough of setup/login/dashboard pass.
-- [ ] User documentation describes the reorganized administration views.
+- [x] User documentation describes the reorganized administration views.
 
 ## Verification
 
@@ -95,6 +95,24 @@ contract.
 WI-017 remains responsible for real DSM portal and hardware certification. It
 must certify this final UI rather than the superseded WI-032 presentation. This
 item does not change any Synology package lifecycle or DSM operation code.
+
+## Completion notes
+
+- Replaced the raw scrolling form with a self-contained Synology-inspired
+  application shell, focused entry experience, fleet overview, six explicit
+  management views, status hierarchy, useful empty states, and responsive
+  navigation without using proprietary Synology assets.
+- Preserved the WI-032 endpoints, local administrator session model, NAS
+  authority boundaries, confirmations, and secret handling. Added structural
+  tests for the application shell, narrow-screen breakpoint, live status
+  region, and absence of external assets.
+- Verified `go test ./... -count=1`, `go vet ./...`, `git diff --check`, and two
+  `linux/amd64` Docker builds. In an isolated localhost container, exercised
+  setup, every navigation view, logout, login, purposeful empty data, desktop
+  layout, and a 390-by-844 narrow layout. Both layouts had no page-level
+  horizontal overflow and the browser console reported no errors.
+- Browser screenshots are retained outside the repository in the Codex
+  visualization workspace. No NAS was contacted and no DSM mutation occurred.
 
 ## Handoff
 

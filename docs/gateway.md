@@ -57,6 +57,15 @@ cannot determine whether that viewer was the installer. If the first visit is
 unexpectedly initialized, reset the empty deployment state before enrolling a
 NAS. Resetting a used state deletes its NAS sessions and MCP credentials.
 
+After login, the administration page opens on **總覽**, with fleet, token, and
+approval counts plus direct links to the most common tasks. The navigation
+separates **NAS**, **MCP 存取**, **核准**, **Audit**, and **管理員** so credentials,
+remote-client authority, high-risk authorization, history, and the local
+Gateway identity are not presented as one authority. On narrow screens the
+same navigation becomes a horizontally scrollable bar and data tables remain
+independently scrollable. The embedded page uses no CDN, remote font, or other
+external rendering asset.
+
 Add each NAS from the page and choose one of two TLS policies: `system_ca`, or
 `pinned_fingerprint` with an explicitly confirmed SHA-256 leaf-certificate
 fingerprint. Production managed mode has no skip-verification option. Sign in

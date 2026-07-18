@@ -342,6 +342,16 @@ func TestAdminUIHasNoEmbeddedCredential(t *testing.T) {
 	if !strings.Contains(recorder.Body.String(), "/setup/status") || !strings.Contains(recorder.Body.String(), "HttpOnly/SameSite") {
 		t.Fatal("UI does not expose the local administrator setup/login flow")
 	}
+	for _, required := range []string{`id="view-overview"`, `data-nav="nas"`, `aria-live="polite"`, `@media(max-width:760px)`} {
+		if !strings.Contains(recorder.Body.String(), required) {
+			t.Fatalf("UI is missing redesigned application shell marker %q", required)
+		}
+	}
+	for _, externalAsset := range []string{"<link ", "<script src=", `<img src="http`} {
+		if strings.Contains(recorder.Body.String(), externalAsset) {
+			t.Fatalf("UI loads an external asset matching %q", externalAsset)
+		}
+	}
 }
 
 func TestPasswordOTPEnrollmentStoresTrustedDeviceWithoutReturningSecrets(t *testing.T) {

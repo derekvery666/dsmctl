@@ -72,7 +72,7 @@ flowchart LR
 | [WI-030](work-items/WI-030-photos-admin.md) | P2 | `done` | C | WI-019, WI-022 | Synology Photos administration module: read + guarded partial write of `SYNO.Foto.Setting.Admin` (package-gated), CLI + MCP, live-verified. |
 | [WI-031](work-items/WI-031-drive-server-config.md) | P2 | `done` | C | WI-022 | Guarded Synology Drive server database config (vmtouch pair) via `SYNO.SynologyDrive.Config`; first Drive write, CLI + MCP, live-verified. |
 | [WI-032](work-items/WI-032-gateway-local-administrator.md) | P0 | `done` | G | WI-015, WI-016 | Replace bootstrap/platform administration with a portable one-hour local-account setup and browser sessions. |
-| [WI-033](work-items/WI-033-gateway-admin-ui-redesign.md) | P1 | `in_progress` | G | WI-032 | Redesign the local Gateway administration UI as a polished, responsive NAS control application. |
+| [WI-033](work-items/WI-033-gateway-admin-ui-redesign.md) | P1 | `done` | G | WI-032 | Redesign the local Gateway administration UI as a polished, responsive NAS control application. |
 
 Parallel groups indicate likely file overlap. Items in different groups may run
 at the same time after checking their `touches` lists. Only one agent should
