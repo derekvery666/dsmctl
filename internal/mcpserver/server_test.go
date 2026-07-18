@@ -62,8 +62,8 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools() error = %v", err)
 	}
-	if len(tools.Tools) != 69 {
-		t.Fatalf("ListTools() returned %d tools, want 69", len(tools.Tools))
+	if len(tools.Tools) != 73 {
+		t.Fatalf("ListTools() returned %d tools, want 73", len(tools.Tools))
 	}
 	readOnlyTools := map[string]bool{
 		"discover_lan_devices":                false,
@@ -88,6 +88,8 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"get_rsync_service_state":             false,
 		"get_tftp_service_capabilities":       false,
 		"get_tftp_service_state":              false,
+		"get_photos_capabilities":             false,
+		"get_photos_settings":                 false,
 		"get_san_capabilities":                false,
 		"get_san_state":                       false,
 		"get_share_capabilities":              false,
@@ -105,6 +107,7 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"plan_ftp_service_change":             false,
 		"plan_rsync_service_change":           false,
 		"plan_tftp_service_change":            false,
+		"plan_photos_change":                  false,
 		"get_package_capabilities":            false,
 		"get_package_state":                   false,
 		"get_package_settings":                false,
@@ -132,6 +135,7 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"apply_ftp_service_plan":        false,
 		"apply_rsync_service_plan":      false,
 		"apply_tftp_service_plan":       false,
+		"apply_photos_plan":             false,
 		"apply_package_plan":            false,
 		"apply_resource_recording_plan": false,
 	}

@@ -16,6 +16,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/domain/identity"
 	"github.com/ychiu1211/dsmctl/internal/domain/nfsexport"
 	"github.com/ychiu1211/dsmctl/internal/domain/packagecenter"
+	"github.com/ychiu1211/dsmctl/internal/domain/photos"
 	"github.com/ychiu1211/dsmctl/internal/domain/resmon"
 	"github.com/ychiu1211/dsmctl/internal/domain/rsyncservice"
 	"github.com/ychiu1211/dsmctl/internal/domain/san"
@@ -299,6 +300,39 @@ type applyTFTPServicePlanInput struct {
 
 type applyTFTPServicePlanOutput struct {
 	Result application.TFTPServiceApplyResult `json:"result" jsonschema:"TFTP service mutation result after stale-state and postcondition checks"`
+}
+
+type getPhotosInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getPhotosSettingsOutput struct {
+	NAS      string                       `json:"nas" jsonschema:"NAS profile used for the request"`
+	Settings synology.PhotosAdminSettings `json:"settings" jsonschema:"Normalized Synology Photos administration settings"`
+}
+
+type getPhotosCapabilitiesOutput struct {
+	NAS          string                       `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.PhotosCapabilities  `json:"capabilities" jsonschema:"Selected Photos administration operations and package evidence"`
+	Report       synology.CompatibilityReport `json:"report" jsonschema:"Discovered APIs and selected Photos backend"`
+}
+
+type planPhotosChangeInput struct {
+	NAS     string             `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request photos.AdminChange `json:"request" jsonschema:"Patch-only Photos administration intent"`
+}
+
+type planPhotosChangeOutput struct {
+	Plan application.PhotosPlan `json:"plan" jsonschema:"Validated plan bound to the complete observed settings and approval hash"`
+}
+
+type applyPhotosPlanInput struct {
+	Plan         application.PhotosPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_photos_change"`
+	ApprovalHash string                `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved Photos plan"`
+}
+
+type applyPhotosPlanOutput struct {
+	Result application.PhotosApplyResult `json:"result" jsonschema:"Photos mutation result after stale-state and postcondition checks"`
 }
 
 type getStorageInput struct {
@@ -1044,6 +1078,58 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, applyTFTPServicePlanOutput{}, err
 		}
 		return nil, applyTFTPServicePlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_photos_capabilities",
+		Title:       "Get Synology Photos capabilities",
+		Description: "Report whether Synology Photos administration settings can be read and changed on the selected NAS, plus the installed package evidence.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getPhotosInput) (*mcp.CallToolResult, getPhotosCapabilitiesOutput, error) {
+		result, err := service.GetPhotosCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getPhotosCapabilitiesOutput{}, err
+		}
+		return nil, getPhotosCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_photos_settings",
+		Title:       "Get Synology Photos settings",
+		Description: "Read the Synology Photos administration settings (face/concept/similar grouping, user sharing, recycle bins, thumbnail size, excluded extensions) without changing DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getPhotosInput) (*mcp.CallToolResult, getPhotosSettingsOutput, error) {
+		result, err := service.GetPhotosSettings(ctx, input.NAS)
+		if err != nil {
+			return nil, getPhotosSettingsOutput{}, err
+		}
+		return nil, getPhotosSettingsOutput{NAS: result.NAS, Settings: result.Settings}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_photos_change",
+		Title:       "Plan a Synology Photos change",
+		Description: "Validate one patch-only Synology Photos administration request, read the current settings, and return a hash-bound approval plan. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planPhotosChangeInput) (*mcp.CallToolResult, planPhotosChangeOutput, error) {
+		plan, err := service.PlanPhotosChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planPhotosChangeOutput{}, err
+		}
+		return nil, planPhotosChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_photos_plan",
+		Title:       "Apply an approved Synology Photos plan",
+		Description: "Apply an unmodified Synology Photos plan only while its approval hash and complete observed settings still match, then verify the requested postcondition.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyPhotosPlanInput) (*mcp.CallToolResult, applyPhotosPlanOutput, error) {
+		result, err := service.ApplyPhotosPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyPhotosPlanOutput{}, err
+		}
+		return nil, applyPhotosPlanOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
