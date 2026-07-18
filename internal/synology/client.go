@@ -388,7 +388,13 @@ func (c *Client) executeLocked(ctx context.Context, call compatibility.Request) 
 		c.sid = ""
 		c.synoToken = ""
 		if reErr := c.reestablishLocked(ctx); reErr != nil {
-			return nil, reErr
+			// DSM rejected the session and it could not be renewed
+			// automatically; report a typed, detectable "session ended" error
+			// so the CLI and MCP can tell the user to sign in again.
+			if IsSessionExpired(reErr) {
+				return nil, reErr
+			}
+			return nil, &SessionExpiredError{Cause: reErr}
 		}
 		params.Set("_sid", c.sid)
 		params.Del("SynoToken")
