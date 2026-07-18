@@ -117,22 +117,34 @@ func decodeSquash(raw map[string]json.RawMessage) (nfsexport.Squash, error) {
 	}
 }
 
+// decodeSecurity reads the security_flavor object. DSM represents the flavor as
+// four booleans ({sys, kerberos, kerberos_integrity, kerberos_privacy}), not a
+// string, and requires at least one to be enabled. The normalized model keeps a
+// single flavor, so the strongest enabled option wins.
 func decodeSecurity(raw map[string]json.RawMessage) (nfsexport.Security, error) {
-	value, err := requiredString(raw, "security_flavor")
-	if err != nil {
-		return "", err
+	value, ok := raw["security_flavor"]
+	if !ok {
+		return "", fmt.Errorf("required field %q is missing", "security_flavor")
 	}
-	switch value {
-	case "sys":
-		return nfsexport.SecuritySys, nil
-	case "kerberos":
-		return nfsexport.SecurityKerberos, nil
-	case "kerberos_integrity":
-		return nfsexport.SecurityKerberosIntegrity, nil
-	case "kerberos_privacy":
+	var flavor map[string]json.RawMessage
+	if err := json.Unmarshal(value, &flavor); err != nil {
+		return "", fmt.Errorf("field %q must be an object: %w", "security_flavor", err)
+	}
+	enabled := func(key string) bool {
+		result, err := requiredBool(flavor, key)
+		return err == nil && result
+	}
+	switch {
+	case enabled("kerberos_privacy"):
 		return nfsexport.SecurityKerberosPrivacy, nil
+	case enabled("kerberos_integrity"):
+		return nfsexport.SecurityKerberosIntegrity, nil
+	case enabled("kerberos"):
+		return nfsexport.SecurityKerberos, nil
+	case enabled("sys"):
+		return nfsexport.SecuritySys, nil
 	default:
-		return "", fmt.Errorf("unsupported NFS export security flavor %q", value)
+		return "", fmt.Errorf("NFS export security flavor has no enabled option")
 	}
 }
 

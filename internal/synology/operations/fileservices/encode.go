@@ -81,11 +81,17 @@ func encodeNFSBaseChange(change controlpanel.NFSChange) (map[string]any, error) 
 	return parameters, nil
 }
 
-// encodeNFSAdvancedSnapshot renders the complete advanced snapshot for a set.
-// Every field DSM's AdvancedSetting get/set exchange is resubmitted so a change
-// to one field (today, the NFSv4 domain) never resets another.
+// encodeNFSAdvancedSnapshot resubmits the advanced settable fields DSM returned,
+// verbatim (preserving their exact JSON types), with only the NFSv4 domain
+// overridden. Fields absent from the get response — notably enable_nfs — are not
+// sent, so an advanced write never disturbs the base NFS service state.
 func encodeNFSAdvancedSnapshot(snapshot NFSAdvancedSnapshot) map[string]any {
 	return map[string]any{
+		// enable_nfs is required by the set and is the current base service
+		// state, so the write never toggles the NFS service. The booleans are
+		// sent as booleans even though the get response returns
+		// custom_port_enable as an integer, because the set validation requires
+		// boolean types.
 		"enable_nfs":         snapshot.EnableNFS,
 		"custom_port_enable": snapshot.CustomPortEnable,
 		"read_size":          snapshot.ReadSize,

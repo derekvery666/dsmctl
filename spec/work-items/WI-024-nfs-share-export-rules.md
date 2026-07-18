@@ -1,9 +1,9 @@
 ---
 id: WI-024
 title: Guarded per-shared-folder NFS export rules
-status: in_progress
+status: done
 priority: P1
-owner: "claude"
+owner: ""
 depends_on: [WI-012]
 parallel_group: C
 touches:
@@ -85,32 +85,32 @@ NFS host export rules").
       and verifies a fresh postcondition.
 - [x] Request-capture tests lock the `save` request shape, including `id`
       handling for create versus rename.
-- [ ] DSM 7.3.x read-only `load` verification passes on a real shared folder.
-- [x] No live `save` ran without new explicit authorization.
+- [x] DSM 7.3.x `load` and guarded `save` verified on a real shared folder with
+      explicit user authorization.
+- [x] No live `save` ran without new explicit authorization (the 2026-07-18 run
+      was explicitly authorized and fully reverted).
 
-## Handoff
+## Completion record
 
-Implementation is complete and fully verified offline; only live DSM
-verification remains.
-
-- Last good state: committed on branch `claude/file-protocol-integration-93a0ad`
-  after `spec` commit `1efbf61`.
-- Done: `internal/domain/nfsexport`, operation package
-  `internal/synology/operations/nfsexport` (load/save + decode/encode +
-  request-capture tests), facade `internal/synology/nfsexport.go`, application
-  plan/apply `internal/application/nfs_export.go` (+ tests), CLI under
-  `control-panel file-services nfs export`, four MCP tools, read-only gating,
-  and `docs/control-panel.md`.
-- Verified: `go test ./...`, `go vet ./...`, both builds; CLI command tree and
-  offline request validation (duplicate client, bad enum, empty share) exercised
-  through the built binary.
-- Pending: read-only `load` against a real DSM 7.3.x shared folder to confirm
-  the response `rule` array shape and enum values, then flip `status: done`. No
-  live `save` is authorized yet.
-- Assumption still to confirm live: the `load` response returns the rule array
-  under the `rule` key (from `webapi-NFS/src/share_privilege.cpp:229`,
-  `output[APIPARAM_NFS_RULE]`), and DSM accepts a full-replacement `save` with
-  per-rule `id` = old client for edits and `""` for creations.
+- Completed 2026-07-18 with typed NFS export rules over
+  `SYNO.Core.FileServ.NFS.SharePrivilege` v1 load/save, hash-bound plan/apply
+  (full desired-state ownership, observed fingerprint, stale rejection,
+  exposure/removal warnings, postcondition verification), CLI under
+  `control-panel file-services nfs export`, four MCP tools with read-only
+  gating, docs, and unit/request-capture/plan-apply tests.
+- Live DSM 7.3.2 verification (lab, explicitly authorized, fully reverted):
+  read an empty rule set, added one read-only rule, added a second rule while
+  the first was preserved (confirming `id` = old client for edits and `""` for
+  creations and full-set replacement), then cleared all rules. NFS was enabled
+  for the test and disabled afterward; the shared folder ended with no rules.
+- Live finding and fix: DSM represents `security_flavor` as a boolean object
+  (`{sys, kerberos, kerberos_integrity, kerberos_privacy}`) in both the load
+  response and the save request, not a string. The decoder now selects the
+  enabled flavor and the encoder emits the object with exactly one enabled;
+  `save` returned code 2301 until this was corrected.
+- Also confirmed live: `SharePrivilege.save` requires the NFS service to be
+  running (returns 2301 while NFS is disabled).
+- Verified with `go test ./... -count=1`, `go vet ./...`, and both builds.
 
 ## Verification
 

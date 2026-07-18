@@ -122,9 +122,12 @@ func TestNFSAdvancedSetSelectionAndFailClosed(t *testing.T) {
 func TestNFSAdvancedSnapshotReadAndDomainSetContract(t *testing.T) {
 	target := compatibility.NewTarget()
 	target.SetAPI(NFSAdvancedAPIName, compatibility.APIInfo{MinVersion: 1, MaxVersion: 1})
+	// The real DSM AdvancedSetting get response omits enable_nfs (a base-service
+	// field) and returns custom_port_enable as an integer, not a boolean; the
+	// write must supply enable_nfs and re-encode custom_port_enable as a bool.
 	executor := &captureExecutor{responses: map[string]json.RawMessage{
 		NFSAdvancedAPIName + ".get": json.RawMessage(`{
-			"enable_nfs":true,"custom_port_enable":false,"read_size":8192,"write_size":8192,
+			"custom_port_enable":0,"read_size":8192,"write_size":16384,
 			"unix_pri_enable":true,"statd_port":0,"nlm_port":0,"nfs_v4_domain":"old.example"
 		}`),
 	}}
@@ -133,21 +136,38 @@ func TestNFSAdvancedSnapshotReadAndDomainSetContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExecuteNFSAdvancedSnapshotRead() error = %v", err)
 	}
-	if selection.Backend != "core-fileserv-nfs-advanced-v1" || snapshot.ReadSize != 8192 || snapshot.WriteSize != 8192 || !snapshot.UnixPermissions || !snapshot.EnableNFS || snapshot.Domain != "old.example" {
+	if selection.Backend != "core-fileserv-nfs-advanced-v1" || snapshot.Domain != "old.example" || snapshot.CustomPortEnable || snapshot.ReadSize != 8192 || snapshot.WriteSize != 16384 || !snapshot.UnixPermissions {
 		t.Fatalf("snapshot = %#v (selection %#v)", snapshot, selection)
 	}
 
+	// The AdvancedSetting set requires enable_nfs even though get omits it; the
+	// facade supplies the current base service state so the write preserves it.
 	snapshot.Domain = "new.example"
+	snapshot.EnableNFS = true
 	if _, _, err := ExecuteNFSAdvancedSet(context.Background(), target, executor, snapshot); err != nil {
 		t.Fatalf("ExecuteNFSAdvancedSet() error = %v", err)
 	}
-	want := map[string]any{
-		"enable_nfs": true, "custom_port_enable": false, "read_size": 8192, "write_size": 8192,
-		"unix_pri_enable": true, "statd_port": 0, "nlm_port": 0, "nfs_v4_domain": "new.example",
-	}
 	request := executor.requests[len(executor.requests)-1]
-	if request.API != NFSAdvancedAPIName || request.Method != "set" || !reflect.DeepEqual(request.JSONParameters, want) {
-		t.Fatalf("advanced set request = %#v, want parameters %#v", request, want)
+	if request.API != NFSAdvancedAPIName || request.Method != "set" {
+		t.Fatalf("advanced set request = %#v", request)
+	}
+	// Normalize through JSON to compare regardless of the raw-passthrough types.
+	encoded, err := json.Marshal(request.JSONParameters)
+	if err != nil {
+		t.Fatalf("marshal set parameters: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(encoded, &got); err != nil {
+		t.Fatalf("unmarshal set parameters: %v", err)
+	}
+	want := map[string]any{
+		"enable_nfs": true,
+		"custom_port_enable": false, "read_size": float64(8192), "write_size": float64(16384),
+		"unix_pri_enable": true, "statd_port": float64(0), "nlm_port": float64(0),
+		"nfs_v4_domain": "new.example",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("advanced set parameters = %#v, want %#v", got, want)
 	}
 }
 

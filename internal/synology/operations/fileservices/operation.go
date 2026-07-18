@@ -30,13 +30,13 @@ type NFSAdvancedState struct {
 	Domain string
 }
 
-// NFSAdvancedSnapshot is the complete NFS advanced-setting configuration DSM's
-// SYNO.Core.FileServ.NFS.AdvancedSetting get/set exchange. Writing any single
-// advanced field requires resubmitting this whole snapshot so no unspecified
-// field is reset, which is why WI-012 kept advanced writes fail-closed until
-// every preserved field had a typed home.
+// NFSAdvancedSnapshot is the SYNO.Core.FileServ.NFS.AdvancedSetting
+// configuration an advanced write must resubmit in full, so a change to one
+// field (today, the NFSv4 domain) never resets another. It is decoded and
+// re-encoded with the exact types the set method's validation requires: the
+// get response returns custom_port_enable as an integer, but the set demands a
+// boolean, so raw passthrough is not safe.
 type NFSAdvancedSnapshot struct {
-	EnableNFS        bool
 	CustomPortEnable bool
 	ReadSize         int
 	WriteSize        int
@@ -44,6 +44,12 @@ type NFSAdvancedSnapshot struct {
 	StatdPort        int
 	NLMPort          int
 	Domain           string
+	// EnableNFS is the current base NFS service state. The AdvancedSetting set
+	// requires enable_nfs and uses it as the service run flag
+	// (nfsAdv.cpp reads newData[enable_nfs].asBool()), yet the get response
+	// omits it. The facade fills this from the base NFS state so an advanced
+	// write preserves the service state instead of toggling it.
+	EnableNFS bool
 }
 
 type MutationResult struct {

@@ -33,8 +33,8 @@ func TestExportReadDecodesRules(t *testing.T) {
 	target := newTarget()
 	executor := &captureExecutor{responses: map[string]json.RawMessage{
 		APIName + ".load": json.RawMessage(`{"rule":[
-			{"id":"10.0.0.0/24","client":"10.0.0.0/24","privilege":"rw","root_squash":"root","security_flavor":"sys","async":true,"insecure":false,"crossmnt":true},
-			{"id":"*","client":"*","privilege":"ro","root_squash":"all_guest","security_flavor":"kerberos","async":false,"insecure":1,"crossmnt":0}
+			{"id":"10.0.0.0/24","client":"10.0.0.0/24","privilege":"rw","root_squash":"root","security_flavor":{"sys":true,"kerberos":false,"kerberos_integrity":false,"kerberos_privacy":false},"async":true,"insecure":false,"crossmnt":true},
+			{"id":"*","client":"*","privilege":"ro","root_squash":"all_guest","security_flavor":{"sys":false,"kerberos":true,"kerberos_integrity":false,"kerberos_privacy":false},"async":false,"insecure":1,"crossmnt":0}
 		]}`),
 	}}
 
@@ -82,8 +82,8 @@ func TestExportSaveRequestShape(t *testing.T) {
 		t.Fatalf("save rule param is not a JSON array: %v", err)
 	}
 	want := []map[string]any{
-		{"id": "10.0.0.0/24", "client": "10.0.0.0/24", "privilege": "rw", "root_squash": "admin", "security_flavor": "sys", "async": true, "insecure": true, "crossmnt": false},
-		{"id": "", "client": "192.168.1.5", "privilege": "ro", "root_squash": "root", "security_flavor": "kerberos_privacy", "async": false, "insecure": false, "crossmnt": true},
+		{"id": "10.0.0.0/24", "client": "10.0.0.0/24", "privilege": "rw", "root_squash": "admin", "security_flavor": map[string]any{"sys": true, "kerberos": false, "kerberos_integrity": false, "kerberos_privacy": false}, "async": true, "insecure": true, "crossmnt": false},
+		{"id": "", "client": "192.168.1.5", "privilege": "ro", "root_squash": "root", "security_flavor": map[string]any{"sys": false, "kerberos": false, "kerberos_integrity": false, "kerberos_privacy": true}, "async": false, "insecure": false, "crossmnt": true},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("save rule param = %#v, want %#v", got, want)

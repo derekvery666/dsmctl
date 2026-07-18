@@ -1,9 +1,9 @@
 ---
 id: WI-025
 title: Complete guarded NFS advanced-setting writes
-status: in_progress
+status: done
 priority: P1
-owner: "claude"
+owner: ""
 depends_on: [WI-012]
 parallel_group: C
 touches:
@@ -75,30 +75,32 @@ existing hash-bound plan/apply flow. This removes the WI-012 fail-closed on
       changed).
 - [x] CLI and MCP expose the NFSv4 domain write through the existing
       file-service plan/apply tools.
-- [ ] DSM 7.3.x read-only advanced `get` verification confirms the snapshot
-      field shape on a real NAS.
-- [x] No live advanced `set` ran without new explicit authorization.
+- [x] DSM 7.3.x advanced `get` and guarded `set` verified on a real NAS with
+      explicit user authorization.
+- [x] No live advanced `set` ran without new explicit authorization (the
+      2026-07-18 run was explicitly authorized and fully reverted).
 
-## Handoff
+## Completion record
 
-Implementation is complete and fully verified offline; only live DSM
-verification remains.
-
-- Done: full advanced snapshot type + strict decoder + full-snapshot encoder in
-  `internal/synology/operations/fileservices`; the advanced set backend variant
-  (`SYNO.Core.FileServ.NFS.AdvancedSetting` v1 set); read-merge-submit in
-  `internal/synology/controlpanel.go` `ApplyFileServiceChange`; and
-  `docs/control-panel.md`. The domain write reuses the WI-012 application, CLI,
-  and MCP plan/apply surface unchanged.
-- Verified: `go test ./...`, `go vet ./...`, both builds. New tests:
-  `TestNFSAdvancedSnapshotReadAndDomainSetContract`,
-  `TestNFSAdvancedSetSelectionAndFailClosed`,
-  `TestFileServiceNFSDomainPlanApply`,
-  `TestFileServiceNFSDomainRequiresAdvancedBackend`.
-- Pending: read-only advanced `get` on a real DSM 7.3.x NAS to confirm the
-  snapshot field names/types (evidence source: `webapi-NFS/src/nfsAdv.cpp`
-  defines and `synoc2-ansible/cms/ds_configure.sh`), then flip `status: done`.
-  No live advanced `set` is authorized yet.
+- Completed 2026-07-18: the NFSv4 domain is writable through the file-service
+  plan/apply flow over `SYNO.Core.FileServ.NFS.AdvancedSetting` v1; `set_advanced`
+  reports true when the backend is selected; the write reads the whole advanced
+  snapshot, overrides only the domain, and resubmits it.
+- Live DSM 7.3.2 verification (lab, explicitly authorized, fully reverted): set
+  the NFSv4 domain to a test value and restored it to empty, with the NFS
+  service left disabled and the domain empty afterward.
+- Live findings and fixes (the write returned code 2301 until corrected):
+  1. The AdvancedSetting `get` omits `enable_nfs`, but the `set` requires it and
+     uses it as the service run flag. The facade now supplies the current base
+     NFS service state so the write never toggles the service.
+  2. The `get` returns `custom_port_enable` as an integer, but the `set`
+     validation requires a boolean. The snapshot is now decoded to typed values
+     and re-encoded with the boolean types the set expects, rather than passed
+     through raw.
+  An earlier "NFSv4 must be enabled" plan guard was removed: it was based on a
+  wrong hypothesis (the domain write succeeds with NFS disabled once the payload
+  is correct).
+- Verified with `go test ./... -count=1`, `go vet ./...`, and both builds.
 
 ## Verification
 

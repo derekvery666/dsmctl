@@ -79,17 +79,26 @@ func encodeSquash(value nfsexport.Squash) (string, error) {
 	}
 }
 
-func encodeSecurity(value nfsexport.Security) (string, error) {
+// encodeSecurity renders the security flavor as the DSM boolean object with
+// exactly the selected flavor enabled. DSM requires at least one enabled.
+func encodeSecurity(value nfsexport.Security) (map[string]bool, error) {
+	flavor := map[string]bool{
+		"sys":                false,
+		"kerberos":           false,
+		"kerberos_integrity": false,
+		"kerberos_privacy":   false,
+	}
 	switch value {
 	case nfsexport.SecuritySys:
-		return "sys", nil
+		flavor["sys"] = true
 	case nfsexport.SecurityKerberos:
-		return "kerberos", nil
+		flavor["kerberos"] = true
 	case nfsexport.SecurityKerberosIntegrity:
-		return "kerberos_integrity", nil
+		flavor["kerberos_integrity"] = true
 	case nfsexport.SecurityKerberosPrivacy:
-		return "kerberos_privacy", nil
+		flavor["kerberos_privacy"] = true
 	default:
-		return "", fmt.Errorf("unsupported NFS export security flavor %q", value)
+		return nil, fmt.Errorf("unsupported NFS export security flavor %q", value)
 	}
+	return flavor, nil
 }

@@ -121,17 +121,17 @@ func decodeNFSAdvancedDomain(raw map[string]json.RawMessage) string {
 	return strings.TrimSpace(domain)
 }
 
-// decodeNFSAdvancedSnapshot strictly decodes the complete advanced snapshot so
-// an advanced write can preserve every field it does not change. The
-// packet-size and UNIX-permission fields are required because they are always
-// present in the DSM AdvancedSetting response; the custom-port fields are
-// optional because they are meaningful only when custom ports are enabled.
+// decodeNFSAdvancedSnapshot captures the raw advanced get response verbatim and
+// parses the NFSv4 domain. It deliberately does not require any particular field
+// because the DSM AdvancedSetting get response omits base-service fields such as
+// enable_nfs; the write path resubmits exactly the advanced fields DSM returned.
+// decodeNFSAdvancedSnapshot decodes the advanced get response into the types the
+// set method's validation requires. enable_nfs is intentionally not read here:
+// the get response omits it, and the facade supplies the current base service
+// state instead. requiredBool tolerates DSM returning booleans as integers,
+// which the AdvancedSetting get does for custom_port_enable.
 func decodeNFSAdvancedSnapshot(data json.RawMessage) (NFSAdvancedSnapshot, error) {
 	raw, err := decodeObject(data, "NFS advanced")
-	if err != nil {
-		return NFSAdvancedSnapshot{}, err
-	}
-	enableNFS, err := requiredBool(raw, "enable_nfs", "NFS advanced")
 	if err != nil {
 		return NFSAdvancedSnapshot{}, err
 	}
@@ -147,18 +147,13 @@ func decodeNFSAdvancedSnapshot(data json.RawMessage) (NFSAdvancedSnapshot, error
 	if err != nil {
 		return NFSAdvancedSnapshot{}, err
 	}
-	customPort := false
-	if value, ok := raw["custom_port_enable"]; ok {
-		if err := json.Unmarshal(value, &customPort); err != nil {
-			if parsed, boolErr := requiredBool(raw, "custom_port_enable", "NFS advanced"); boolErr == nil {
-				customPort = parsed
-			}
-		}
+	customPort, err := requiredBool(raw, "custom_port_enable", "NFS advanced")
+	if err != nil {
+		return NFSAdvancedSnapshot{}, err
 	}
 	statdPort, _ := optionalInt(raw, "statd_port")
 	nlmPort, _ := optionalInt(raw, "nlm_port")
 	return NFSAdvancedSnapshot{
-		EnableNFS:        enableNFS,
 		CustomPortEnable: customPort,
 		ReadSize:         readSize,
 		WriteSize:        writeSize,

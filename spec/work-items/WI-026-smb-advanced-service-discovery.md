@@ -121,7 +121,11 @@ advanced sub-slice is not started.
   `control-panel file-services discovery`, four MCP tools + read-only gating,
   and `docs/control-panel.md`.
 - Verified: `go test ./...`, `go vet ./...`, both builds; CLI tree and offline
-  empty-patch validation exercised through the built binary.
+  empty-patch validation exercised through the built binary. Live DSM 7.3.2
+  verification (lab, explicitly authorized, fully reverted 2026-07-18): toggled
+  SMB Time Machine advertising on then back off, with AFP advertising and
+  WS-Discovery preserved across the write — the service-discovery sub-slice is
+  live-verified and could be split into its own done work item.
 - Pending: read-only `get` for both `ServiceDiscovery` and `WSTransfer` on a
   real DSM 7.3.x NAS; then start the SMB advanced sub-slice, which extends the
   WI-012 `SYNO.Core.FileServ.SMB` snapshot (touches its decoder/encoder and the
