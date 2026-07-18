@@ -76,6 +76,7 @@ flowchart LR
 | [WI-033](work-items/WI-033-gateway-admin-ui-redesign.md) | P1 | `done` | G | WI-032 | Redesign the local Gateway administration UI as a polished, responsive NAS control application. |
 | [WI-034](work-items/WI-034-surveillance-station.md) | P2 | `done` | C | WI-019, WI-022, WI-029 | Read-only Surveillance Station module (system info + camera list), package-gated; installed via the dependency-aware CLI installer. |
 | [WI-035](work-items/WI-035-mcp-server-product-copy.md) | P1 | `done` | G | WI-033 | Add concise MCP Server product copy in English, Traditional Chinese, Simplified Chinese, Japanese, and German. |
+| [WI-036](work-items/WI-036-surveillance-home-mode.md) | P2 | `done` | C | WI-034 | Guarded Surveillance Station Home Mode switch (on/off) via `SYNO.SurveillanceStation.HomeMode`; first Surveillance write, CLI + MCP, live-verified. |
 
 Parallel groups indicate likely file overlap. Items in different groups may run
 at the same time after checking their `touches` lists. Only one agent should

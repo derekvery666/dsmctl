@@ -46,11 +46,24 @@ type Cameras struct {
 	Cameras []Camera `json:"cameras" jsonschema:"Configured cameras reported by Surveillance Station"`
 }
 
+// HomeMode is the Surveillance Station Home Mode state. Home Mode switches the
+// system between the "home" and "away" recording/notification profiles.
+type HomeMode struct {
+	On bool `json:"on" jsonschema:"Whether Home Mode is currently on"`
+}
+
+// HomeModeChange patches Home Mode. A nil field preserves its current value.
+type HomeModeChange struct {
+	On *bool `json:"on,omitempty" jsonschema:"Turn Home Mode on or off"`
+}
+
 // Capabilities reports which Surveillance Station operations dsmctl exposes for
 // the installed package.
 type Capabilities struct {
-	Module     string          `json:"module" jsonschema:"Stable module name: surveillance"`
-	Package    PackageEvidence `json:"package" jsonschema:"Installed Surveillance Station package evidence"`
-	InfoRead   bool            `json:"info_read" jsonschema:"Whether system info can be read"`
-	CameraRead bool            `json:"camera_read" jsonschema:"Whether the camera list can be read"`
+	Module       string          `json:"module" jsonschema:"Stable module name: surveillance"`
+	Package      PackageEvidence `json:"package" jsonschema:"Installed Surveillance Station package evidence"`
+	InfoRead     bool            `json:"info_read" jsonschema:"Whether system info can be read"`
+	CameraRead   bool            `json:"camera_read" jsonschema:"Whether the camera list can be read"`
+	HomeModeRead bool            `json:"home_mode_read" jsonschema:"Whether Home Mode state can be read"`
+	HomeModeSet  bool            `json:"home_mode_set" jsonschema:"Whether Home Mode can be switched through guarded plan/apply"`
 }

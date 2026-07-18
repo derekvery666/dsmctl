@@ -23,6 +23,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/domain/servicediscovery"
 	"github.com/ychiu1211/dsmctl/internal/domain/share"
 	"github.com/ychiu1211/dsmctl/internal/domain/storage"
+	"github.com/ychiu1211/dsmctl/internal/domain/surveillance"
 	"github.com/ychiu1211/dsmctl/internal/domain/syslog"
 	"github.com/ychiu1211/dsmctl/internal/domain/tftpservice"
 	"github.com/ychiu1211/dsmctl/internal/synology"
@@ -353,6 +354,29 @@ type getSurveillanceInfoOutput struct {
 type getSurveillanceCamerasOutput struct {
 	NAS     string                       `json:"nas" jsonschema:"NAS profile used for the request"`
 	Cameras synology.SurveillanceCameras `json:"cameras" jsonschema:"Configured cameras reported by Surveillance Station"`
+}
+
+type getSurveillanceHomeModeOutput struct {
+	NAS      string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	HomeMode synology.SurveillanceHomeMode `json:"home_mode" jsonschema:"Surveillance Station Home Mode state"`
+}
+
+type planSurveillanceHomeModeChangeInput struct {
+	NAS     string                      `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request surveillance.HomeModeChange `json:"request" jsonschema:"Patch-only Home Mode intent"`
+}
+
+type planSurveillanceHomeModeChangeOutput struct {
+	Plan application.SurveillanceHomeModePlan `json:"plan" jsonschema:"Validated plan bound to the observed Home Mode state and approval hash"`
+}
+
+type applySurveillanceHomeModePlanInput struct {
+	Plan         application.SurveillanceHomeModePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_surveillance_home_mode_change"`
+	ApprovalHash string                              `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved Home Mode plan"`
+}
+
+type applySurveillanceHomeModePlanOutput struct {
+	Result application.SurveillanceHomeModeApplyResult `json:"result" jsonschema:"Home Mode mutation result after stale-state and postcondition checks"`
 }
 
 type getStorageInput struct {
@@ -1680,6 +1704,45 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getSurveillanceCamerasOutput{}, err
 		}
 		return nil, getSurveillanceCamerasOutput{NAS: result.NAS, Cameras: result.Cameras}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_surveillance_home_mode",
+		Title:       "Get Surveillance Home Mode",
+		Description: "Read whether Surveillance Station Home Mode is currently on without changing DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getSurveillanceInput) (*mcp.CallToolResult, getSurveillanceHomeModeOutput, error) {
+		result, err := service.GetSurveillanceHomeMode(ctx, input.NAS)
+		if err != nil {
+			return nil, getSurveillanceHomeModeOutput{}, err
+		}
+		return nil, getSurveillanceHomeModeOutput{NAS: result.NAS, HomeMode: result.HomeMode}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_surveillance_home_mode_change",
+		Title:       "Plan a Surveillance Home Mode change",
+		Description: "Validate a patch-only Home Mode request, read the current state, and return a hash-bound approval plan. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planSurveillanceHomeModeChangeInput) (*mcp.CallToolResult, planSurveillanceHomeModeChangeOutput, error) {
+		plan, err := service.PlanSurveillanceHomeModeChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planSurveillanceHomeModeChangeOutput{}, err
+		}
+		return nil, planSurveillanceHomeModeChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_surveillance_home_mode_plan",
+		Title:       "Apply an approved Surveillance Home Mode plan",
+		Description: "Apply an unmodified Home Mode plan only while its approval hash and observed state still match, then verify the requested postcondition.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applySurveillanceHomeModePlanInput) (*mcp.CallToolResult, applySurveillanceHomeModePlanOutput, error) {
+		result, err := service.ApplySurveillanceHomeModePlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applySurveillanceHomeModePlanOutput{}, err
+		}
+		return nil, applySurveillanceHomeModePlanOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

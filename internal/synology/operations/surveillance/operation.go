@@ -73,7 +73,7 @@ var cameraOperation = compatibility.Operation[Input, surveillance.Cameras]{
 	},
 }
 
-func APINames() []string { return []string{InfoAPIName, CameraAPIName} }
+func APINames() []string { return []string{InfoAPIName, CameraAPIName, HomeModeAPIName} }
 
 func SelectInfo(target compatibility.Target) (compatibility.Selection, error) {
 	_, selection, err := infoOperation.Select(target)

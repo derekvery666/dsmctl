@@ -12,6 +12,9 @@ import (
 type SurveillanceInfo = surveillance.Info
 type SurveillanceCameras = surveillance.Cameras
 type SurveillanceCapabilities = surveillance.Capabilities
+type SurveillanceHomeMode = surveillance.HomeMode
+type SurveillanceHomeModeChange = surveillance.HomeModeChange
+type SurveillanceHomeModeMutationResult = surveillanceops.HomeModeMutationResult
 
 func (c *Client) surveillanceEvidenceLocked() surveillance.PackageEvidence {
 	evidence := surveillance.PackageEvidence{ID: surveillanceops.PackageID}
@@ -64,6 +67,40 @@ func (c *Client) SurveillanceCameras(ctx context.Context) (SurveillanceCameras, 
 	return cameras, nil
 }
 
+// SurveillanceHomeMode reads the Surveillance Station Home Mode state.
+func (c *Client) SurveillanceHomeMode(ctx context.Context) (SurveillanceHomeMode, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, surveillanceops.APINames()...); err != nil {
+		return SurveillanceHomeMode{}, fmt.Errorf("prepare Surveillance target: %w", err)
+	}
+	mode, _, err := surveillanceops.ExecuteHomeModeRead(ctx, c.target, lockedExecutor{client: c})
+	if err != nil {
+		return SurveillanceHomeMode{}, surveillanceReadError("home mode", c.surveillanceEvidenceLocked(), err)
+	}
+	c.target.AddCapability(surveillanceops.HomeModeReadCapabilityName)
+	return mode, nil
+}
+
+// ApplySurveillanceHomeModeChange switches Home Mode on or off.
+func (c *Client) ApplySurveillanceHomeModeChange(ctx context.Context, change SurveillanceHomeModeChange) (SurveillanceHomeModeMutationResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if change.On == nil {
+		return SurveillanceHomeModeMutationResult{}, fmt.Errorf("home mode change has no fields")
+	}
+	if err := c.preparePackageScopedTargetLocked(ctx, surveillanceops.APINames()...); err != nil {
+		return SurveillanceHomeModeMutationResult{}, fmt.Errorf("prepare Surveillance mutation target: %w", err)
+	}
+	result, _, err := surveillanceops.ExecuteHomeModeSet(ctx, c.target, lockedExecutor{client: c}, *change.On)
+	if err != nil {
+		return SurveillanceHomeModeMutationResult{}, fmt.Errorf("apply Surveillance home mode: %w", err)
+	}
+	return result, nil
+}
+
 // SurveillanceCapabilities reports the Surveillance operations plus package evidence.
 func (c *Client) SurveillanceCapabilities(ctx context.Context) (SurveillanceCapabilities, CompatibilityReport, error) {
 	c.mu.Lock()
@@ -75,6 +112,8 @@ func (c *Client) SurveillanceCapabilities(ctx context.Context) (SurveillanceCapa
 	selectors := []func(compatibility.Target) (compatibility.Selection, error){
 		surveillanceops.SelectInfo,
 		surveillanceops.SelectCamera,
+		surveillanceops.SelectHomeModeRead,
+		surveillanceops.SelectHomeModeSet,
 	}
 	selections := make([]compatibility.Selection, 0, len(selectors))
 	for _, selectOperation := range selectors {
@@ -85,17 +124,24 @@ func (c *Client) SurveillanceCapabilities(ctx context.Context) (SurveillanceCapa
 		selections = append(selections, selection)
 	}
 	supported := func(index int) bool { return index < len(selections) && selections[index].Supported }
-	if supported(0) {
-		c.target.AddCapability(surveillanceops.InfoReadCapabilityName)
+	capabilityNames := []string{
+		surveillanceops.InfoReadCapabilityName,
+		surveillanceops.CameraReadCapabilityName,
+		surveillanceops.HomeModeReadCapabilityName,
+		surveillanceops.HomeModeSetCapabilityName,
 	}
-	if supported(1) {
-		c.target.AddCapability(surveillanceops.CameraReadCapabilityName)
+	for index, name := range capabilityNames {
+		if supported(index) {
+			c.target.AddCapability(name)
+		}
 	}
 	capabilities := SurveillanceCapabilities{
-		Module:     surveillance.ModuleName,
-		InfoRead:   supported(0),
-		CameraRead: supported(1),
-		Package:    c.surveillanceEvidenceLocked(),
+		Module:       surveillance.ModuleName,
+		InfoRead:     supported(0),
+		CameraRead:   supported(1),
+		HomeModeRead: supported(2),
+		HomeModeSet:  supported(3),
+		Package:      c.surveillanceEvidenceLocked(),
 	}
 	return capabilities, c.target.Report(selections...), nil
 }

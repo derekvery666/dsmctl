@@ -75,6 +75,29 @@ func TestCameraDecodesList(t *testing.T) {
 	}
 }
 
+func TestHomeModeReadAndSwitch(t *testing.T) {
+	target := surveillanceTarget("9.2.5-11979")
+	target.SetAPI(HomeModeAPIName, compatibility.APIInfo{Path: "entry.cgi", MinVersion: 1, MaxVersion: 1})
+	executor := &capturingExecutor{responses: map[string]json.RawMessage{
+		// Live GetInfo returns a large object; only "on" is consumed.
+		HomeModeAPIName: json.RawMessage(`{"on":false,"reason":0,"mode_schedule_on":true}`),
+	}}
+	mode, selection, err := ExecuteHomeModeRead(context.Background(), target, executor)
+	if err != nil {
+		t.Fatalf("ExecuteHomeModeRead() error = %v", err)
+	}
+	if selection.Backend != "surveillance-homemode-v1" || mode.On {
+		t.Fatalf("home mode = %#v (selection %#v)", mode, selection)
+	}
+	if _, _, err := ExecuteHomeModeSet(context.Background(), target, executor, true); err != nil {
+		t.Fatalf("ExecuteHomeModeSet() error = %v", err)
+	}
+	last := executor.requests[len(executor.requests)-1]
+	if last.Method != "Switch" || last.JSONParameters["on"] != true {
+		t.Fatalf("switch request = %#v", last)
+	}
+}
+
 func TestSelectFailsClosedWithoutPackage(t *testing.T) {
 	target := compatibility.NewTarget()
 	target.SetAPI(InfoAPIName, compatibility.APIInfo{Path: "entry.cgi", MinVersion: 1, MaxVersion: 8})
