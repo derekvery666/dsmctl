@@ -2,6 +2,7 @@ package config
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -33,6 +34,32 @@ func TestStoreRoundTripAndResolve(t *testing.T) {
 	loaded.NAS["lab"] = Profile{URL: "https://lab.example.test:5001", Username: "lab-user"}
 	if err := store.Save(loaded); err != nil {
 		t.Fatalf("second Save() error = %v", err)
+	}
+}
+
+// An empty configuration cannot be repaired with 'nas use', which only selects
+// among profiles that already exist. The first NAS has to be added.
+func TestResolveWithoutProfilesPointsToNASAdd(t *testing.T) {
+	cfg := New()
+	_, _, err := cfg.Resolve("")
+	if err == nil {
+		t.Fatal("Resolve() error = nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "nas add") {
+		t.Fatalf("Resolve() error = %q, want it to point at 'nas add'", err)
+	}
+}
+
+func TestResolveWithoutDefaultPointsToNASUse(t *testing.T) {
+	cfg := New()
+	cfg.NAS["office"] = Profile{URL: "https://office.example.test:5001"}
+	cfg.NAS["lab"] = Profile{URL: "https://lab.example.test:5001"}
+	_, _, err := cfg.Resolve("")
+	if err == nil {
+		t.Fatal("Resolve() error = nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "nas use") {
+		t.Fatalf("Resolve() error = %q, want it to point at 'nas use'", err)
 	}
 }
 

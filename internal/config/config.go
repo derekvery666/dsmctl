@@ -166,6 +166,11 @@ func (c *Config) Resolve(requested string) (string, Profile, error) {
 		}
 	}
 	if name == "" {
+		// With nothing configured, 'nas use' has nothing to select from; the
+		// first profile has to be added before any NAS can be chosen.
+		if len(c.NAS) == 0 {
+			return "", Profile{}, errors.New("no NAS configured; add one with 'dsmctl nas add <name> --url https://nas.example.com:5001'")
+		}
 		return "", Profile{}, errors.New("no NAS selected; pass --nas or configure a default with 'dsmctl nas use <name>'")
 	}
 	profile, ok := c.NAS[name]
