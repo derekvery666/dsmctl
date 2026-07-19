@@ -35,11 +35,11 @@ func TestPageCarriesSharedDesignTokens(t *testing.T) {
 func TestPageLocalizesAllFiveLocales(t *testing.T) {
 	page := buildPage(testLoginURL, testDSMOrigin)
 	for _, want := range []string{
-		`"Sign in to DSM"`,
-		`"登入 DSM"`,
-		`"登录 DSM"`,
-		`"DSM にサインイン"`,
-		`"Bei DSM anmelden"`,
+		`"Sign in to {host}"`,
+		`"登入 {host}"`,
+		`"登录 {host}"`,
+		`"{host} にサインイン"`,
+		`"Bei {host} anmelden"`,
 		`normalizeLocale`,
 		`navigator.language`,
 		`"zh-Hant"`,
@@ -90,5 +90,8 @@ func TestPageShowsTargetNAS(t *testing.T) {
 	page := buildPage(testLoginURL, testDSMOrigin)
 	if !strings.Contains(page, `<p class="target">`+testDSMOrigin+`</p>`) {
 		t.Error("page must visibly name the NAS origin it signs in to")
+	}
+	if !strings.Contains(page, `<h1 data-i18n="heading">Sign in to nas.example.test</h1>`) {
+		t.Error("page heading must name the NAS host")
 	}
 }

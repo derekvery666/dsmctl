@@ -1,5 +1,7 @@
 package weblogin
 
+import "net/url"
+
 // buildPage renders the loopback helper page that hosts the DSM sign-in
 // popup and relays the one-time code to the local callback.
 //
@@ -13,7 +15,13 @@ package weblogin
 // the /callback HTTP status, never by injecting server response text.
 func buildPage(loginURL, dsmOrigin string) string {
 	// loginURL and dsmOrigin are produced internally from a validated base URL,
-	// so they are safe to embed in the JS string literals below.
+	// so they are safe to embed in the JS string literals below. The heading
+	// names the bare host; the target line keeps the full origin so scheme and
+	// port stay checkable.
+	host := dsmOrigin
+	if parsed, err := url.Parse(dsmOrigin); err == nil && parsed.Hostname() != "" {
+		host = parsed.Hostname()
+	}
 	return `<!doctype html>
 <html lang="en">
 <head>
@@ -109,7 +117,7 @@ h1{margin:0 0 6px;font-size:25px;letter-spacing:-.02em}
 <body data-state="waiting">
 <main class="card">
   <div class="brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="brand-copy"><strong>dsmctl</strong><span data-i18n="brandSub">DSM web sign-in</span></span></div>
-  <h1 data-i18n="heading">Sign in to DSM</h1>
+  <h1 data-i18n="heading">Sign in to ` + host + `</h1>
   <p class="target">` + dsmOrigin + `</p>
   <div class="status" role="status">
     <span class="dot" aria-hidden="true"></span>
@@ -129,19 +137,20 @@ h1{margin:0 0 6px;font-size:25px;letter-spacing:-.02em}
 <script>
 var loginUrl = "` + loginURL + `";
 var dsmOrigin = "` + dsmOrigin + `";
+var host = "` + host + `";
 var strings = {
-en:{brandSub:"DSM web sign-in",heading:"Sign in to DSM",waiting:"Opening the NAS sign-in window… if nothing appears, use the button.",exchanging:"Completing sign-in…",success:"Signed in. You can close this window and return to the terminal.",failure:"Sign-in failed. Return to the terminal for details.",button:"Open sign-in window",footPassword:"Password entered only on the NAS's own page",footCrypto:"PKCE + Noise-encrypted code exchange"},
-"zh-TW":{brandSub:"DSM 網頁登入",heading:"登入 DSM",waiting:"正在開啟 NAS 登入視窗…若沒有出現，請按下方按鈕。",exchanging:"正在完成登入…",success:"已登入。可以關閉此視窗，回到終端機。",failure:"登入失敗。請回到終端機查看詳細資訊。",button:"開啟登入視窗",footPassword:"密碼只在 NAS 自己的頁面輸入",footCrypto:"PKCE + Noise 加密的代碼交換"},
-"zh-CN":{brandSub:"DSM 网页登录",heading:"登录 DSM",waiting:"正在打开 NAS 登录窗口…若未出现，请点击下方按钮。",exchanging:"正在完成登录…",success:"已登录。可以关闭此窗口，回到终端。",failure:"登录失败。请回到终端查看详细信息。",button:"打开登录窗口",footPassword:"密码只在 NAS 自己的页面输入",footCrypto:"PKCE + Noise 加密的代码交换"},
-ja:{brandSub:"DSM ウェブサインイン",heading:"DSM にサインイン",waiting:"NAS のサインインウィンドウを開いています…表示されない場合は下のボタンを押してください。",exchanging:"サインインを完了しています…",success:"サインインしました。このウィンドウを閉じてターミナルに戻れます。",failure:"サインインに失敗しました。詳細はターミナルをご確認ください。",button:"サインインウィンドウを開く",footPassword:"パスワードは NAS 自身のページでのみ入力されます",footCrypto:"PKCE + Noise 暗号化によるコード交換"},
-de:{brandSub:"DSM-Web-Anmeldung",heading:"Bei DSM anmelden",waiting:"Das NAS-Anmeldefenster wird geöffnet … Falls nichts erscheint, nutzen Sie die Schaltfläche.",exchanging:"Anmeldung wird abgeschlossen …",success:"Angemeldet. Sie können dieses Fenster schließen und zum Terminal zurückkehren.",failure:"Anmeldung fehlgeschlagen. Details finden Sie im Terminal.",button:"Anmeldefenster öffnen",footPassword:"Passwort wird nur auf der Seite des NAS eingegeben",footCrypto:"Code-Austausch mit PKCE + Noise-Verschlüsselung"}
+en:{brandSub:"DSM web sign-in",heading:"Sign in to {host}",waiting:"Opening the NAS sign-in window… if nothing appears, use the button.",exchanging:"Completing sign-in…",success:"Signed in. You can close this window and return to the terminal.",failure:"Sign-in failed. Return to the terminal for details.",button:"Open sign-in window",footPassword:"Password entered only on the NAS's own page",footCrypto:"PKCE + Noise-encrypted code exchange"},
+"zh-TW":{brandSub:"DSM 網頁登入",heading:"登入 {host}",waiting:"正在開啟 NAS 登入視窗…若沒有出現，請按下方按鈕。",exchanging:"正在完成登入…",success:"已登入。可以關閉此視窗，回到終端機。",failure:"登入失敗。請回到終端機查看詳細資訊。",button:"開啟登入視窗",footPassword:"密碼只在 NAS 自己的頁面輸入",footCrypto:"PKCE + Noise 加密的代碼交換"},
+"zh-CN":{brandSub:"DSM 网页登录",heading:"登录 {host}",waiting:"正在打开 NAS 登录窗口…若未出现，请点击下方按钮。",exchanging:"正在完成登录…",success:"已登录。可以关闭此窗口，回到终端。",failure:"登录失败。请回到终端查看详细信息。",button:"打开登录窗口",footPassword:"密码只在 NAS 自己的页面输入",footCrypto:"PKCE + Noise 加密的代码交换"},
+ja:{brandSub:"DSM ウェブサインイン",heading:"{host} にサインイン",waiting:"NAS のサインインウィンドウを開いています…表示されない場合は下のボタンを押してください。",exchanging:"サインインを完了しています…",success:"サインインしました。このウィンドウを閉じてターミナルに戻れます。",failure:"サインインに失敗しました。詳細はターミナルをご確認ください。",button:"サインインウィンドウを開く",footPassword:"パスワードは NAS 自身のページでのみ入力されます",footCrypto:"PKCE + Noise 暗号化によるコード交換"},
+de:{brandSub:"DSM-Web-Anmeldung",heading:"Bei {host} anmelden",waiting:"Das NAS-Anmeldefenster wird geöffnet … Falls nichts erscheint, nutzen Sie die Schaltfläche.",exchanging:"Anmeldung wird abgeschlossen …",success:"Angemeldet. Sie können dieses Fenster schließen und zum Terminal zurückkehren.",failure:"Anmeldung fehlgeschlagen. Details finden Sie im Terminal.",button:"Anmeldefenster öffnen",footPassword:"Passwort wird nur auf der Seite des NAS eingegeben",footCrypto:"Code-Austausch mit PKCE + Noise-Verschlüsselung"}
 };
 function normalizeLocale(value){var input=String(value||"").toLowerCase();if(input.indexOf("zh-hant")===0||input.indexOf("zh-tw")===0||input.indexOf("zh-hk")===0)return "zh-TW";if(input.indexOf("zh")===0)return "zh-CN";if(input.indexOf("ja")===0)return "ja";if(input.indexOf("de")===0)return "de";return "en"}
 var locale = normalizeLocale(navigator.language);
 document.documentElement.lang = {"zh-TW":"zh-Hant","zh-CN":"zh-Hans",ja:"ja",de:"de",en:"en"}[locale];
 var table = strings[locale];
 for (var nodes = document.querySelectorAll("[data-i18n]"), i = 0; i < nodes.length; i++) {
-  nodes[i].textContent = table[nodes[i].getAttribute("data-i18n")];
+  nodes[i].textContent = table[nodes[i].getAttribute("data-i18n")].replace("{host}", host);
 }
 function setState(s){ document.body.setAttribute("data-state", s); }
 function start(){ window.open(loginUrl, "dsmctl_signin", "width=560,height=720"); }
