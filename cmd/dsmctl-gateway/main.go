@@ -122,7 +122,7 @@ func run(arguments []string, logger *slog.Logger) error {
 			application.WithSecretReferenceResolver(repository),
 			application.WithRemoteApplyAuthorizer(repository),
 		)
-		adminApplication, err := admin.New(admin.Options{Repository: repository, Manager: manager, PublicURL: *adminPublicURL})
+		adminApplication, err := admin.New(admin.Options{Repository: repository, Manager: manager, PublicURL: *adminPublicURL, Logger: logger})
 		if err != nil {
 			_ = service.Close(context.Background())
 			_ = repository.Close()

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -39,12 +40,16 @@ type Options struct {
 	PublicURL   string
 	Now         func() time.Time
 	SetupWindow time.Duration
+	// Logger receives server-side diagnostics for failures whose HTTP
+	// responses are deliberately redacted (DSM enrollment exchanges).
+	Logger *slog.Logger
 }
 
 type Handler struct {
 	repository    *state.Repository
 	manager       *runtime.Manager
 	publicURL     string
+	logger        *slog.Logger
 	now           func() time.Time
 	setupDeadline time.Time
 	setupAttempts *attemptLimiter
@@ -101,9 +106,13 @@ func New(options Options) (*Handler, error) {
 	if setupWindow < 0 {
 		return nil, errors.New("administrator setup window must not be negative")
 	}
+	logger := options.Logger
+	if logger == nil {
+		logger = slog.New(slog.NewJSONHandler(io.Discard, nil))
+	}
 	startedAt := now().UTC()
 	return &Handler{
-		repository: options.Repository, manager: options.Manager, publicURL: publicURL,
+		repository: options.Repository, manager: options.Manager, publicURL: publicURL, logger: logger,
 		now: now, setupDeadline: startedAt.Add(setupWindow),
 		setupAttempts: newAttemptLimiter(now, 10, time.Minute),
 		loginAttempts: newAttemptLimiter(now, 5, time.Minute),
@@ -909,6 +918,10 @@ func (h *Handler) passwordEnrollment(w http.ResponseWriter, req *http.Request, n
 		cancel()
 	}
 	if err != nil {
+		// Redacted response; err carries no credential material (the synology
+		// client formats redacted URLs and DSM error codes only).
+		h.logger.ErrorContext(req.Context(), "DSM rejected password enrollment",
+			"request_id", correlationID(req), "nas", name, "error", err)
 		writeError(w, http.StatusBadGateway, "DSM rejected password enrollment")
 		return
 	}
@@ -1039,11 +1052,15 @@ func (h *Handler) startWebLogin(w http.ResponseWriter, req *http.Request, name s
 	}
 	enrollment, start, err := weblogin.BeginEnrollment(profile.URL, opener+"/admin/", weblogin.Options{HTTPClient: runtime.HTTPClient(cfg.NAS[name])})
 	if err != nil {
+		h.logger.WarnContext(req.Context(), "DSM web-login start failed",
+			"request_id", correlationID(req), "nas", name, "error", err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	id, err := randomID()
 	if err != nil {
+		h.logger.ErrorContext(req.Context(), "create web-login enrollment failed",
+			"request_id", correlationID(req), "nas", name, "error", err)
 		writeError(w, http.StatusInternalServerError, "create enrollment")
 		return
 	}
@@ -1082,6 +1099,10 @@ func (h *Handler) completeWebLogin(w http.ResponseWriter, req *http.Request, nam
 	result, err := pending.Enrollment.Complete(req.Context(), input.Code, input.RS, input.State)
 	input.Code, input.RS = "", ""
 	if err != nil {
+		// The response is redacted; the cause (for example a TLS pinning
+		// failure) is only diagnosable from this server-side record.
+		h.logger.ErrorContext(req.Context(), "DSM web-login exchange failed",
+			"request_id", correlationID(req), "nas", name, "error", err)
 		writeError(w, http.StatusBadGateway, "DSM web-login exchange failed")
 		return
 	}

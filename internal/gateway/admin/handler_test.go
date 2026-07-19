@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -581,6 +582,110 @@ func TestAdminWebLoginEnrollmentStoresRenewableVaultSession(t *testing.T) {
 	replay := performJSON(handler, http.MethodPost, "/admin/api/profiles/web/weblogin/complete", string(completeBody), adminSession)
 	if replay.Code != http.StatusGone {
 		t.Fatalf("enrollment replay status = %d", replay.Code)
+	}
+}
+
+func TestWebLoginExchangeFailureIsLoggedServerSideAndRedacted(t *testing.T) {
+	dsm := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("DSM must not be reachable through a mismatched TLS pin")
+	}))
+	defer dsm.Close()
+	_, repository, manager, adminSession := newTestHandler(t)
+	defer manager.Close(context.Background())
+	var logs bytes.Buffer
+	handler, err := New(Options{Repository: repository, Manager: manager, PublicURL: "https://gateway.example", Logger: slog.New(slog.NewJSONHandler(&logs, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.CreateProfile(context.Background(), state.ProfileInput{
+		Name: "pinned-web", URL: dsm.URL,
+		TLSMode: state.TLSPinnedFingerprint, CertificateFingerprint: strings.Repeat("ab", 32),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	started := performJSON(handler, http.MethodPost, "/admin/api/profiles/pinned-web/weblogin/start", `{}`, adminSession)
+	if started.Code != http.StatusCreated {
+		t.Fatalf("start status = %d, body=%s", started.Code, started.Body.String())
+	}
+	var start struct {
+		EnrollmentID string `json:"enrollment_id"`
+		State        string `json:"state"`
+	}
+	if err := json.Unmarshal(started.Body.Bytes(), &start); err != nil {
+		t.Fatal(err)
+	}
+	oneTimeCode := "secret-one-time-code"
+	serverKey := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
+	completeBody, _ := json.Marshal(map[string]string{
+		"enrollment_id": start.EnrollmentID,
+		"code":          oneTimeCode,
+		"rs":            serverKey,
+		"state":         start.State,
+	})
+	request := httptest.NewRequest(http.MethodPost, "/admin/api/profiles/pinned-web/weblogin/complete", strings.NewReader(string(completeBody)))
+	request.Header.Set("Origin", "https://gateway.example")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(requestHeader, "1")
+	request.AddCookie(&http.Cookie{Name: administratorCookie, Value: adminSession})
+	request = request.WithContext(remotepolicy.WithCorrelationID(request.Context(), "weblogin-request-1"))
+	completed := httptest.NewRecorder()
+	handler.ServeHTTP(completed, request)
+	if completed.Code != http.StatusBadGateway {
+		t.Fatalf("complete status = %d, body=%s", completed.Code, completed.Body.String())
+	}
+	if body := completed.Body.String(); !strings.Contains(body, "DSM web-login exchange failed") || strings.Contains(body, "fingerprint") || strings.Contains(body, dsm.URL) {
+		t.Fatalf("web-login failure response must stay redacted: %s", body)
+	}
+	logText := logs.String()
+	if !strings.Contains(logText, "pinned SHA-256 fingerprint") || !strings.Contains(logText, `"nas":"pinned-web"`) || !strings.Contains(logText, `"request_id":"weblogin-request-1"`) {
+		t.Fatalf("web-login failure cause missing from server log: %s", logText)
+	}
+	for _, secret := range []string{oneTimeCode, serverKey, start.State} {
+		if strings.Contains(logText, secret) {
+			t.Fatalf("server log leaked web-login exchange material %q: %s", secret, logText)
+		}
+	}
+}
+
+func TestPasswordEnrollmentFailureIsLoggedServerSideAndRedacted(t *testing.T) {
+	dsm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		_ = req.ParseForm()
+		w.Header().Set("Content-Type", "application/json")
+		switch req.Form.Get("api") + "." + req.Form.Get("method") {
+		case "SYNO.API.Info.query":
+			fmt.Fprint(w, `{"success":true,"data":{"SYNO.API.Auth":{"path":"entry.cgi","minVersion":1,"maxVersion":7}}}`)
+		case "SYNO.API.Auth.login":
+			fmt.Fprint(w, `{"success":false,"error":{"code":400}}`)
+		default:
+			fmt.Fprint(w, `{"success":false,"error":{"code":102}}`)
+		}
+	}))
+	defer dsm.Close()
+	_, repository, manager, adminSession := newTestHandler(t)
+	defer manager.Close(context.Background())
+	var logs bytes.Buffer
+	handler, err := New(Options{Repository: repository, Manager: manager, PublicURL: "https://gateway.example", Logger: slog.New(slog.NewJSONHandler(&logs, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile, err := repository.CreateProfile(context.Background(), state.ProfileInput{Name: "reject", URL: dsm.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf(`{"account":"operator","expected_revision":%d,"password":"wrong-enrollment-password","otp":"654321"}`, profile.Revision)
+	response := performJSON(handler, http.MethodPost, "/admin/api/profiles/reject/credentials/password", body, adminSession)
+	if response.Code != http.StatusBadGateway {
+		t.Fatalf("enrollment status = %d, body=%s", response.Code, response.Body.String())
+	}
+	if responseBody := response.Body.String(); !strings.Contains(responseBody, "DSM rejected password enrollment") || strings.Contains(responseBody, "code 400") || strings.Contains(responseBody, "wrong-enrollment-password") {
+		t.Fatalf("password enrollment failure response must stay redacted: %s", responseBody)
+	}
+	logText := logs.String()
+	if !strings.Contains(logText, `"nas":"reject"`) || !strings.Contains(logText, "code 400") {
+		t.Fatalf("password enrollment failure cause missing from server log: %s", logText)
+	}
+	if strings.Contains(logText, "wrong-enrollment-password") || strings.Contains(logText, "654321") {
+		t.Fatalf("server log leaked an enrollment secret: %s", logText)
 	}
 }
 
