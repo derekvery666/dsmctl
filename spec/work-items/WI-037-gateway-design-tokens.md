@@ -95,8 +95,9 @@ tokenized UI image; WI-037 changes presentation only.
   passed setup, login, two-profile creation, Token creation, approval creation,
   every management view, logout, `/healthz`, and `/readyz`. No NAS connection
   or DSM mutation was performed.
-- Final mockups were captured for setup, login, overview, NAS, MCP access,
-  approvals, Audit, and administrator views. `go test ./... -count=1`,
+- Final mockups for setup, login, overview, NAS, MCP access, approvals, Audit,
+  and administrator views are versioned under `docs/assets/gateway-admin/`
+  and embedded in `docs/gateway-admin-guide.md`. `go test ./... -count=1`,
   `go vet ./...`, and `git diff --check` pass.
 
 ## Handoff
