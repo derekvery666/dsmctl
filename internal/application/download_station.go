@@ -525,9 +525,12 @@ func activeSettingsGroup(change downloadstation.SettingsChange) (string, error) 
 	if change.Global != nil {
 		groups = append(groups, "global")
 	}
+	if change.AutoExtraction != nil {
+		groups = append(groups, "auto_extraction")
+	}
 	switch len(groups) {
 	case 0:
-		return "", fmt.Errorf("settings change requires exactly one group patch (bt, ftp_http, rss, location, scheduler, global)")
+		return "", fmt.Errorf("settings change requires exactly one group patch (bt, ftp_http, rss, location, scheduler, global, auto_extraction)")
 	case 1:
 		return groups[0], nil
 	default:
@@ -621,6 +624,13 @@ func settingsGroupEffects(group string, change downloadstation.SettingsChange, o
 		}
 		noop, risk, warnings, summary := globalEffects(current, *change.Global)
 		return noop, risk, warnings, summary, nil
+	case "auto_extraction":
+		var current downloadstation.AutoExtractionSettings
+		if err := json.Unmarshal(observed, &current); err != nil {
+			return false, "", nil, nil, fmt.Errorf("decode observed auto-extraction settings: %w", err)
+		}
+		noop, summary := autoExtractionEffects(current, *change.AutoExtraction)
+		return noop, "medium", []string{}, summary, nil
 	default:
 		return false, "", nil, nil, fmt.Errorf("unsupported settings group %q", group)
 	}
@@ -675,6 +685,12 @@ func verifySettingsGroupPostcondition(ctx context.Context, client downloadStatio
 			return err
 		}
 		return verifyGlobalPostcondition(g, *change.Global)
+	case "auto_extraction":
+		var a downloadstation.AutoExtractionSettings
+		if err := json.Unmarshal(raw, &a); err != nil {
+			return err
+		}
+		return verifyAutoExtractionPostcondition(a, *change.AutoExtraction)
 	default:
 		return fmt.Errorf("unsupported settings group %q", group)
 	}
@@ -714,6 +730,65 @@ func verifyLocationPostcondition(current downloadstation.LocationSettings, patch
 	}
 	if patch.TorrentNzbWatchFolder != nil && current.TorrentNzbWatchFolder != *patch.TorrentNzbWatchFolder {
 		return fmt.Errorf("torrent_nzb_watch_folder mismatch")
+	}
+	return nil
+}
+
+// autoExtractionCurrentToLocal maps the read's unzip_location string to the
+// boolean the change uses: "current_folder" means extract to the archive's own
+// folder.
+func autoExtractionCurrentToLocal(current downloadstation.AutoExtractionSettings) bool {
+	return current.UnzipLocation == "current_folder"
+}
+
+func autoExtractionEffects(current downloadstation.AutoExtractionSettings, patch downloadstation.AutoExtractionSettingsChange) (bool, []string) {
+	summary := []string{}
+	changed := false
+	if patch.EnableUnzip != nil && *patch.EnableUnzip != current.EnableUnzip {
+		summary = append(summary, fmt.Sprintf("set auto-extraction to %t", *patch.EnableUnzip))
+		changed = true
+	}
+	if patch.CreateSubfolder != nil && *patch.CreateSubfolder != current.CreateSubfolder {
+		summary = append(summary, fmt.Sprintf("set create-subfolder to %t", *patch.CreateSubfolder))
+		changed = true
+	}
+	if patch.DeleteArchive != nil && *patch.DeleteArchive != current.DeleteArchive {
+		summary = append(summary, fmt.Sprintf("set delete-archive-after-extraction to %t", *patch.DeleteArchive))
+		changed = true
+	}
+	if patch.UnzipOverwrite != nil && *patch.UnzipOverwrite != current.UnzipOverwrite {
+		summary = append(summary, fmt.Sprintf("set overwrite-existing to %t", *patch.UnzipOverwrite))
+		changed = true
+	}
+	if patch.UnzipToLocal != nil && *patch.UnzipToLocal != autoExtractionCurrentToLocal(current) {
+		summary = append(summary, fmt.Sprintf("set extract-to-local-folder to %t", *patch.UnzipToLocal))
+		changed = true
+	}
+	if patch.UnzipToPath != nil && *patch.UnzipToPath != current.UnzipToPath {
+		summary = append(summary, fmt.Sprintf("set the extraction path to %q", *patch.UnzipToPath))
+		changed = true
+	}
+	return !changed, summary
+}
+
+func verifyAutoExtractionPostcondition(current downloadstation.AutoExtractionSettings, patch downloadstation.AutoExtractionSettingsChange) error {
+	if patch.EnableUnzip != nil && current.EnableUnzip != *patch.EnableUnzip {
+		return fmt.Errorf("enable_unzip mismatch")
+	}
+	if patch.CreateSubfolder != nil && current.CreateSubfolder != *patch.CreateSubfolder {
+		return fmt.Errorf("create_subfolder mismatch")
+	}
+	if patch.DeleteArchive != nil && current.DeleteArchive != *patch.DeleteArchive {
+		return fmt.Errorf("delete_archive mismatch")
+	}
+	if patch.UnzipOverwrite != nil && current.UnzipOverwrite != *patch.UnzipOverwrite {
+		return fmt.Errorf("unzip_overwrite mismatch")
+	}
+	if patch.UnzipToLocal != nil && autoExtractionCurrentToLocal(current) != *patch.UnzipToLocal {
+		return fmt.Errorf("unzip_location mismatch")
+	}
+	if patch.UnzipToPath != nil && current.UnzipToPath != *patch.UnzipToPath {
+		return fmt.Errorf("unzip_to_path is %q, want %q", current.UnzipToPath, *patch.UnzipToPath)
 	}
 	return nil
 }
@@ -890,6 +965,16 @@ func validateSettingsChangeShape(change downloadstation.SettingsChange) error {
 		g := change.Global
 		if g.DownloadVolume == nil && g.EmuleEnabled == nil && g.UnzipServiceEnabled == nil {
 			return fmt.Errorf("global settings patch has no fields")
+		}
+		return nil
+	case "auto_extraction":
+		a := change.AutoExtraction
+		if a.EnableUnzip == nil && a.CreateSubfolder == nil && a.DeleteArchive == nil &&
+			a.UnzipOverwrite == nil && a.UnzipToLocal == nil && a.UnzipToPath == nil {
+			return fmt.Errorf("auto_extraction settings patch has no fields")
+		}
+		if a.UnzipToPath != nil && strings.TrimSpace(*a.UnzipToPath) == "" && (a.UnzipToLocal == nil || !*a.UnzipToLocal) {
+			return fmt.Errorf("unzip_to_path must not be empty unless unzip_to_local is true")
 		}
 		return nil
 	default:

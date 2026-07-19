@@ -401,6 +401,30 @@ func TestDecodeLocationSettingsNormalizesNullSentinel(t *testing.T) {
 	}
 }
 
+func TestEncodeAutoExtractionChangeIsPartialAndNeverSendsPasswords(t *testing.T) {
+	// A partial set must send only the patched fields; unspecified fields
+	// (including passwords, which the read never returns) must be absent so the
+	// handler leaves them untouched.
+	local := true
+	v := encodeAutoExtractionChange(downloadstation.AutoExtractionSettingsChange{
+		DeleteArchive: boolPtr(true),
+		UnzipToLocal:  &local,
+	})
+	if got := v.Get("delete_archive"); got != "true" {
+		t.Fatalf("delete_archive = %q, want true", got)
+	}
+	if got := v.Get("unzip_location"); got != "true" {
+		t.Fatalf("unzip_location = %q, want true", got)
+	}
+	for _, absent := range []string{"passwords", "enable_unzip", "create_subfolder", "unzip_overwrite", "unzip_to_path"} {
+		if v.Has(absent) {
+			t.Fatalf("unspecified field %q must not be sent, got %q", absent, v.Get(absent))
+		}
+	}
+}
+
+func boolPtr(b bool) *bool { return &b }
+
 func TestAPINamesCoverLegacyAndSettings(t *testing.T) {
 	got := APINames()
 	want := []string{
