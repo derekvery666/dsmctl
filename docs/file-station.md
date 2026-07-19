@@ -142,4 +142,4 @@ MCP exposes the full surface: all reads, `get_filestation_file_content` (base64,
 `apply_filestation_plan` pair (create_folder, rename, copy, move, delete,
 compress, extract, upload, sharelink_create, sharelink_delete). The **read-only
 gateway** strips every write and the content-transfer tool. See
-[WI-044](../spec/work-items/WI-044-file-station.md).
+[WI-049](../spec/work-items/WI-049-file-station.md).

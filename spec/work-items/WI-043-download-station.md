@@ -41,18 +41,31 @@ are present on DSM 7.3; the legacy surface is simpler and version-stable).
   speed.
 - **Statistics** — `SYNO.DownloadStation.Statistic` (`getinfo`): aggregate
   download/upload speed.
+- **Settings** — the newer `SYNO.DownloadStation2.Settings.*` generation (all on
+  `entry.cgi`) composed into one detailed configuration: BT (ports, DHT, port
+  forwarding, preview, encryption, rate limits, max peers, seeding), eMule,
+  FTP/HTTP, NZB, auto-extraction, destination/watch-folder, RSS interval, and the
+  scheduler (raw 168-slot weekly bitmap). The NZB and archive-extraction
+  passwords are never decoded into the model.
 - Package-version gating on `DownloadStation` (>= 3.0, verified on 4.1.2) so a
   NAS without it fails closed with package evidence.
 
 ## Non-goals
 
-- Task mutations (`create` / `pause` / `resume` / `delete` / `edit`) — a guarded
-  plan/apply follow-on. `create` in particular makes the NAS fetch external
-  content, so it is deferred until scoped with the right guardrails.
-- RSS (`RSS.Site` / `RSS.Feed`), BT search (`BTSearch`), eMule search, and the
-  per-task BT/file/tracker/peer/NZB detail sub-resources.
-- The richer `SYNO.DownloadStation2.*` API generation.
-- Global config writes (`Info.setserverconfig`, `Schedule.setconfig`).
+- Task `edit` (rename / re-target an existing task) — the other four task
+  actions (create/pause/resume/delete) are implemented as guarded plan/apply.
+- RSS (`RSS.Site` / `RSS.Feed`), BT search (`BTSearch`), eMule search, eMule
+  server management, and the per-task BT/file/tracker/peer/NZB detail
+  sub-resources.
+- **Settings writes** for the groups that carry secrets or start services (Nzb,
+  AutoExtraction, eMule) — the BitTorrent, FTP/HTTP, RSS, Location, Scheduler,
+  and Global group `set`s are implemented via a group-dispatched plan/apply; the
+  remaining groups follow the same full-object read-merge-set pattern but need
+  credential-ref handling (Nzb/AutoExtraction passwords) or start a service
+  (eMule).
+- The task-management side of `SYNO.DownloadStation2.*` (`Task`, `Task.List`,
+  `Task.BT.*`); the read module uses only the `Settings.*` slice of that
+  generation plus the legacy Task list.
 
 ## Design constraints
 
@@ -74,9 +87,11 @@ are present on DSM 7.3; the legacy surface is simpler and version-stable).
 
 ## Acceptance criteria
 
-- [x] `download capabilities|service|tasks|statistics` (CLI) and the matching
-      `get_download_station_*` MCP tools return normalized state with package
-      evidence.
+- [x] `download capabilities|service|tasks|statistics|settings` (CLI) and the
+      matching `get_download_station_*` MCP tools return normalized state with
+      package evidence.
+- [x] `settings` composes the ten `DownloadStation2.Settings.*` reads, live-verified
+      on 4.1.2; NZB/archive passwords never surface (unit test asserts no leak).
 - [x] Package-gating: reads/selection fail closed without DownloadStation and
       below the 3.0 baseline; capabilities carry installed/version/running.
 - [x] Decoder + composition unit tests (service composes three reads; tolerant
@@ -84,8 +99,29 @@ are present on DSM 7.3; the legacy surface is simpler and version-stable).
 - [x] DSM 7.3 live verification: installed DownloadStation 4.1.2 via dsmctl
       guarded install; read capabilities (all three supported), service
       (4.1-5012, BT up cap 20 KB/s), empty task list, zero statistics.
-- [ ] Task write follow-on (guarded pause/resume/delete; create deferred) and a
-      live populated-task entry confirmation.
+- [x] Guarded task control (create / pause / resume / delete) via hash-bound
+      plan/apply, bound to the target tasks' stable identity, with per-action
+      postcondition verification and per-task failure surfacing; live-verified on
+      4.1.2 (create→pause→resume→delete round-trip, fully reverted), which also
+      confirmed the populated task-entry shape (uri/create_time added).
+- [x] Guarded settings write via a group-dispatched hash-bound plan/apply:
+      full-object read-merge-set (the DSM set is a full replace), bound to the
+      complete observed group, per-field postcondition; enabling BT port
+      forwarding is high risk. **BitTorrent, FTP/HTTP, RSS, Location, Scheduler,
+      and Global** groups implemented and live-verified on 4.1.2, each reverted:
+      BT max-upload+preview, FTP/HTTP max-conn, RSS interval (1440→720→1440),
+      Global auto-unzip toggle, Scheduler max-tasks (10→8→10), Location watch
+      folder enable→disable. Two DSM set quirks were confirmed against the
+      generated spec + C++ handlers and pinned by unit tests: the scheduler
+      `schedule` bitmap must be a quoted JSON string (an all-digit value parses
+      as a number → code 120), and `default_destination` is a per-user share
+      binding DSM cannot clear (empty is dropped; explicit empty is rejected 501)
+      so it is set-only/irreversible, while an unset watch folder reads back as
+      `(null)` and is normalized to empty so a set does not fail path validation
+      (code 522).
+- [ ] `edit` (rename/re-target) and settings writes for the groups that carry
+      secrets or start services (NZB and auto-extraction passwords via
+      credential-ref; eMule, which starts the eMule service).
 
 ## Verification
 

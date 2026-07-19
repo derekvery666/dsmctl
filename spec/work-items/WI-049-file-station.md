@@ -1,5 +1,5 @@
 ---
-id: WI-044
+id: WI-049
 title: FileStation module (full read/write)
 status: in_progress
 priority: P1
@@ -22,7 +22,7 @@ touches:
   - docs/file-station.md
 ---
 
-# WI-044 — FileStation module (full read/write)
+# WI-049 — FileStation module (full read/write)
 
 ## Outcome
 
@@ -162,7 +162,7 @@ any concurrent client-core change.
   - Binary transport (`filestation_transport.go`): `streamingClient` drops the
     30s timeout and JSON body cap while keeping pinned TLS; upload sends every
     parameter field before the file part (locked by an httptest test).
-  - MCP tool count is 109 (golden test in `server_test.go`). New read tools use
+  - MCP tool count is 114 (golden test in `server_test.go`). New read tools use
     the `get_` prefix so the remote read-scope classifier (`ToolScope`) recognizes
     them; `plan_/apply_filestation_*` and `get_filestation_file_content` are
     stripped from the read-only gateway.

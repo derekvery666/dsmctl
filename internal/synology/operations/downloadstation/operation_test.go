@@ -3,11 +3,24 @@ package downloadstation
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/ychiu1211/dsmctl/internal/domain/downloadstation"
 	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
 )
+
+type captureExecutor struct {
+	requests []compatibility.Request
+	response string
+}
+
+func (e *captureExecutor) Execute(_ context.Context, request compatibility.Request) (json.RawMessage, error) {
+	e.requests = append(e.requests, request)
+	return json.RawMessage(e.response), nil
+}
 
 type routeExecutor struct {
 	t      *testing.T
@@ -29,6 +42,13 @@ func dsTarget(packageVersion string) compatibility.Target {
 	target.SetAPI(ScheduleAPIName, compatibility.APIInfo{Path: "DownloadStation/schedule.cgi", MinVersion: 1, MaxVersion: 1})
 	target.SetAPI(StatisticAPIName, compatibility.APIInfo{Path: "DownloadStation/statistic.cgi", MinVersion: 1, MaxVersion: 1})
 	target.SetAPI(TaskAPIName, compatibility.APIInfo{Path: "DownloadStation/task.cgi", MinVersion: 1, MaxVersion: 3})
+	for _, api := range []string{
+		SettingsGlobalAPIName, SettingsBTAPIName, SettingsEmuleAPIName, SettingsEmuleLocationAPIName,
+		SettingsFtpHttpAPIName, SettingsNzbAPIName, SettingsAutoExtractionAPIName, SettingsLocationAPIName,
+		SettingsRssAPIName, SettingsSchedulerAPIName,
+	} {
+		target.SetAPI(api, compatibility.APIInfo{Path: "entry.cgi", MinVersion: 1, MaxVersion: 2})
+	}
 	if packageVersion != "" {
 		target.SetInstalledPackages([]compatibility.InstalledPackage{
 			{ID: PackageID, Version: compatibility.ParsePackageVersion(packageVersion), Running: true},
@@ -118,6 +138,187 @@ func TestStatisticsDecode(t *testing.T) {
 	}
 }
 
+func TestSettingsComposesAllGroups(t *testing.T) {
+	// Live shapes captured on Download Station 4.1.2-5012.
+	target := dsTarget("4.1.2-5012")
+	settings, selection, err := ExecuteSettings(context.Background(), target, routeExecutor{t: t, routes: map[string]string{
+		"SYNO.DownloadStation2.Settings.Global get":         `{"download_volume":"/volume1","enable_emule":false,"enable_unzip_service":false}`,
+		"SYNO.DownloadStation2.Settings.BT get":             `{"dht_port":6881,"enable_dht":true,"enable_port_forwarding":false,"enable_preview":true,"enable_seeding_auto_remove":false,"encrypt":"auto","max_download_rate":0,"max_peer":50,"max_upload_rate":20,"seeding_interval":0,"seeding_ratio":0,"tcp_port":16881}`,
+		"SYNO.DownloadStation2.Settings.Emule get":          `{"enable_emule":false}`,
+		"SYNO.DownloadStation2.Settings.Emule.Location get": `{"default_destination":"emule/incoming"}`,
+		"SYNO.DownloadStation2.Settings.FtpHttp get":        `{"enable_ftp_max_conn":false,"ftp_http_max_download_rate":0,"ftp_max_conn":3}`,
+		"SYNO.DownloadStation2.Settings.Nzb get":            `{"conn_per_download":2,"enable_auth":false,"enable_encryption":false,"enable_parchive":true,"enable_remove_parfiles":false,"max_download_rate":0,"port":119,"server":"","username":""}`,
+		"SYNO.DownloadStation2.Settings.AutoExtraction get": `{"create_subfolder":false,"delete_archive":false,"enable_unzip":false,"enable_unzip_service":false,"passwords":["secret"],"unzip_location":"current_folder","unzip_overwrite":false,"unzip_to_path":"","username":""}`,
+		"SYNO.DownloadStation2.Settings.Location get":       `{"default_destination":"downloads","enable_delete_torrent_nzb_watch":false,"enable_torrent_nzb_watch":false,"torrent_nzb_watch_folder":""}`,
+		"SYNO.DownloadStation2.Settings.Rss get":            `{"update_interval":1440}`,
+		"SYNO.DownloadStation2.Settings.Scheduler get":      `{"download_rate":0,"enable_schedule":false,"max_tasks":10,"max_tasks_limit":80,"order":"request","schedule":"1111","upload_rate":0}`,
+	}})
+	if err != nil {
+		t.Fatalf("ExecuteSettings() error = %v", err)
+	}
+	if !selection.Supported {
+		t.Fatalf("selection = %#v", selection)
+	}
+	if settings.Global.DownloadVolume != "/volume1" {
+		t.Fatalf("global = %#v", settings.Global)
+	}
+	if settings.BT.TCPPort != 16881 || settings.BT.DHTPort != 6881 || !settings.BT.EnableDHT || settings.BT.Encryption != "auto" || settings.BT.MaxUploadRate != 20 || settings.BT.MaxPeer != 50 {
+		t.Fatalf("bt = %#v", settings.BT)
+	}
+	if settings.Emule.Enabled || settings.Emule.DefaultDestination != "emule/incoming" {
+		t.Fatalf("emule = %#v", settings.Emule)
+	}
+	if settings.FtpHttp.MaxConn != 3 || settings.Nzb.Port != 119 || !settings.Nzb.EnableParchive {
+		t.Fatalf("ftphttp/nzb = %#v %#v", settings.FtpHttp, settings.Nzb)
+	}
+	// The archive password value must never surface; only the boolean does.
+	if !settings.AutoExtraction.PasswordConfigured {
+		t.Fatalf("auto-extraction password flag = %#v", settings.AutoExtraction)
+	}
+	if got := fmt.Sprintf("%#v", settings.AutoExtraction); strings.Contains(got, "secret") {
+		t.Fatalf("auto-extraction leaked the archive password: %s", got)
+	}
+	if settings.Location.DefaultDestination != "downloads" || settings.Rss.UpdateIntervalMinutes != 1440 {
+		t.Fatalf("location/rss = %#v %#v", settings.Location, settings.Rss)
+	}
+	if settings.Scheduler.MaxTasks != 10 || settings.Scheduler.MaxTasksLimit != 80 || settings.Scheduler.Order != "request" || settings.Scheduler.ScheduleBitmap != "1111" {
+		t.Fatalf("scheduler = %#v", settings.Scheduler)
+	}
+}
+
+func TestSettingsFailsClosedWithoutPackage(t *testing.T) {
+	target := dsTarget("")
+	if selection, err := SelectSettings(target); !compatibility.IsUnsupported(err) || selection.Supported {
+		t.Fatalf("SelectSettings without package = %#v, %v", selection, err)
+	}
+}
+
+func TestTaskWriteCreateCapturesParams(t *testing.T) {
+	target := dsTarget("4.1.2-5012")
+	exec := &captureExecutor{response: `{}`}
+	result, selection, err := ExecuteTaskWrite(context.Background(), target, exec, downloadstation.TaskChange{
+		Action: downloadstation.TaskActionCreate, URIs: []string{"http://x/a.zip", "http://x/b.zip"}, Destination: "Share",
+	})
+	if err != nil {
+		t.Fatalf("ExecuteTaskWrite(create) error = %v", err)
+	}
+	if !selection.Supported || result.Method != "create" || result.API != TaskAPIName {
+		t.Fatalf("result = %#v", result)
+	}
+	if len(exec.requests) != 1 {
+		t.Fatalf("requests = %#v", exec.requests)
+	}
+	req := exec.requests[0]
+	if req.Method != "create" || req.Parameters.Get("uri") != "http://x/a.zip,http://x/b.zip" || req.Parameters.Get("destination") != "Share" {
+		t.Fatalf("create request = %#v", req)
+	}
+}
+
+func TestTaskWriteControlCapturesParamsAndAffectedIDs(t *testing.T) {
+	target := dsTarget("4.1.2-5012")
+	for _, action := range []downloadstation.TaskAction{downloadstation.TaskActionPause, downloadstation.TaskActionResume} {
+		exec := &captureExecutor{response: `[{"id":"dbid_1","error":0},{"id":"dbid_2","error":0}]`}
+		result, _, err := ExecuteTaskWrite(context.Background(), target, exec, downloadstation.TaskChange{
+			Action: action, TaskIDs: []string{"dbid_1", "dbid_2"},
+		})
+		if err != nil {
+			t.Fatalf("ExecuteTaskWrite(%s) error = %v", action, err)
+		}
+		req := exec.requests[0]
+		if req.Method != string(action) || req.Parameters.Get("id") != "dbid_1,dbid_2" {
+			t.Fatalf("%s request = %#v", action, req)
+		}
+		if !reflect.DeepEqual(result.AffectedIDs, []string{"dbid_1", "dbid_2"}) {
+			t.Fatalf("%s affected = %#v", action, result.AffectedIDs)
+		}
+	}
+}
+
+func TestTaskWriteDeleteSendsForceComplete(t *testing.T) {
+	target := dsTarget("4.1.2-5012")
+	exec := &captureExecutor{response: `[{"id":"dbid_1","error":0}]`}
+	_, _, err := ExecuteTaskWrite(context.Background(), target, exec, downloadstation.TaskChange{
+		Action: downloadstation.TaskActionDelete, TaskIDs: []string{"dbid_1"}, ForceComplete: true,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteTaskWrite(delete) error = %v", err)
+	}
+	req := exec.requests[0]
+	if req.Method != "delete" || req.Parameters.Get("id") != "dbid_1" || req.Parameters.Get("force_complete") != "true" {
+		t.Fatalf("delete request = %#v", req)
+	}
+}
+
+func TestTaskWriteControlSurfacesPerIDFailure(t *testing.T) {
+	target := dsTarget("4.1.2-5012")
+	exec := &captureExecutor{response: `[{"id":"dbid_1","error":0},{"id":"dbid_2","error":404}]`}
+	_, _, err := ExecuteTaskWrite(context.Background(), target, exec, downloadstation.TaskChange{
+		Action: downloadstation.TaskActionPause, TaskIDs: []string{"dbid_1", "dbid_2"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "dbid_2 (error 404)") {
+		t.Fatalf("expected per-id failure, got %v", err)
+	}
+}
+
+func TestTaskWriteFailsClosedWithoutPackage(t *testing.T) {
+	target := dsTarget("")
+	if selection, err := SelectTaskWrite(target); !compatibility.IsUnsupported(err) || selection.Supported {
+		t.Fatalf("SelectTaskWrite without package = %#v, %v", selection, err)
+	}
+}
+
+func TestBTSetEncodesFullObject(t *testing.T) {
+	target := dsTarget("4.1.2-5012")
+	exec := &captureExecutor{response: `{}`}
+	result, selection, err := ExecuteBTSet(context.Background(), target, exec, downloadstation.BTSettings{
+		TCPPort: 16881, DHTPort: 6881, EnableDHT: true, EnablePortForwarding: false, EnablePreview: true,
+		Encryption: "auto", MaxDownloadRate: 0, MaxUploadRate: 20, MaxPeer: 50,
+		SeedingRatio: 0, SeedingInterval: 0, EnableSeedingAutoRemove: false,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteBTSet() error = %v", err)
+	}
+	if !selection.Supported || result.Method != "set" || result.Group != "bt" || result.API != SettingsBTAPIName {
+		t.Fatalf("result = %#v", result)
+	}
+	req := exec.requests[0]
+	want := map[string]string{
+		"tcp_port": "16881", "dht_port": "6881", "enable_dht": "true", "enable_port_forwarding": "false",
+		"enable_preview": "true", "encrypt": "auto", "max_download_rate": "0", "max_upload_rate": "20",
+		"max_peer": "50", "seeding_ratio": "0", "seeding_interval": "0", "enable_seeding_auto_remove": "false",
+	}
+	for key, value := range want {
+		if got := req.Parameters.Get(key); got != value {
+			t.Fatalf("set param %q = %q, want %q", key, got, value)
+		}
+	}
+}
+
+func TestSettingsWriteFailsClosedWithoutPackage(t *testing.T) {
+	target := dsTarget("")
+	if selection, err := SelectSettingsWrite(target); !compatibility.IsUnsupported(err) || selection.Supported {
+		t.Fatalf("SelectSettingsWrite without package = %#v, %v", selection, err)
+	}
+}
+
+func TestFtpHttpSetEncodesFullObject(t *testing.T) {
+	target := dsTarget("4.1.2-5012")
+	exec := &captureExecutor{response: `{}`}
+	result, _, err := ExecuteFtpHttpSet(context.Background(), target, exec, downloadstation.FtpHttpSettings{
+		MaxDownloadRate: 100, EnableMaxConn: true, MaxConn: 5,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteFtpHttpSet() error = %v", err)
+	}
+	if result.Group != "ftp_http" || result.Method != "set" {
+		t.Fatalf("result = %#v", result)
+	}
+	req := exec.requests[0]
+	if req.Parameters.Get("ftp_http_max_download_rate") != "100" || req.Parameters.Get("enable_ftp_max_conn") != "true" || req.Parameters.Get("ftp_max_conn") != "5" {
+		t.Fatalf("ftphttp set params = %#v", req.Parameters)
+	}
+}
+
 func TestFailsClosedWithoutPackage(t *testing.T) {
 	// APIs present but the package catalog does not contain DownloadStation.
 	target := dsTarget("")
@@ -163,9 +364,51 @@ func TestDecodersRejectMalformedShapes(t *testing.T) {
 	}
 }
 
-func TestAPINamesCoverLegacySurface(t *testing.T) {
+func TestEncodeSchedulerSettingsQuotesBitmapAndOmitsMaxTasksLimit(t *testing.T) {
+	// DSM's entry.cgi parses each form value as JSON, so the all-digit bitmap
+	// must be a quoted JSON string or it parses as a number and fails the
+	// Param.String check (code 120). max_tasks_limit is a get-only field and is
+	// not a set param, so it must not be sent.
+	v := encodeSchedulerSettings(downloadstation.SchedulerSettings{
+		MaxTasks:       8,
+		MaxTasksLimit:  80,
+		Order:          "request",
+		ScheduleBitmap: "1010",
+	})
+	if got := v.Get("schedule"); got != `"1010"` {
+		t.Fatalf("schedule = %q, want %q", got, `"1010"`)
+	}
+	if v.Has("max_tasks_limit") {
+		t.Fatalf("max_tasks_limit must not be sent on set, got %q", v.Get("max_tasks_limit"))
+	}
+	if got := v.Get("max_tasks"); got != "8" {
+		t.Fatalf("max_tasks = %q, want %q", got, "8")
+	}
+}
+
+func TestDecodeLocationSettingsNormalizesNullSentinel(t *testing.T) {
+	// DSM returns "(null)" for an unset watch folder; echoing that literal back
+	// on a set fails path validation (code 522), so the model must carry "".
+	got, err := decodeLocationSettings(json.RawMessage(`{"default_destination":"(null)","enable_torrent_nzb_watch":false,"enable_delete_torrent_nzb_watch":false,"torrent_nzb_watch_folder":"(null)"}`))
+	if err != nil {
+		t.Fatalf("decodeLocationSettings: %v", err)
+	}
+	if got.TorrentNzbWatchFolder != "" {
+		t.Fatalf("TorrentNzbWatchFolder = %q, want empty", got.TorrentNzbWatchFolder)
+	}
+	if got.DefaultDestination != "" {
+		t.Fatalf("DefaultDestination = %q, want empty", got.DefaultDestination)
+	}
+}
+
+func TestAPINamesCoverLegacyAndSettings(t *testing.T) {
 	got := APINames()
-	want := []string{InfoAPIName, ScheduleAPIName, StatisticAPIName, TaskAPIName}
+	want := []string{
+		InfoAPIName, ScheduleAPIName, StatisticAPIName, TaskAPIName,
+		SettingsGlobalAPIName, SettingsBTAPIName, SettingsEmuleAPIName, SettingsEmuleLocationAPIName,
+		SettingsFtpHttpAPIName, SettingsNzbAPIName, SettingsAutoExtractionAPIName, SettingsLocationAPIName,
+		SettingsRssAPIName, SettingsSchedulerAPIName,
+	}
 	if len(got) != len(want) {
 		t.Fatalf("APINames() = %#v", got)
 	}

@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"crypto/tls"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -61,6 +62,7 @@ type Client interface {
 	DownloadStationServiceState(ctx context.Context) (synology.DownloadStationServiceState, error)
 	DownloadStationTasks(ctx context.Context) (synology.DownloadStationTasks, error)
 	DownloadStationStatistics(ctx context.Context) (synology.DownloadStationStatistics, error)
+	DownloadStationSettings(ctx context.Context) (synology.DownloadStationSettings, error)
 	DownloadStationCapabilities(ctx context.Context) (synology.DownloadStationCapabilities, synology.CompatibilityReport, error)
 	FileStationCapabilities(ctx context.Context) (synology.FileStationCapabilities, synology.CompatibilityReport, error)
 	FileStationInfoState(ctx context.Context) (synology.FileStationService, error)
@@ -80,6 +82,9 @@ type Client interface {
 	FileStationFavoriteDelete(ctx context.Context, path string) error
 	FileStationSharingList(ctx context.Context) (synology.FileStationSharingLinks, error)
 	FileStationBackgroundTasks(ctx context.Context) (synology.FileStationBackgroundTasks, error)
+	ApplyDownloadStationTaskChange(ctx context.Context, change synology.DownloadStationTaskChange) (synology.DownloadStationTaskMutationResult, error)
+	DownloadStationSettingsGroup(ctx context.Context, group string) (json.RawMessage, error)
+	ApplyDownloadStationSettingsChange(ctx context.Context, change synology.DownloadStationSettingsChange) (synology.DownloadStationSettingsMutationResult, error)
 }
 
 type Option func(*Manager)

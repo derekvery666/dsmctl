@@ -38,6 +38,26 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/dsmctl-gateway ./cmd/dsmct
 
 On Windows, use `bin/dsmctl.exe` and `bin/dsmctl-mcp.exe`.
 
+## Release version
+
+The current release is `7.3.2-1`. dsmctl versions use
+`DSM_MAJOR.DSM_MINOR.DSM_PATCH-DSMCTL_BUILD`: `7.3.2` names the latest DSM
+feature train certified by the release, while `1` is the monotonically
+increasing dsmctl build within that train. CLI, stdio MCP, gateway container,
+and Synology SPK artifacts built from one revision carry the same full version.
+
+The compatibility train is a concise release-support label, not a global DSM
+API switch. A NAS on that train or an older supported release still receives
+operation-scoped backend selection from its advertised APIs; unavailable or
+unverified operations fail closed. Exact verified DSM builds remain listed in
+the relevant work items and distribution support matrix.
+
+```console
+dsmctl --version
+dsmctl-mcp --version
+dsmctl-gateway --version
+```
+
 ## Quick start
 
 Add a NAS profile:
@@ -114,6 +134,22 @@ dsmctl download capabilities --nas office
 dsmctl download service --nas office --json
 dsmctl download tasks --nas office
 dsmctl download statistics --nas office
+dsmctl download settings --nas office
+```
+
+Download tasks are created and controlled through the same guarded plan/apply
+contract (one action per request: create / pause / resume / delete):
+
+```console
+echo '{"action":"create","uris":["https://example.com/file.iso"],"destination":"Share"}' | dsmctl download tasks plan --nas office -o task.plan.json
+dsmctl download tasks apply --nas office -f task.plan.json --approve <hash-from-plan>
+```
+
+BitTorrent settings are changed the same way (patch-only, full-object merge):
+
+```console
+echo '{"bt":{"max_upload_rate":15}}' | dsmctl download settings plan --nas office -o bt.plan.json
+dsmctl download settings apply --nas office -f bt.plan.json --approve <hash-from-plan>
 ```
 
 The one External Access write so far is the QuickConnect relay toggle, through
@@ -258,6 +294,11 @@ Available tools:
 - `get_download_station_service`: read Download Station service configuration (version, destination, rate limits, schedule); read-only.
 - `get_download_station_tasks`: list Download Station download tasks with type, size, status, and transfer speed; read-only.
 - `get_download_station_statistics`: read the current aggregate download/upload speed; read-only.
+- `get_download_station_settings`: read the full detailed settings (BT, eMule, FTP/HTTP, NZB, auto-extraction, location, RSS, scheduler); passwords never returned; read-only.
+- `plan_download_station_task_change`: validate a task create/pause/resume/delete request and return a target-bound approval plan without mutating DSM.
+- `apply_download_station_task_plan`: apply an approved, unchanged task plan and verify the postcondition (created/paused/resumed/deleted).
+- `plan_download_station_settings_change`: validate a settings patch for exactly one group (BT, FTP/HTTP, RSS, location, scheduler, or global) and return a state-bound approval plan without mutating DSM.
+- `apply_download_station_settings_plan`: apply an approved, unchanged settings plan (full-object merge) and verify each changed field.
 - `plan_package_change`: validate a start/stop/uninstall lifecycle action or an automatic-update settings change and return a state-bound approval plan without mutating DSM; install, update, and trust-level changes are rejected.
 - `apply_package_plan`: apply an approved, unchanged Package Center plan (lifecycle or settings) and verify the terminal package-state or settings postcondition.
 

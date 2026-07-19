@@ -12,6 +12,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/domain/access"
 	"github.com/ychiu1211/dsmctl/internal/domain/controlpanel"
 	"github.com/ychiu1211/dsmctl/internal/domain/discovery"
+	"github.com/ychiu1211/dsmctl/internal/domain/downloadstation"
 	"github.com/ychiu1211/dsmctl/internal/domain/driveadmin"
 	"github.com/ychiu1211/dsmctl/internal/domain/externalaccess"
 	"github.com/ychiu1211/dsmctl/internal/domain/filestation"
@@ -318,6 +319,47 @@ type getFileStationSharingLinksOutput struct {
 type getFileStationBackgroundTasksOutput struct {
 	NAS   string                              `json:"nas" jsonschema:"NAS profile used for the request"`
 	Tasks synology.FileStationBackgroundTasks `json:"tasks" jsonschema:"Background file-operation tasks"`
+}
+
+type getDownloadStationSettingsOutput struct {
+	NAS      string                           `json:"nas" jsonschema:"NAS profile used for the request"`
+	Settings synology.DownloadStationSettings `json:"settings" jsonschema:"Full detailed Download Station configuration"`
+}
+
+type planDownloadStationTaskChangeInput struct {
+	NAS     string                     `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request downloadstation.TaskChange `json:"request" jsonschema:"Task create/pause/resume/delete intent"`
+}
+
+type planDownloadStationTaskChangeOutput struct {
+	Plan application.DownloadStationTaskPlan `json:"plan" jsonschema:"Validated plan bound to the observed target tasks and approval hash"`
+}
+
+type applyDownloadStationTaskPlanInput struct {
+	Plan         application.DownloadStationTaskPlan `json:"plan" jsonschema:"Approved task plan from plan_download_station_task_change"`
+	ApprovalHash string                              `json:"approval_hash" jsonschema:"Exact SHA-256 approval hash from the plan"`
+}
+
+type applyDownloadStationTaskPlanOutput struct {
+	Result application.DownloadStationTaskApplyResult `json:"result" jsonschema:"Apply outcome including the affected task ids"`
+}
+
+type planDownloadStationSettingsChangeInput struct {
+	NAS     string                         `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request downloadstation.SettingsChange `json:"request" jsonschema:"Patch-only settings intent (exactly one group: BT, FTP/HTTP, RSS, location, scheduler, or global)"`
+}
+
+type planDownloadStationSettingsChangeOutput struct {
+	Plan application.DownloadStationSettingsPlan `json:"plan" jsonschema:"Validated plan bound to the complete observed settings group and approval hash"`
+}
+
+type applyDownloadStationSettingsPlanInput struct {
+	Plan         application.DownloadStationSettingsPlan `json:"plan" jsonschema:"Approved settings plan from plan_download_station_settings_change"`
+	ApprovalHash string                                  `json:"approval_hash" jsonschema:"Exact SHA-256 approval hash from the plan"`
+}
+
+type applyDownloadStationSettingsPlanOutput struct {
+	Result application.DownloadStationSettingsApplyResult `json:"result" jsonschema:"Apply outcome including the selected DSM mutation backend"`
 }
 
 type planControlPanelTimeChangeInput struct {
@@ -1406,6 +1448,71 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, applyFileStationPlanOutput{}, err
 		}
 		return nil, applyFileStationPlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_download_station_settings",
+		Title:       "Get Download Station settings",
+		Description: "Read the full detailed Download Station configuration for a NAS: BitTorrent (ports, DHT, encryption, peers, seeding), eMule, FTP/HTTP, NZB, auto-extraction, destination/watch-folder, RSS, and the bandwidth scheduler. The NZB password and auto-extraction passwords are never returned. This tool never changes settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDownloadStationInput) (*mcp.CallToolResult, getDownloadStationSettingsOutput, error) {
+		result, err := service.GetDownloadStationSettings(ctx, input.NAS)
+		if err != nil {
+			return nil, getDownloadStationSettingsOutput{}, err
+		}
+		return nil, getDownloadStationSettingsOutput{NAS: result.NAS, Settings: result.Settings}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_download_station_task_change",
+		Title:       "Plan a Download Station task change",
+		Description: "Validate a task create/pause/resume/delete request and return an approval plan. Control actions are bound to the observed target tasks so an apply fails if a target has since disappeared. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planDownloadStationTaskChangeInput) (*mcp.CallToolResult, planDownloadStationTaskChangeOutput, error) {
+		plan, err := service.PlanDownloadStationTaskChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planDownloadStationTaskChangeOutput{}, err
+		}
+		return nil, planDownloadStationTaskChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_download_station_task_plan",
+		Title:       "Apply an approved Download Station task plan",
+		Description: "Apply an unmodified task plan only while its approval hash and observed target tasks still match, then verify the postcondition (created/paused/resumed/deleted). Creating or resuming makes the NAS fetch external content; deleting removes the task — these are high risk.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyDownloadStationTaskPlanInput) (*mcp.CallToolResult, applyDownloadStationTaskPlanOutput, error) {
+		result, err := service.ApplyDownloadStationTaskPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyDownloadStationTaskPlanOutput{}, err
+		}
+		return nil, applyDownloadStationTaskPlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_download_station_settings_change",
+		Title:       "Plan a Download Station settings change",
+		Description: "Validate a patch-only Download Station settings change affecting exactly one group and return an approval plan bound to the complete observed group state. Supported groups: BT (ports, DHT, port forwarding, preview, encryption, rate limits, max peers, seeding), FTP/HTTP (max download rate, per-task connection limit), RSS (feed refresh interval), location (default destination, torrent/NZB watch folder), scheduler (alternative-rate schedule, max tasks), and global (download volume, eMule and auto-extract toggles). Note that the default destination is a per-user binding DSM cannot clear once set. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planDownloadStationSettingsChangeInput) (*mcp.CallToolResult, planDownloadStationSettingsChangeOutput, error) {
+		plan, err := service.PlanDownloadStationSettingsChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planDownloadStationSettingsChangeOutput{}, err
+		}
+		return nil, planDownloadStationSettingsChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_download_station_settings_plan",
+		Title:       "Apply an approved Download Station settings plan",
+		Description: "Apply an unmodified settings plan only while its approval hash and the complete observed settings group still match, merging the patch into the full group object and verifying each changed field. Enabling port forwarding increases external exposure and is high risk.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyDownloadStationSettingsPlanInput) (*mcp.CallToolResult, applyDownloadStationSettingsPlanOutput, error) {
+		result, err := service.ApplyDownloadStationSettingsPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyDownloadStationSettingsPlanOutput{}, err
+		}
+		return nil, applyDownloadStationSettingsPlanOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
