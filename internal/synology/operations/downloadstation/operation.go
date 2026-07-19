@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strings"
 
 	"github.com/ychiu1211/dsmctl/internal/domain/downloadstation"
 	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
@@ -44,6 +45,7 @@ const (
 	TaskReadCapabilityName      = "download.task.read"
 	StatisticReadCapabilityName = "download.statistic.read"
 	SettingsReadCapabilityName  = "download.settings.read"
+	TaskWriteCapabilityName     = "download.task.write"
 )
 
 // baselinePackage gates every variant on Download Station 3.x+, covering the
@@ -212,6 +214,75 @@ func SelectSettings(target compatibility.Target) (compatibility.Selection, error
 
 func ExecuteSettings(ctx context.Context, target compatibility.Target, executor compatibility.Executor) (downloadstation.Settings, compatibility.Selection, error) {
 	return settingsOperation.Run(ctx, target, executor, Input{})
+}
+
+// taskWriteOp performs a guarded task mutation via the legacy Task API v1
+// (methods create/pause/resume/delete, params live-verified on 4.1.2).
+var taskWriteOp = compatibility.Operation[downloadstation.TaskChange, downloadstation.TaskMutationResult]{
+	Name: TaskWriteCapabilityName,
+	Variants: []compatibility.Variant[downloadstation.TaskChange, downloadstation.TaskMutationResult]{
+		{
+			Name: "downloadstation-task-write-v1", API: TaskAPIName, Version: 1, Priority: 10,
+			Match: compatibility.All(compatibility.APIVersion(TaskAPIName, 1), baselinePackage),
+			Execute: func(ctx context.Context, executor compatibility.Executor, change downloadstation.TaskChange) (downloadstation.TaskMutationResult, error) {
+				result := downloadstation.TaskMutationResult{API: TaskAPIName, Version: 1, AffectedIDs: []string{}}
+				switch change.Action {
+				case downloadstation.TaskActionCreate:
+					params := url.Values{"uri": {strings.Join(change.URIs, ",")}}
+					if strings.TrimSpace(change.Destination) != "" {
+						params.Set("destination", strings.TrimSpace(change.Destination))
+					}
+					if _, err := executor.Execute(ctx, compatibility.Request{API: TaskAPIName, Version: 1, Method: "create", Parameters: params}); err != nil {
+						return downloadstation.TaskMutationResult{}, fmt.Errorf("call %s.create: %w", TaskAPIName, err)
+					}
+					result.Method = "create"
+					return result, nil
+				case downloadstation.TaskActionPause, downloadstation.TaskActionResume:
+					method := string(change.Action)
+					data, err := executor.Execute(ctx, compatibility.Request{API: TaskAPIName, Version: 1, Method: method, Parameters: url.Values{"id": {strings.Join(change.TaskIDs, ",")}}})
+					if err != nil {
+						return downloadstation.TaskMutationResult{}, fmt.Errorf("call %s.%s: %w", TaskAPIName, method, err)
+					}
+					affected, err := decodeTaskControlResult(data)
+					if err != nil {
+						return downloadstation.TaskMutationResult{}, err
+					}
+					result.Method, result.AffectedIDs = method, affected
+					return result, nil
+				case downloadstation.TaskActionDelete:
+					force := "false"
+					if change.ForceComplete {
+						force = "true"
+					}
+					data, err := executor.Execute(ctx, compatibility.Request{API: TaskAPIName, Version: 1, Method: "delete", Parameters: url.Values{"id": {strings.Join(change.TaskIDs, ",")}, "force_complete": {force}}})
+					if err != nil {
+						return downloadstation.TaskMutationResult{}, fmt.Errorf("call %s.delete: %w", TaskAPIName, err)
+					}
+					affected, err := decodeTaskControlResult(data)
+					if err != nil {
+						return downloadstation.TaskMutationResult{}, err
+					}
+					result.Method, result.AffectedIDs = "delete", affected
+					return result, nil
+				default:
+					return downloadstation.TaskMutationResult{}, fmt.Errorf("unsupported task action %q", change.Action)
+				}
+			},
+		},
+	},
+}
+
+func SelectTaskWrite(target compatibility.Target) (compatibility.Selection, error) {
+	_, selection, err := taskWriteOp.Select(target)
+	return selection, err
+}
+
+func ExecuteTaskWrite(ctx context.Context, target compatibility.Target, executor compatibility.Executor, change downloadstation.TaskChange) (downloadstation.TaskMutationResult, compatibility.Selection, error) {
+	result, selection, err := taskWriteOp.Run(ctx, target, executor, change)
+	if err == nil {
+		result.Backend = selection.Backend
+	}
+	return result, selection, err
 }
 
 func SelectService(target compatibility.Target) (compatibility.Selection, error) {

@@ -11,6 +11,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/domain/access"
 	"github.com/ychiu1211/dsmctl/internal/domain/controlpanel"
 	"github.com/ychiu1211/dsmctl/internal/domain/discovery"
+	"github.com/ychiu1211/dsmctl/internal/domain/downloadstation"
 	"github.com/ychiu1211/dsmctl/internal/domain/driveadmin"
 	"github.com/ychiu1211/dsmctl/internal/domain/externalaccess"
 	"github.com/ychiu1211/dsmctl/internal/domain/ftpservices"
@@ -174,6 +175,24 @@ type getDownloadStationStatisticsOutput struct {
 type getDownloadStationSettingsOutput struct {
 	NAS      string                           `json:"nas" jsonschema:"NAS profile used for the request"`
 	Settings synology.DownloadStationSettings `json:"settings" jsonschema:"Full detailed Download Station configuration"`
+}
+
+type planDownloadStationTaskChangeInput struct {
+	NAS     string                     `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request downloadstation.TaskChange `json:"request" jsonschema:"Task create/pause/resume/delete intent"`
+}
+
+type planDownloadStationTaskChangeOutput struct {
+	Plan application.DownloadStationTaskPlan `json:"plan" jsonschema:"Validated plan bound to the observed target tasks and approval hash"`
+}
+
+type applyDownloadStationTaskPlanInput struct {
+	Plan         application.DownloadStationTaskPlan `json:"plan" jsonschema:"Approved task plan from plan_download_station_task_change"`
+	ApprovalHash string                             `json:"approval_hash" jsonschema:"Exact SHA-256 approval hash from the plan"`
+}
+
+type applyDownloadStationTaskPlanOutput struct {
+	Result application.DownloadStationTaskApplyResult `json:"result" jsonschema:"Apply outcome including the affected task ids"`
 }
 
 type planControlPanelTimeChangeInput struct {
@@ -1033,6 +1052,32 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getDownloadStationSettingsOutput{}, err
 		}
 		return nil, getDownloadStationSettingsOutput{NAS: result.NAS, Settings: result.Settings}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_download_station_task_change",
+		Title:       "Plan a Download Station task change",
+		Description: "Validate a task create/pause/resume/delete request and return an approval plan. Control actions are bound to the observed target tasks so an apply fails if a target has since disappeared. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planDownloadStationTaskChangeInput) (*mcp.CallToolResult, planDownloadStationTaskChangeOutput, error) {
+		plan, err := service.PlanDownloadStationTaskChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planDownloadStationTaskChangeOutput{}, err
+		}
+		return nil, planDownloadStationTaskChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_download_station_task_plan",
+		Title:       "Apply an approved Download Station task plan",
+		Description: "Apply an unmodified task plan only while its approval hash and observed target tasks still match, then verify the postcondition (created/paused/resumed/deleted). Creating or resuming makes the NAS fetch external content; deleting removes the task — these are high risk.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyDownloadStationTaskPlanInput) (*mcp.CallToolResult, applyDownloadStationTaskPlanOutput, error) {
+		result, err := service.ApplyDownloadStationTaskPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyDownloadStationTaskPlanOutput{}, err
+		}
+		return nil, applyDownloadStationTaskPlanOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

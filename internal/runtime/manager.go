@@ -62,6 +62,7 @@ type Client interface {
 	DownloadStationStatistics(ctx context.Context) (synology.DownloadStationStatistics, error)
 	DownloadStationSettings(ctx context.Context) (synology.DownloadStationSettings, error)
 	DownloadStationCapabilities(ctx context.Context) (synology.DownloadStationCapabilities, synology.CompatibilityReport, error)
+	ApplyDownloadStationTaskChange(ctx context.Context, change synology.DownloadStationTaskChange) (synology.DownloadStationTaskMutationResult, error)
 }
 
 type Option func(*Manager)

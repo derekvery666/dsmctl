@@ -41,8 +41,34 @@ MCP exposes the same reads through `get_download_station_capabilities`,
 `get_download_station_statistics`, and `get_download_station_settings`. All are
 read-only.
 
-Field shapes are live-verified on Download Station 4.1.2. Everything writable —
-task mutations (create/pause/resume/delete/edit), settings writes — plus BT/eMule
-search, RSS management, and eMule server management are still out of scope for
-this read module; see
+## Guarded task control
+
+Download tasks are created and controlled through the same hash-bound plan/apply
+contract as the other modules. One request performs exactly one action —
+`create` (with `uris` and an optional `destination`), or `pause` / `resume` /
+`delete` (with `task_ids`):
+
+```console
+echo '{"action":"create","uris":["https://example.com/file.iso"],"destination":"Share"}' \
+  | dsmctl download tasks plan --nas office -o task.plan.json
+dsmctl download tasks apply --nas office -f task.plan.json --approve <hash-from-plan>
+
+echo '{"action":"pause","task_ids":["dbid_5"]}' | dsmctl download tasks plan --nas office -o pause.plan.json
+dsmctl download tasks apply --nas office -f pause.plan.json --approve <hash>
+```
+
+A control plan binds to the **stable identity** of the target tasks (id, title,
+type) — not their volatile transfer progress — so an apply fails cleanly if a
+target has since disappeared, while a download progressing does not invalidate
+the plan. Apply verifies the postcondition afterward: `create` confirms a task
+with a matching uri exists, `pause`/`resume` confirm the paused state, and
+`delete` confirms the task is gone. Per-task failures in DSM's response are
+surfaced, never silently dropped. `create` and `resume` make the NAS fetch
+external content and `delete` removes the task, so those are **high** risk;
+`pause` is medium. MCP exposes `plan_download_station_task_change` and
+`apply_download_station_task_plan` (excluded from the read-only gateway).
+
+Field shapes are live-verified on Download Station 4.1.2. Still out of scope:
+`edit` (rename/re-target a task), settings writes, BT/eMule search, RSS
+management, and eMule server management — see
 [WI-043](../spec/work-items/WI-043-download-station.md).

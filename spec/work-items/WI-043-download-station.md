@@ -52,9 +52,8 @@ are present on DSM 7.3; the legacy surface is simpler and version-stable).
 
 ## Non-goals
 
-- Task mutations (`create` / `pause` / `resume` / `delete` / `edit`) — a guarded
-  plan/apply follow-on. `create` in particular makes the NAS fetch external
-  content, so it is deferred until scoped with the right guardrails.
+- Task `edit` (rename / re-target an existing task) — the other four task
+  actions (create/pause/resume/delete) are implemented as guarded plan/apply.
 - RSS (`RSS.Site` / `RSS.Feed`), BT search (`BTSearch`), eMule search, eMule
   server management, and the per-task BT/file/tracker/peer/NZB detail
   sub-resources.
@@ -96,8 +95,12 @@ are present on DSM 7.3; the legacy surface is simpler and version-stable).
 - [x] DSM 7.3 live verification: installed DownloadStation 4.1.2 via dsmctl
       guarded install; read capabilities (all three supported), service
       (4.1-5012, BT up cap 20 KB/s), empty task list, zero statistics.
-- [ ] Task write follow-on (guarded pause/resume/delete; create deferred) and a
-      live populated-task entry confirmation.
+- [x] Guarded task control (create / pause / resume / delete) via hash-bound
+      plan/apply, bound to the target tasks' stable identity, with per-action
+      postcondition verification and per-task failure surfacing; live-verified on
+      4.1.2 (create→pause→resume→delete round-trip, fully reverted), which also
+      confirmed the populated task-entry shape (uri/create_time added).
+- [ ] `edit` (rename/re-target) and settings writes.
 
 ## Verification
 

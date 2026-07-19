@@ -11,8 +11,11 @@ import (
 
 type DownloadStationServiceState = downloadstation.ServiceState
 type DownloadStationTasks = downloadstation.Tasks
+type DownloadStationTask = downloadstation.Task
 type DownloadStationStatistics = downloadstation.Statistics
 type DownloadStationSettings = downloadstation.Settings
+type DownloadStationTaskChange = downloadstation.TaskChange
+type DownloadStationTaskMutationResult = downloadstation.TaskMutationResult
 type DownloadStationCapabilities = downloadstation.Capabilities
 
 func (c *Client) downloadStationEvidenceLocked() downloadstation.PackageEvidence {
@@ -106,6 +109,23 @@ func (c *Client) DownloadStationSettings(ctx context.Context) (DownloadStationSe
 	return settings, nil
 }
 
+// ApplyDownloadStationTaskChange performs a guarded task mutation (create,
+// pause, resume, or delete). The caller (application plan/apply) has already
+// validated the change and confirmed the target tasks.
+func (c *Client) ApplyDownloadStationTaskChange(ctx context.Context, change DownloadStationTaskChange) (DownloadStationTaskMutationResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, downloadstationops.APINames()...); err != nil {
+		return DownloadStationTaskMutationResult{}, fmt.Errorf("prepare Download Station mutation target: %w", err)
+	}
+	result, _, err := downloadstationops.ExecuteTaskWrite(ctx, c.target, lockedExecutor{client: c}, change)
+	if err != nil {
+		return DownloadStationTaskMutationResult{}, downloadStationReadError("task change", c.downloadStationEvidenceLocked(), err)
+	}
+	return result, nil
+}
+
 // DownloadStationCapabilities reports the Download Station reads plus package
 // evidence, each selected independently and gated on the installed package.
 func (c *Client) DownloadStationCapabilities(ctx context.Context) (DownloadStationCapabilities, CompatibilityReport, error) {
@@ -120,6 +140,7 @@ func (c *Client) DownloadStationCapabilities(ctx context.Context) (DownloadStati
 		downloadstationops.SelectTask,
 		downloadstationops.SelectStatistic,
 		downloadstationops.SelectSettings,
+		downloadstationops.SelectTaskWrite,
 	}
 	selections := make([]compatibility.Selection, 0, len(selectors))
 	for _, selectOperation := range selectors {
@@ -135,6 +156,7 @@ func (c *Client) DownloadStationCapabilities(ctx context.Context) (DownloadStati
 		downloadstationops.TaskReadCapabilityName,
 		downloadstationops.StatisticReadCapabilityName,
 		downloadstationops.SettingsReadCapabilityName,
+		downloadstationops.TaskWriteCapabilityName,
 	}
 	for index, name := range capabilityNames {
 		if supported(index) {
@@ -148,6 +170,7 @@ func (c *Client) DownloadStationCapabilities(ctx context.Context) (DownloadStati
 		TaskRead:      supported(1),
 		StatisticRead: supported(2),
 		SettingsRead:  supported(3),
+		TaskWrite:     supported(4),
 	}
 	return capabilities, c.target.Report(selections...), nil
 }

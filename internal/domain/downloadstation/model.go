@@ -56,18 +56,50 @@ type TaskTransfer struct {
 	SpeedUpload    int   `json:"speed_upload" jsonschema:"Current upload speed in bytes/s"`
 }
 
-// Task is one download task. Entry fields are decoded tolerantly: the NAS used
-// to model this type had no task, so only fields DSM returns are populated and
-// unknown extras are ignored.
+// Task is one download task. The shape is live-verified on Download Station
+// 4.1.2; unknown extra fields are ignored so the model tolerates version drift.
 type Task struct {
 	ID          string       `json:"id,omitempty" jsonschema:"Task identifier"`
 	Type        string       `json:"type,omitempty" jsonschema:"Download protocol: bt, http, ftp, emule, or nzb"`
 	Username    string       `json:"username,omitempty" jsonschema:"Owner of the task"`
 	Title       string       `json:"title,omitempty" jsonschema:"Task title"`
 	Size        int64        `json:"size" jsonschema:"Total size in bytes"`
-	Status      string       `json:"status,omitempty" jsonschema:"Task status, such as downloading, paused, finished, or error"`
+	Status      string       `json:"status,omitempty" jsonschema:"Task status, such as waiting, downloading, paused, finished, or error"`
 	Destination string       `json:"destination,omitempty" jsonschema:"Download destination, when reported"`
+	URI         string       `json:"uri,omitempty" jsonschema:"Source URI (URL or magnet), when reported"`
+	CreateTime  int64        `json:"create_time,omitempty" jsonschema:"Task creation time as a Unix timestamp, when reported"`
 	Transfer    TaskTransfer `json:"transfer" jsonschema:"Live transfer progress"`
+}
+
+// TaskAction is a guarded download-task mutation.
+type TaskAction string
+
+const (
+	TaskActionCreate TaskAction = "create"
+	TaskActionPause  TaskAction = "pause"
+	TaskActionResume TaskAction = "resume"
+	TaskActionDelete TaskAction = "delete"
+)
+
+// TaskChange is the intent for a guarded task mutation. Exactly one action is
+// performed. Create uses URIs (+ optional Destination); pause/resume/delete use
+// TaskIDs. Passwords for a protected source are supplied via a credential
+// reference, never inline (create only).
+type TaskChange struct {
+	Action        TaskAction `json:"action" jsonschema:"Task action: create, pause, resume, or delete"`
+	URIs          []string   `json:"uris,omitempty" jsonschema:"Source URIs (HTTP/HTTPS/FTP URL or magnet) for create"`
+	Destination   string     `json:"destination,omitempty" jsonschema:"Destination shared folder or path for create; omit to use the DSM default"`
+	TaskIDs       []string   `json:"task_ids,omitempty" jsonschema:"Target task identifiers for pause, resume, or delete"`
+	ForceComplete bool       `json:"force_complete,omitempty" jsonschema:"On delete, mark a moving/finishing task complete instead of removing partial data"`
+}
+
+// TaskMutationResult records the DSM backend and the affected task identifiers.
+type TaskMutationResult struct {
+	Backend     string   `json:"backend" jsonschema:"Selected DSM compatibility backend"`
+	API         string   `json:"api" jsonschema:"DSM WebAPI used for the change"`
+	Version     int      `json:"version" jsonschema:"DSM WebAPI version used for the change"`
+	Method      string   `json:"method" jsonschema:"DSM WebAPI method used for the change"`
+	AffectedIDs []string `json:"affected_ids" jsonschema:"Task identifiers the action acted on (control actions)"`
 }
 
 // Tasks is the download task list.
@@ -196,4 +228,5 @@ type Capabilities struct {
 	TaskRead      bool            `json:"task_read" jsonschema:"Whether the download task list can be read"`
 	StatisticRead bool            `json:"statistic_read" jsonschema:"Whether transfer statistics can be read"`
 	SettingsRead  bool            `json:"settings_read" jsonschema:"Whether the full detailed settings can be read"`
+	TaskWrite     bool            `json:"task_write" jsonschema:"Whether guarded task create/pause/resume/delete is available"`
 }

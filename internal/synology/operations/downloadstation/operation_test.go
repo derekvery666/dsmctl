@@ -4,11 +4,23 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/ychiu1211/dsmctl/internal/domain/downloadstation"
 	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
 )
+
+type captureExecutor struct {
+	requests []compatibility.Request
+	response string
+}
+
+func (e *captureExecutor) Execute(_ context.Context, request compatibility.Request) (json.RawMessage, error) {
+	e.requests = append(e.requests, request)
+	return json.RawMessage(e.response), nil
+}
 
 type routeExecutor struct {
 	t      *testing.T
@@ -178,6 +190,80 @@ func TestSettingsFailsClosedWithoutPackage(t *testing.T) {
 	target := dsTarget("")
 	if selection, err := SelectSettings(target); !compatibility.IsUnsupported(err) || selection.Supported {
 		t.Fatalf("SelectSettings without package = %#v, %v", selection, err)
+	}
+}
+
+func TestTaskWriteCreateCapturesParams(t *testing.T) {
+	target := dsTarget("4.1.2-5012")
+	exec := &captureExecutor{response: `{}`}
+	result, selection, err := ExecuteTaskWrite(context.Background(), target, exec, downloadstation.TaskChange{
+		Action: downloadstation.TaskActionCreate, URIs: []string{"http://x/a.zip", "http://x/b.zip"}, Destination: "Share",
+	})
+	if err != nil {
+		t.Fatalf("ExecuteTaskWrite(create) error = %v", err)
+	}
+	if !selection.Supported || result.Method != "create" || result.API != TaskAPIName {
+		t.Fatalf("result = %#v", result)
+	}
+	if len(exec.requests) != 1 {
+		t.Fatalf("requests = %#v", exec.requests)
+	}
+	req := exec.requests[0]
+	if req.Method != "create" || req.Parameters.Get("uri") != "http://x/a.zip,http://x/b.zip" || req.Parameters.Get("destination") != "Share" {
+		t.Fatalf("create request = %#v", req)
+	}
+}
+
+func TestTaskWriteControlCapturesParamsAndAffectedIDs(t *testing.T) {
+	target := dsTarget("4.1.2-5012")
+	for _, action := range []downloadstation.TaskAction{downloadstation.TaskActionPause, downloadstation.TaskActionResume} {
+		exec := &captureExecutor{response: `[{"id":"dbid_1","error":0},{"id":"dbid_2","error":0}]`}
+		result, _, err := ExecuteTaskWrite(context.Background(), target, exec, downloadstation.TaskChange{
+			Action: action, TaskIDs: []string{"dbid_1", "dbid_2"},
+		})
+		if err != nil {
+			t.Fatalf("ExecuteTaskWrite(%s) error = %v", action, err)
+		}
+		req := exec.requests[0]
+		if req.Method != string(action) || req.Parameters.Get("id") != "dbid_1,dbid_2" {
+			t.Fatalf("%s request = %#v", action, req)
+		}
+		if !reflect.DeepEqual(result.AffectedIDs, []string{"dbid_1", "dbid_2"}) {
+			t.Fatalf("%s affected = %#v", action, result.AffectedIDs)
+		}
+	}
+}
+
+func TestTaskWriteDeleteSendsForceComplete(t *testing.T) {
+	target := dsTarget("4.1.2-5012")
+	exec := &captureExecutor{response: `[{"id":"dbid_1","error":0}]`}
+	_, _, err := ExecuteTaskWrite(context.Background(), target, exec, downloadstation.TaskChange{
+		Action: downloadstation.TaskActionDelete, TaskIDs: []string{"dbid_1"}, ForceComplete: true,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteTaskWrite(delete) error = %v", err)
+	}
+	req := exec.requests[0]
+	if req.Method != "delete" || req.Parameters.Get("id") != "dbid_1" || req.Parameters.Get("force_complete") != "true" {
+		t.Fatalf("delete request = %#v", req)
+	}
+}
+
+func TestTaskWriteControlSurfacesPerIDFailure(t *testing.T) {
+	target := dsTarget("4.1.2-5012")
+	exec := &captureExecutor{response: `[{"id":"dbid_1","error":0},{"id":"dbid_2","error":404}]`}
+	_, _, err := ExecuteTaskWrite(context.Background(), target, exec, downloadstation.TaskChange{
+		Action: downloadstation.TaskActionPause, TaskIDs: []string{"dbid_1", "dbid_2"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "dbid_2 (error 404)") {
+		t.Fatalf("expected per-id failure, got %v", err)
+	}
+}
+
+func TestTaskWriteFailsClosedWithoutPackage(t *testing.T) {
+	target := dsTarget("")
+	if selection, err := SelectTaskWrite(target); !compatibility.IsUnsupported(err) || selection.Supported {
+		t.Fatalf("SelectTaskWrite without package = %#v, %v", selection, err)
 	}
 }
 

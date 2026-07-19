@@ -190,7 +190,9 @@ type taskEntry struct {
 	Status     *string `json:"status"`
 	Additional *struct {
 		Detail *struct {
-			Destination *string `json:"destination"`
+			Destination *string   `json:"destination"`
+			URI         *string   `json:"uri"`
+			CreateTime  flexInt64 `json:"create_time"`
 		} `json:"detail"`
 		Transfer *struct {
 			SizeDownloaded flexInt64 `json:"size_downloaded"`
@@ -228,6 +230,8 @@ func (e taskEntry) toDomain() downloadstation.Task {
 	if e.Additional != nil {
 		if e.Additional.Detail != nil {
 			task.Destination = strings.TrimSpace(deref(e.Additional.Detail.Destination))
+			task.URI = strings.TrimSpace(deref(e.Additional.Detail.URI))
+			task.CreateTime = int64(e.Additional.Detail.CreateTime)
 		}
 		if e.Additional.Transfer != nil {
 			task.Transfer = downloadstation.TaskTransfer{
@@ -246,6 +250,36 @@ func deref(value *string) string {
 		return ""
 	}
 	return *value
+}
+
+// decodeTaskControlResult parses the [{id, error}] array returned by
+// pause/resume/delete. It collects the ids DSM accepted (error 0) and fails if
+// any id reported a non-zero error, so a partial failure is never silent.
+func decodeTaskControlResult(data json.RawMessage) ([]string, error) {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || trimmed[0] != '[' {
+		return nil, errors.New("decode task control result: expected an array")
+	}
+	var entries []struct {
+		ID    string `json:"id"`
+		Error int    `json:"error"`
+	}
+	if err := json.Unmarshal(trimmed, &entries); err != nil {
+		return nil, fmt.Errorf("decode task control result: %w", err)
+	}
+	affected := make([]string, 0, len(entries))
+	var failed []string
+	for _, entry := range entries {
+		if entry.Error != 0 {
+			failed = append(failed, fmt.Sprintf("%s (error %d)", entry.ID, entry.Error))
+			continue
+		}
+		affected = append(affected, entry.ID)
+	}
+	if len(failed) > 0 {
+		return affected, fmt.Errorf("DSM reported task action failures: %s", strings.Join(failed, ", "))
+	}
+	return affected, nil
 }
 
 func decodeGlobalSettings(data json.RawMessage) (downloadstation.GlobalSettings, error) {
