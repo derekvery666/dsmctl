@@ -6,6 +6,10 @@ to Synology DSM. Synology is the first packaged deployment adapter; the same
 container image must also run under ordinary Docker Engine or Podman on an
 amd64 Linux host.
 
+The user-visible product name is `dsmctl MCP Server` (WI-035). This
+specification keeps the `gateway` term for the transport, policy, and
+deployment layer it defines; the two names refer to the same artifact.
+
 ## Decision summary
 
 - The product is a single-owner gateway that manages multiple reachable
@@ -21,7 +25,8 @@ amd64 Linux host.
 - The gateway is LAN/VPN oriented. Automatic Internet exposure, QuickConnect,
   port forwarding, and public multi-tenant hosting are out of scope.
 - New remote credentials receive read-only access by default. Planning,
-  applying, and administration are separate scopes.
+  applying, and LAN discovery are separate scopes; gateway administration is
+  never an MCP scope.
 - High-risk applies require a short-lived, single-use approval recorded
   outside the MCP conversation. Echoing a plan hash is not operator approval.
 
@@ -144,8 +149,7 @@ A profile contains at least:
   "username": "automation",
   "timeout_seconds": 30,
   "tls_mode": "system_ca",
-  "certificate_fingerprint": "",
-  "tags": ["production"]
+  "certificate_fingerprint": ""
 }
 ```
 
@@ -215,17 +219,32 @@ Administration is separate from MCP authorization.
 ## Remote MCP authorization and approval
 
 MCP access tokens are random high-entropy bearer credentials. Only their
-digests are stored. A token has an expiry, revocation state, last-used time,
-NAS allowlist, and independent scopes:
+digests are stored. A token has an optional expiry, revocation state,
+last-used time, a NAS allowlist, and independent scopes:
 
 ```text
 nas.read
 nas.plan
 nas.apply
-nas.admin
+lan.discover
 ```
 
+`lan.discover` (renamed from the pre-release `nas.admin`; WI-038) admits only
+LAN device discovery. Its distinct prefix is deliberate: discovery reveals
+devices outside the caller's NAS allowlist, so it sits outside the
+allowlist-filtered `nas.*` family and must never become a container for other
+privileges. Gateway administration is performed only through the local
+administrator session and is never grantable to an MCP token.
+
 - New tokens default to `nas.read` only.
+- Allowlist entries are validated against existing profiles at issue time.
+  Deleting a NAS profile removes its name from every token allowlist in the
+  same transaction (WI-038); re-creating a profile under a deleted name never
+  silently restores prior remote access.
+- Remote tool calls that operate on a NAS name their target explicitly. An
+  omitted target is an error, never a default-profile fallback, so changing a
+  default cannot silently retarget a remote caller (WI-038). Default-profile
+  resolution remains a local CLI convenience.
 - `list_nas` and every result are filtered by the caller's NAS allowlist.
 - Tool registration annotations remain hints; policy enforcement happens
   before application execution and apply policy is rechecked at the gateway
@@ -240,6 +259,12 @@ and apply admission are atomic. Failed stale-state or postcondition checks do
 not make an old approval reusable. Local CLI/stdio behavior remains governed
 by the existing plan/apply contract and is not silently changed by HTTP policy.
 
+To remove manual transcription, the administration page also lists redacted
+pending high-risk plan requests containing the plan summary, risk, and binding
+fields (WI-038). These records are advisory: they never approve anything, MCP
+clients cannot see or create approvals through them, and the approval record
+above remains the only admission authority.
+
 ## Audit and observability
 
 Audit records contain timestamp, request/correlation ID, remote token ID or
@@ -248,7 +273,7 @@ applicable, stable resource identifier when available, outcome, and normalized
 error class. They never contain request secrets, raw authorization material,
 SynoTokens, SIDs, OTPs, or encrypted payloads.
 
-Audit retention defaults to 90 days with an administrator-configurable bound.
+Audit retention is fixed at 10,000 events and 30 days.
 Operational logs are separate from immutable audit events. Health and admin
 status report the gateway version, schema version, profile health summaries,
 and selected deployment mode without disclosing secret presence beyond the
@@ -339,8 +364,12 @@ approved under the repository safety policy.
    x86_64, including offline image preload and portal wiring.
 5. WI-032 replaces the pre-release bootstrap/platform-auth split with the same
    one-hour local-administrator setup and browser session model everywhere.
+6. WI-033, WI-035, and WI-037 delivered the redesigned multilingual
+   administration shell and design tokens; WI-038 streamlines the approval,
+   token-lifecycle, enrollment, and audit-review flows on top of the shipped
+   WI-016 policy model before WI-017 certifies the final UI.
 
-The production Synology package depends on all five items. Intermediate
+The production Synology package depends on all of the items above. Intermediate
 developer builds may expose read-only tools on generic Linux, but must be
 clearly labeled unsupported and must not enable remote apply.
 
