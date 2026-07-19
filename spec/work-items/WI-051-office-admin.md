@@ -1,5 +1,5 @@
 ---
-id: WI-050
+id: WI-051
 title: Synology Office settings module
 status: done
 priority: P2
@@ -17,7 +17,7 @@ touches:
   - docs/office.md
 ---
 
-# WI-050 — Synology Office settings module
+# WI-051 — Synology Office settings module
 
 ## Outcome
 

@@ -12,12 +12,15 @@ import (
 type DriveAdminStatus = driveadmin.ServiceStatus
 type DriveAdminConnections = driveadmin.Connections
 type DriveAdminTeamFolders = driveadmin.TeamFolders
+type DriveAdminTeamFolder = driveadmin.TeamFolder
 type DriveAdminLog = driveadmin.Log
 type DriveAdminLogQuery = driveadmin.LogQuery
 type DriveAdminCapabilities = driveadmin.Capabilities
 type DriveServerConfig = driveadmin.ServerConfig
 type DriveServerConfigChange = driveadmin.ServerConfigChange
 type DriveConfigMutationResult = driveops.ConfigMutationResult
+type DriveTeamFolderChange = driveadmin.TeamFolderChange
+type DriveTeamFolderMutationResult = driveops.TeamFolderMutationResult
 
 // driveAdminEvidenceLocked reports the installed SynologyDrive package as
 // observed by the catalog refresh that ran in preparePackageScopedTargetLocked.
@@ -149,6 +152,50 @@ func (c *Client) ApplyDriveServerConfigChange(ctx context.Context, change DriveS
 	result, _, err := driveops.ExecuteConfigSet(ctx, c.target, lockedExecutor{client: c}, input)
 	if err != nil {
 		return DriveConfigMutationResult{}, fmt.Errorf("apply Drive server config: %w", err)
+	}
+	return result, nil
+}
+
+// ApplyDriveTeamFolderChange performs one validated team-folder mutation. The
+// action-to-request mapping is mechanical: enable/disable set share_enable,
+// and versioning fields are forwarded only when the intent carries them so
+// DSM's own merge semantics apply to a versioning-only patch. Postcondition
+// verification stays with the caller, which re-reads the team-folder list.
+func (c *Client) ApplyDriveTeamFolderChange(ctx context.Context, change DriveTeamFolderChange) (DriveTeamFolderMutationResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, driveops.APINames()...); err != nil {
+		return DriveTeamFolderMutationResult{}, fmt.Errorf("prepare Drive Admin mutation target: %w", err)
+	}
+	input := driveops.TeamFolderSetInput{ShareName: change.Name}
+	switch change.Action {
+	case driveadmin.TeamFolderActionEnable:
+		enable := true
+		input.Enable = &enable
+		input.MaxVersions = change.MaxVersions
+		input.VersionPolicy = change.VersionPolicy
+		// Enable builds the view settings from scratch server-side, so the
+		// retention default is sent explicitly instead of relying on struct
+		// defaults inside the handler.
+		retention := 0
+		if change.RetentionDays != nil {
+			retention = *change.RetentionDays
+		}
+		input.RetentionDays = &retention
+	case driveadmin.TeamFolderActionDisable:
+		disable := false
+		input.Enable = &disable
+	case driveadmin.TeamFolderActionSetVersioning:
+		input.MaxVersions = change.MaxVersions
+		input.VersionPolicy = change.VersionPolicy
+		input.RetentionDays = change.RetentionDays
+	default:
+		return DriveTeamFolderMutationResult{}, fmt.Errorf("unsupported team-folder action %q", change.Action)
+	}
+	result, _, err := driveops.ExecuteTeamFoldersSet(ctx, c.target, lockedExecutor{client: c}, input)
+	if err != nil {
+		return DriveTeamFolderMutationResult{}, fmt.Errorf("apply Drive team-folder change: %w", err)
 	}
 	return result, nil
 }

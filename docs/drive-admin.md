@@ -10,9 +10,11 @@ range matches. Two NAS on the same DSM build with different Drive versions can
 therefore select different backends, and a Drive release older than the
 verified baseline fails closed instead of receiving untested requests.
 
-This slice is **read-only**: service status, active connections, team folders,
-and Drive server logs. Team-folder changes are modeled in capabilities but fail
-closed (see [Deferred operations](#deferred-operations)).
+The module covers the Admin Console reads — service status, active
+connections, team folders, and Drive server logs — plus two guarded writes:
+the server database configuration (vmtouch pair, WI-031) and team-folder
+enable/disable/versioning (WI-050). Everything else stays deferred (see
+[Deferred operations](#deferred-operations)).
 
 ## Capabilities and package evidence
 
@@ -51,8 +53,11 @@ dsmctl drive admin log list --nas office --username alice --keyword report --fro
 - `connections` lists active Drive client sessions with the user, device,
   client type, and address fields Drive reports.
 - `team-folders` lists shared folders from the admin team-folder view: the
-  name, whether each is enabled as a Drive team folder, and Drive's share
-  status. Drive's home entry appears as `homes/mydrive_home`.
+  name, whether each is enabled as a Drive team folder, Drive's share status,
+  the share type, and — for enabled team folders — the versioning settings
+  (kept versions, rotation policy `fifo`/`smart`, retention days). Drive
+  reports versioning fields as `"-"` on disabled folders; they surface as
+  absent. Drive's home entry appears as `homes/mydrive_home`.
 - `log list` reads Drive server logs. Keyword, username, team-folder scope,
   offset, and the Unix-seconds/`"2006-01-02 15:04:05"` time range are applied
   by Drive; the page size is bounded (default 100, maximum 1000). Drive stores
@@ -63,16 +68,51 @@ dsmctl drive admin log list --nas office --username alice --keyword report --fro
 MCP tools: `get_drive_admin_status`, `get_drive_admin_connections`,
 `get_drive_admin_team_folders`, `get_drive_admin_logs`.
 
+## Team folders (guarded write)
+
+Team-folder changes go through the standard hash-bound plan/apply contract,
+bound to the observed team-folder entry and package-gated like every other
+Drive operation. One plan changes one folder.
+
+```console
+echo '{"action":"enable","name":"team-data","max_versions":8,"version_policy":"smart","retention_days":0}' \
+  | dsmctl drive admin team-folders plan --nas office -o enable.plan.json
+dsmctl drive admin team-folders apply -f enable.plan.json --approve <hash>
+```
+
+- `enable` activates a shared folder as a team folder. `max_versions`
+  (0..32) is required because DSM refuses the enable without it; 0 turns
+  versioning off. While versioning is on, an explicit `version_policy`
+  (`fifo` rotates the earliest version, `smart` is Intelliversioning) is
+  required so the stored policy never depends on server defaults;
+  `retention_days` (0..120) defaults to 0 (keep versions until rotated).
+  Drive indexes the folder after enabling, which takes time and space on
+  large folders.
+- `disable` deactivates the team folder. **High risk and destructive**:
+  Drive deletes its team-folder database including stored file versions.
+  Files in the shared folder itself are not removed.
+- `set_versioning` patches `max_versions`, `version_policy`, and/or
+  `retention_days` on an enabled team folder; omitted fields keep their
+  current values (DSM merges them server-side). Reducing kept versions,
+  turning versioning off, or tightening retention prunes stored versions and
+  is high risk.
+
+The Drive home entry (`homes/mydrive*`) and the `surveillance` share are
+rejected: the former is managed by the DSM home service, and Drive silently
+ignores the latter. Drive answers `Share.set` with an empty success even when
+it skips an ineligible share, so apply verifies the postcondition by
+re-reading the team-folder list (with bounded retries while Drive converges)
+and returns an explicit not-yet-confirmed error instead of a false success.
+
+MCP: `plan_drive_team_folder_change` and `apply_drive_team_folder_plan`; the
+read-only gateway strips both.
+
 ## Deferred operations
 
-`drive.admin.teamfolders.set` (enable/disable team folders) is modeled so
-capabilities can name it, but it has **no backend and fails closed**
-(`team_folders_set: false`). The first verified Drive write will ship through
-the same hash-bound plan/apply contract used by Package Center, binding the
-plan to the observed team-folder state and the installed package version.
-Drive Config/settings writes, connection disconnection, index management, the
-end-user file API (`SYNO.SynologyDrive.Files`), sharing links, labels, and
-ShareSync are likewise out of scope for this slice.
+Connection disconnection, index management, the end-user file API
+(`SYNO.SynologyDrive.Files`), sharing links, labels, watermark/download
+restrictions (Advanced Features), node locking, and ShareSync are out of
+scope for this slice.
 
 ## DSM backends (verified live on Drive 4.0.3-27892)
 
@@ -91,7 +131,17 @@ version API surface):
 - Team folders: `SYNO.SynologyDrive.Share` `list` v1. The request is rejected
   (error 120) without paging and a valid sort column, so the backend always
   sends `offset`/`limit` with `sort_by: share_name`. Items expose `share_name`,
-  the `share_enable` activation flag, and `share_status`.
+  the `share_enable` activation flag, `share_status`, `share_type`, and — for
+  enabled entries — `rotate_cnt`/`rotate_policy`/`rotate_days` (reported as
+  `"-"` otherwise).
+- Team-folder set: `SYNO.SynologyDrive.Share` `set` v1 (POST, admin-only; the
+  target also advertises v2 with identical parameters). The `share` parameter
+  is a JSON array of per-share objects; dsmctl sends exactly one. An entry
+  with `share_enable` routes to the enable/disable path (enable requires
+  `rotate_cnt`; disable removes Drive's view database), and an entry without
+  it is a versioning-only patch merged from the stored settings. Confirmed in
+  the Drive server source (`handlers/share/set.cpp`, `handlers/share/list.cpp`
+  on the 4.0/4.1 release branches) and live-verified on the lab target.
 - Logs: `SYNO.SynologyDrive.Log` `list` v1. `target` is required: the
   all-scopes view is `share_type: all` with `target: user`, and one team
   folder is `share_type: share` with an `@`-prefixed shared-folder name.

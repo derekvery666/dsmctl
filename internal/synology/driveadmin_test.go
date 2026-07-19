@@ -113,8 +113,8 @@ func TestDriveAdminCapabilitiesReportPackageEvidence(t *testing.T) {
 	if !capabilities.StatusRead || !capabilities.ConnectionsRead || !capabilities.TeamFoldersRead || !capabilities.LogRead {
 		t.Fatalf("capabilities = %#v", capabilities)
 	}
-	if capabilities.TeamFoldersSet {
-		t.Fatal("team-folder set must fail closed in this slice")
+	if !capabilities.TeamFoldersSet {
+		t.Fatal("team-folder set must select the verified Share.set backend on Drive 4.0.3")
 	}
 	if !capabilities.Package.Installed || capabilities.Package.Version != "4.0.3-27892" {
 		t.Fatalf("package evidence = %#v", capabilities.Package)
