@@ -230,11 +230,11 @@ func TestPartialAdministratorRecordNeverReopensSetup(t *testing.T) {
 }
 
 func TestAdministratorPasswordMinimumCountsRunes(t *testing.T) {
-	if err := validateNewAdministratorPassword(strings.Repeat("界", 11)); err == nil {
-		t.Fatal("11-rune administrator password was accepted")
+	if err := validateNewAdministratorPassword(strings.Repeat("界", 7)); err == nil {
+		t.Fatal("7-rune administrator password was accepted")
 	}
-	if err := validateNewAdministratorPassword(strings.Repeat("界", 12)); err != nil {
-		t.Fatalf("12-rune administrator password = %v", err)
+	if err := validateNewAdministratorPassword(strings.Repeat("界", 8)); err != nil {
+		t.Fatalf("8-rune administrator password = %v", err)
 	}
 }
 

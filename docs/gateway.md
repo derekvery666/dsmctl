@@ -52,9 +52,14 @@ creates an expiring HttpOnly/SameSite browser session; the password is stored
 only as an Argon2id verifier. There is no setup code or long-lived
 administrator bearer token.
 
-Administrator passwords contain at least 12 Unicode characters. First-run
-setup shows both the absolute deadline and remaining time, and later password
-changes require the new password twice because there is no recovery path.
+Administrator passwords contain at least 8 Unicode characters; choosing a
+strong password is the operator's responsibility. First-run setup shows both
+the absolute deadline and remaining time, and later password changes require
+the new password twice because there is no recovery path. A forgotten
+administrator password cannot be recovered or reset: delete the gateway state
+data and reinstall the deployment, then run first-time setup again — every NAS
+profile, token, and audit record is removed. The login page states the same
+recovery path.
 
 An initialized unauthenticated browser sees the normal login page. The Gateway
 cannot determine whether that viewer was the installer. If the first visit is
@@ -75,9 +80,13 @@ screens navigation and tables scroll independently. The embedded page uses no
 CDN, remote font, translation service, or other external rendering asset.
 
 Add each NAS from the page using its permanent profile name, DSM URL, and one
-of two TLS policies: `system_ca`, or
-`pinned_fingerprint` with an explicitly confirmed SHA-256 leaf-certificate
-fingerprint. The DSM account is deliberately not guessed during profile
+of two TLS policies: `pinned_fingerprint` (the page default) with an explicitly
+confirmed SHA-256 leaf-certificate fingerprint, which works for any HTTPS DSM
+including self-signed certificates, or `system_ca` for CA-issued certificates.
+A pin authenticates exactly one leaf certificate, so any certificate change —
+including automatic Let's Encrypt renewals — fails the connection closed until
+the fingerprint is updated; CA-issued certificates should therefore use
+`system_ca`, which keeps validating across renewals. The DSM account is deliberately not guessed during profile
 creation. Password/OTP enrollment collects the account together with masked
 credentials and commits the verified account and encrypted credentials in one
 revision-checked transaction. Web Login likewise records the account that DSM

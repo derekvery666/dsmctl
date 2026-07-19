@@ -76,8 +76,8 @@ func normalizeAdministratorUsername(value string) (string, error) {
 }
 
 func validateNewAdministratorPassword(value string) error {
-	if utf8.RuneCountInString(value) < 12 || len(value) > 4096 {
-		return errors.New("administrator password must be at least 12 characters")
+	if utf8.RuneCountInString(value) < 8 || len(value) > 4096 {
+		return errors.New("administrator password must be at least 8 characters")
 	}
 	return nil
 }

@@ -450,7 +450,7 @@ func TestAdminUIHasNoEmbeddedCredential(t *testing.T) {
 		`--brand-500:#2588df`, `--brand-950:#0d263f`, `--slate-900:#162334`,
 		`--color-action:var(--brand-500)`, `--color-nav:var(--brand-950)`,
 		`data-locale-select`, `localStorage.getItem('dsmctl.locale')`, `dataset.i18nDiagnostics`,
-		`pointer-events:none`, `Mindestens 12 Zeichen`,
+		`pointer-events:none`, `Mindestens 8 Zeichen`,
 		`English`, `繁體中文`, `简体中文`, `日本語`, `Deutsch`, `MCP endpoint`, `/mcp`,
 		`value="lan.discover"`, `id="credentialDialog"`, `id="profileDialog"`, `id="approvalRequests"`, `id="auditRows"`, `confirm_new_password`,
 	} {
