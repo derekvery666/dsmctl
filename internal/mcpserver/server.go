@@ -994,6 +994,24 @@ type applyDriveConfigPlanOutput struct {
 	Result application.DriveConfigApplyResult `json:"result" jsonschema:"Drive config mutation result after stale-state and postcondition checks"`
 }
 
+type planDriveTeamFolderChangeInput struct {
+	NAS     string                      `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request driveadmin.TeamFolderChange `json:"request" jsonschema:"Team-folder intent: enable, disable, or set_versioning for one shared folder"`
+}
+
+type planDriveTeamFolderChangeOutput struct {
+	Plan application.DriveTeamFolderPlan `json:"plan" jsonschema:"Validated plan bound to the observed team-folder entry and approval hash"`
+}
+
+type applyDriveTeamFolderPlanInput struct {
+	Plan         application.DriveTeamFolderPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_drive_team_folder_change"`
+	ApprovalHash string                          `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved team-folder plan"`
+}
+
+type applyDriveTeamFolderPlanOutput struct {
+	Result application.DriveTeamFolderApplyResult `json:"result" jsonschema:"Team-folder mutation result after stale-state and postcondition checks"`
+}
+
 func New(service *application.Service, version string) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "dsmctl", Version: version}, nil)
 
@@ -2419,7 +2437,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_drive_admin_capabilities",
 		Title:       "Get Drive Admin capabilities",
-		Description: "Report which Synology Drive Admin operations dsmctl supports on the selected NAS, the backend selected for each, and the installed SynologyDrive package version and running state the selection used. The installed-package inventory is re-read first, so the evidence reflects this call. Team-folder changes are deferred and always report false.",
+		Description: "Report which Synology Drive Admin operations dsmctl supports on the selected NAS, the backend selected for each, and the installed SynologyDrive package version and running state the selection used. The installed-package inventory is re-read first, so the evidence reflects this call.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDriveAdminInput) (*mcp.CallToolResult, getDriveAdminCapabilitiesOutput, error) {
 		result, err := service.GetDriveAdminCapabilities(ctx, input.NAS)
@@ -2458,7 +2476,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_drive_admin_team_folders",
 		Title:       "List Drive team folders",
-		Description: "List Synology Drive team folders from the admin perspective with their reported status. This tool never enables, disables, or changes team folders.",
+		Description: "List Synology Drive team folders from the admin perspective: name, enabled flag, status, share type, and — for enabled team folders — the versioning settings (kept versions, rotation policy, retention days). This tool never enables, disables, or changes team folders; use plan_drive_team_folder_change for that.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDriveAdminInput) (*mcp.CallToolResult, getDriveAdminTeamFoldersOutput, error) {
 		result, err := service.GetDriveAdminTeamFolders(ctx, input.NAS)
@@ -2599,6 +2617,32 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, applyDriveConfigPlanOutput{}, err
 		}
 		return nil, applyDriveConfigPlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_drive_team_folder_change",
+		Title:       "Plan a Drive team-folder change",
+		Description: "Validate one Drive team-folder change — enable a shared folder as a team folder (max_versions required; version_policy fifo or smart required while versioning is on), disable it, or patch versioning on an enabled team folder — and return an approval plan bound to the observed entry. Disabling deletes Drive's team-folder database and stored versions (files remain) and reducing versioning prunes stored versions, so those plans are high risk. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planDriveTeamFolderChangeInput) (*mcp.CallToolResult, planDriveTeamFolderChangeOutput, error) {
+		plan, err := service.PlanDriveTeamFolderChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planDriveTeamFolderChangeOutput{}, err
+		}
+		return nil, planDriveTeamFolderChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_drive_team_folder_plan",
+		Title:       "Apply an approved Drive team-folder plan",
+		Description: "Apply an unmodified Drive team-folder plan only while its approval hash and the observed team-folder entry still match, then verify the postcondition against a re-read of the team-folder list with bounded retries. Drive silently skips ineligible shares, so a change Drive did not take effect returns an explicit not-yet-confirmed error instead of a false success.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyDriveTeamFolderPlanInput) (*mcp.CallToolResult, applyDriveTeamFolderPlanOutput, error) {
+		result, err := service.ApplyDriveTeamFolderPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyDriveTeamFolderPlanOutput{}, err
+		}
+		return nil, applyDriveTeamFolderPlanOutput{Result: result}, nil
 	})
 
 	return server

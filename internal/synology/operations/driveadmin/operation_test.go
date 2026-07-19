@@ -88,10 +88,86 @@ func TestSelectCarriesPackageVersionEvidence(t *testing.T) {
 	}
 }
 
-func TestTeamFoldersSetFailsClosed(t *testing.T) {
+func TestTeamFoldersSetSelectsVerifiedBackend(t *testing.T) {
 	selection, err := SelectTeamFoldersSet(driveTarget("4.0.3-27892", true))
-	if !compatibility.IsUnsupported(err) || selection.Supported {
-		t.Fatalf("team-folder set must fail closed, selection=%#v err=%v", selection, err)
+	if err != nil {
+		t.Fatalf("SelectTeamFoldersSet() error = %v", err)
+	}
+	if !selection.Supported || selection.Backend != "drive-share-v1" || selection.API != ShareAPIName {
+		t.Fatalf("selection = %#v", selection)
+	}
+
+	// Without the package (or below baseline) the write must fail closed.
+	if selection, err := SelectTeamFoldersSet(driveTarget("", false)); !compatibility.IsUnsupported(err) || selection.Supported {
+		t.Fatalf("team-folder set without the package must fail closed, selection=%#v err=%v", selection, err)
+	}
+	if selection, err := SelectTeamFoldersSet(driveTarget("2.0.4-11112", true)); !compatibility.IsUnsupported(err) || selection.Supported {
+		t.Fatalf("team-folder set below baseline must fail closed, selection=%#v err=%v", selection, err)
+	}
+}
+
+func TestExecuteTeamFoldersSetEnableRequestShape(t *testing.T) {
+	// The set handler answers success with an empty data object.
+	executor := &capturingExecutor{response: json.RawMessage(`{}`)}
+	enable := true
+	count, days := 8, 30
+	input := TeamFolderSetInput{ShareName: "projects", Enable: &enable, MaxVersions: &count, VersionPolicy: "smart", RetentionDays: &days}
+	result, _, err := ExecuteTeamFoldersSet(context.Background(), driveTarget("4.0.3-27892", true), executor, input)
+	if err != nil {
+		t.Fatalf("ExecuteTeamFoldersSet() error = %v", err)
+	}
+	if executor.request.API != ShareAPIName || executor.request.Version != 1 || executor.request.Method != "set" {
+		t.Fatalf("request = %#v", executor.request)
+	}
+	// Source-verified shape (handlers/share/set.cpp): the share parameter is an
+	// array of per-share objects; exactly one entry is sent per plan.
+	entries, ok := executor.request.JSONParameters["share"].([]map[string]any)
+	if !ok || len(entries) != 1 {
+		t.Fatalf("share parameter = %#v", executor.request.JSONParameters["share"])
+	}
+	entry := entries[0]
+	if entry["share_name"] != "projects" || entry["share_enable"] != true ||
+		entry["rotate_cnt"] != 8 || entry["rotate_policy"] != "smart" || entry["rotate_days"] != 30 {
+		t.Fatalf("entry = %#v", entry)
+	}
+	if result.API != ShareAPIName || result.Method != "set" || result.Backend != "drive-share-v1" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestExecuteTeamFoldersSetVersioningOnlyOmitsEnableFlag(t *testing.T) {
+	executor := &capturingExecutor{response: json.RawMessage(`{}`)}
+	count := 4
+	input := TeamFolderSetInput{ShareName: "projects", MaxVersions: &count}
+	if _, _, err := ExecuteTeamFoldersSet(context.Background(), driveTarget("4.0.3-27892", true), executor, input); err != nil {
+		t.Fatalf("ExecuteTeamFoldersSet() error = %v", err)
+	}
+	entries := executor.request.JSONParameters["share"].([]map[string]any)
+	entry := entries[0]
+	// Presence of share_enable routes the entry to the enable/disable path in
+	// the handler, so a versioning-only change must omit it entirely, along
+	// with the versioning fields the caller did not send.
+	for _, key := range []string{"share_enable", "rotate_policy", "rotate_days"} {
+		if _, present := entry[key]; present {
+			t.Fatalf("entry key %q should be omitted: %#v", key, entry)
+		}
+	}
+	if entry["rotate_cnt"] != 4 || entry["share_name"] != "projects" {
+		t.Fatalf("entry = %#v", entry)
+	}
+}
+
+func TestExecuteTeamFoldersSetDisableSendsOnlyEnableFlag(t *testing.T) {
+	executor := &capturingExecutor{response: json.RawMessage(`{}`)}
+	disable := false
+	input := TeamFolderSetInput{ShareName: "projects", Enable: &disable}
+	if _, _, err := ExecuteTeamFoldersSet(context.Background(), driveTarget("4.0.3-27892", true), executor, input); err != nil {
+		t.Fatalf("ExecuteTeamFoldersSet() error = %v", err)
+	}
+	entries := executor.request.JSONParameters["share"].([]map[string]any)
+	entry := entries[0]
+	if entry["share_name"] != "projects" || entry["share_enable"] != false || len(entry) != 2 {
+		t.Fatalf("entry = %#v", entry)
 	}
 }
 
@@ -161,10 +237,11 @@ func TestExecuteTeamFoldersRequestShapeAndDecode(t *testing.T) {
 	// the team-folder activation flag, and fields that do not apply to a
 	// disabled share are reported as "-".
 	executor := &capturingExecutor{response: json.RawMessage(`{
-		"total": 2,
+		"total": 3,
 		"items": [
-			{"share_name": "homes/mydrive_home", "share_enable": true, "share_status": "normal", "share_type": "", "rotate_cnt": 8},
-			{"share_name": "projects", "share_enable": false, "share_status": "normal", "share_type": "normal", "rotate_cnt": "-"}
+			{"share_name": "homes/mydrive_home", "share_enable": true, "share_status": "normal", "share_type": "", "rotate_cnt": 8, "rotate_policy": "smart", "rotate_days": 0},
+			{"share_name": "projects", "share_enable": false, "share_status": "normal", "share_type": "normal", "rotate_cnt": "-", "rotate_policy": "-", "rotate_days": 0},
+			{"share_name": "team-data", "share_enable": true, "share_status": "normal", "share_type": "normal", "rotate_cnt": 0, "rotate_policy": "-", "rotate_days": 0}
 		]
 	}`)}
 	folders, _, err := ExecuteTeamFolders(context.Background(), driveTarget("4.0.3-27892", true), executor)
@@ -179,14 +256,28 @@ func TestExecuteTeamFoldersRequestShapeAndDecode(t *testing.T) {
 	if parameters["offset"] != 0 || parameters["limit"] != teamFolderPageLimit || parameters["sort_by"] != "share_name" || parameters["sort_direction"] != "ASC" {
 		t.Fatalf("parameters = %#v", parameters)
 	}
-	if folders.Total != 2 || len(folders.TeamFolders) != 2 {
+	if folders.Total != 3 || len(folders.TeamFolders) != 3 {
 		t.Fatalf("folders = %#v", folders)
 	}
-	if folders.TeamFolders[0].Name != "homes/mydrive_home" || !folders.TeamFolders[0].Enabled || folders.TeamFolders[0].Status != "normal" {
-		t.Fatalf("first = %#v", folders.TeamFolders[0])
+	home := folders.TeamFolders[0]
+	if home.Name != "homes/mydrive_home" || !home.Enabled || home.Status != "normal" {
+		t.Fatalf("home = %#v", home)
 	}
-	if folders.TeamFolders[1].Name != "projects" || folders.TeamFolders[1].Enabled {
-		t.Fatalf("second = %#v", folders.TeamFolders[1])
+	if home.MaxVersions == nil || *home.MaxVersions != 8 || home.VersionPolicy != "smart" || home.RetentionDays == nil || *home.RetentionDays != 0 {
+		t.Fatalf("home versioning = %#v", home)
+	}
+	// Disabled shares report "-" for versioning fields, surfaced as absent.
+	disabled := folders.TeamFolders[1]
+	if disabled.Name != "projects" || disabled.Enabled || disabled.Type != "normal" {
+		t.Fatalf("disabled = %#v", disabled)
+	}
+	if disabled.MaxVersions != nil || disabled.VersionPolicy != "" || disabled.RetentionDays != nil {
+		t.Fatalf("disabled versioning should be absent: %#v", disabled)
+	}
+	// Enabled with versioning off: rotate_cnt 0 and policy "-".
+	off := folders.TeamFolders[2]
+	if off.MaxVersions == nil || *off.MaxVersions != 0 || off.VersionPolicy != "" {
+		t.Fatalf("versioning-off entry = %#v", off)
 	}
 }
 

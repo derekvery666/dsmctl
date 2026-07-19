@@ -221,7 +221,7 @@ func newDriveAdminTeamFoldersCommand(opts *options) *cobra.Command {
 	var jsonOutput bool
 	command := &cobra.Command{
 		Use:   "team-folders",
-		Short: "List Drive team folders from the admin perspective",
+		Short: "List Drive team folders and manage them through plan/apply",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			service, err := loadService(opts.configPath)
@@ -240,6 +240,67 @@ func newDriveAdminTeamFoldersCommand(opts *options) *cobra.Command {
 		},
 	}
 	command.Flags().BoolVar(&jsonOutput, "json", false, "output structured JSON")
+	command.AddCommand(
+		newDriveAdminTeamFoldersPlanCommand(opts),
+		newDriveAdminTeamFoldersApplyCommand(opts),
+	)
+	return command
+}
+
+func newDriveAdminTeamFoldersPlanCommand(opts *options) *cobra.Command {
+	var inputPath, outputPath string
+	command := &cobra.Command{
+		Use:   "plan",
+		Short: "Validate a team-folder change (enable, disable, set_versioning) and emit an approval plan",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var request driveadmin.TeamFolderChange
+			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
+				return fmt.Errorf("read team-folder change: %w", err)
+			}
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			plan, err := service.PlanDriveTeamFolderChange(cmd.Context(), opts.nas, request)
+			if err != nil {
+				return err
+			}
+			return encodeJSONOutput(cmd, outputPath, plan)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "team-folder change JSON file, or - for stdin")
+	command.Flags().StringVarP(&outputPath, "output", "o", "-", "plan JSON file, or - for stdout")
+	return command
+}
+
+func newDriveAdminTeamFoldersApplyCommand(opts *options) *cobra.Command {
+	var inputPath, approvalHash string
+	command := &cobra.Command{
+		Use:   "apply",
+		Short: "Apply a team-folder plan after hash and stale-state validation",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var plan application.DriveTeamFolderPlan
+			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
+				return fmt.Errorf("read team-folder plan: %w", err)
+			}
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.ApplyDriveTeamFolderPlan(cmd.Context(), plan, approvalHash)
+			if err != nil {
+				return err
+			}
+			return encodeIndentedJSON(cmd.OutOrStdout(), result)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "team-folder plan JSON file, or - for stdin")
+	command.Flags().StringVar(&approvalHash, "approve", "", "exact SHA-256 hash printed by the team-folder plan")
+	_ = command.MarkFlagRequired("approve")
 	return command
 }
 
@@ -363,9 +424,18 @@ func writeDriveAdminTeamFolders(cmd *cobra.Command, result application.DriveAdmi
 		fmt.Fprintln(writer, "No team folders reported.")
 		return writer.Flush()
 	}
-	fmt.Fprintln(writer, "\nNAME\tENABLED\tSTATUS")
+	fmt.Fprintln(writer, "\nNAME\tENABLED\tSTATUS\tTYPE\tVERSIONS\tPOLICY\tRETENTION")
 	for _, folder := range result.TeamFolders.TeamFolders {
-		fmt.Fprintf(writer, "%s\t%s\t%s\n", folder.Name, yesNo(folder.Enabled), valueOrDash(folder.Status))
+		versions, retention := "-", "-"
+		if folder.MaxVersions != nil {
+			versions = fmt.Sprintf("%d", *folder.MaxVersions)
+		}
+		if folder.RetentionDays != nil {
+			retention = fmt.Sprintf("%dd", *folder.RetentionDays)
+		}
+		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			folder.Name, yesNo(folder.Enabled), valueOrDash(folder.Status), valueOrDash(folder.Type),
+			versions, valueOrDash(folder.VersionPolicy), retention)
 	}
 	return writer.Flush()
 }

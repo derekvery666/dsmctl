@@ -56,8 +56,11 @@ func decodeConnections(data json.RawMessage) (driveadmin.Connections, error) {
 }
 
 // decodeTeamFolders reads Share.list. Verified live on Drive 4.0.3: items carry
-// share_name, the share_enable team-folder activation flag, and share_status
-// ("normal"); watermark and rotation settings stay unmodeled.
+// share_name, the share_enable team-folder activation flag, share_status
+// ("normal"), share_type, and — only while enabled — the versioning triple
+// rotate_cnt/rotate_policy/rotate_days. Fields that do not apply to an item
+// are reported as the literal string "-" and surface as absent; watermark and
+// download-restriction settings stay unmodeled.
 func decodeTeamFolders(data json.RawMessage) (driveadmin.TeamFolders, error) {
 	root, err := decodeObject(data, "Drive team folder list")
 	if err != nil {
@@ -74,11 +77,23 @@ func decodeTeamFolders(data json.RawMessage) (driveadmin.TeamFolders, error) {
 			return driveadmin.TeamFolders{}, fmt.Errorf("decode Drive team folder %d: no name field among %s", index, availableKeys(item))
 		}
 		enabled, _ := boolValue(item, "share_enable", "enabled")
-		result.TeamFolders = append(result.TeamFolders, driveadmin.TeamFolder{
+		folder := driveadmin.TeamFolder{
 			Name:    name,
 			Enabled: enabled,
 			Status:  strings.ToLower(stringValue(item, "share_status", "status", "state")),
-		})
+			Type:    strings.ToLower(stringValue(item, "share_type")),
+		}
+		if count, ok := optionalIntValue(item, "rotate_cnt"); ok {
+			folder.MaxVersions = &count
+			// Drive reports "-" for the policy while versioning is off.
+			if policy := strings.ToLower(stringValue(item, "rotate_policy")); policy != "" && policy != "-" {
+				folder.VersionPolicy = policy
+			}
+			if days, ok := optionalIntValue(item, "rotate_days"); ok {
+				folder.RetentionDays = &days
+			}
+		}
+		result.TeamFolders = append(result.TeamFolders, folder)
 	}
 	result.Total = intValue(root, "total")
 	if result.Total == 0 {
@@ -176,6 +191,24 @@ func stringValue(values map[string]any, keys ...string) string {
 
 func intValue(values map[string]any, keys ...string) int {
 	return int(int64Value(values, keys...))
+}
+
+// optionalIntValue distinguishes a present integer from Drive's "-" not-
+// applicable marker (and from a missing field), which intValue folds to 0.
+func optionalIntValue(values map[string]any, key string) (int, bool) {
+	value, ok := values[key]
+	if !ok || value == nil {
+		return 0, false
+	}
+	switch typed := value.(type) {
+	case json.Number:
+		if parsed, err := typed.Int64(); err == nil {
+			return int(parsed), true
+		}
+	case float64:
+		return int(typed), true
+	}
+	return 0, false
 }
 
 func int64Value(values map[string]any, keys ...string) int64 {

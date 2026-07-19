@@ -42,11 +42,21 @@ type Connections struct {
 
 // TeamFolder is one shared folder as shown in the Admin Console team-folder
 // view. Enabled reports whether the share is activated as a Drive team folder;
-// Status carries Drive's own state vocabulary (for example "normal").
+// Status carries Drive's own state vocabulary (for example "normal"). The
+// versioning fields apply only to an enabled team folder: Drive reports them
+// as the literal string "-" otherwise, surfaced here as absent.
 type TeamFolder struct {
 	Name    string `json:"name" jsonschema:"Shared folder name; Drive's home entry appears as homes/mydrive_home"`
 	Enabled bool   `json:"enabled" jsonschema:"Whether the shared folder is enabled as a Drive team folder"`
 	Status  string `json:"status,omitempty" jsonschema:"Share state as reported by Drive, lowercased, for example normal"`
+	Type    string `json:"type,omitempty" jsonschema:"Share type as reported by Drive, for example normal or encryption"`
+	// MaxVersions is Drive's kept-version count (0 = versioning off).
+	MaxVersions *int `json:"max_versions,omitempty" jsonschema:"Versions Drive keeps per file (0 disables versioning); absent when the folder is not an enabled team folder"`
+	// VersionPolicy is fifo (rotate earliest) or smart (Intelliversioning);
+	// empty while versioning is off.
+	VersionPolicy string `json:"version_policy,omitempty" jsonschema:"Version rotation policy: fifo or smart; absent while versioning is off"`
+	// RetentionDays prunes versions older than this many days (0 = keep).
+	RetentionDays *int `json:"retention_days,omitempty" jsonschema:"Days versions are retained (0 keeps them until rotated); absent when the folder is not an enabled team folder"`
 }
 
 // TeamFolders is the admin view of Drive team folders.
@@ -87,6 +97,35 @@ type Log struct {
 	Entries []LogEntry `json:"entries" jsonschema:"Drive log entries for the requested page"`
 }
 
+// Team-folder change actions.
+const (
+	// TeamFolderActionEnable activates a shared folder as a Drive team folder.
+	TeamFolderActionEnable = "enable"
+	// TeamFolderActionDisable deactivates a team folder. Drive deletes its
+	// team-folder database including version history; shared-folder files are
+	// not touched.
+	TeamFolderActionDisable = "disable"
+	// TeamFolderActionSetVersioning patches versioning on an enabled team
+	// folder. Omitted fields keep their current values (DSM merges them from
+	// the stored view settings).
+	TeamFolderActionSetVersioning = "set_versioning"
+)
+
+// TeamFolderChange is one guarded team-folder mutation. Enable requires
+// MaxVersions because DSM refuses to enable a team folder without rotate_cnt,
+// and an explicit VersionPolicy whenever versioning is on so the stored policy
+// never depends on server-side defaults. SetVersioning is patch-only.
+type TeamFolderChange struct {
+	Action string `json:"action" jsonschema:"Team-folder action: enable, disable, or set_versioning"`
+	Name   string `json:"name" jsonschema:"Shared-folder name exactly as listed in the team-folder view"`
+	// MaxVersions is required for enable (0..32; 0 = versioning off).
+	MaxVersions *int `json:"max_versions,omitempty" jsonschema:"Versions Drive keeps per file, 0..32; 0 disables versioning. Required for enable"`
+	// VersionPolicy is required when MaxVersions > 0 on enable.
+	VersionPolicy string `json:"version_policy,omitempty" jsonschema:"Version rotation policy: fifo (rotate earliest) or smart (Intelliversioning)"`
+	// RetentionDays defaults to 0 (keep until rotated) on enable.
+	RetentionDays *int `json:"retention_days,omitempty" jsonschema:"Days versions are retained, 0..120; 0 keeps them until rotated"`
+}
+
 // ServerConfig is the normalized Drive server database configuration from the
 // Admin Console (SYNO.SynologyDrive.Config). VolumePath is read-only: DSM changes
 // it by physically moving the Drive database between volumes, which is out of
@@ -109,7 +148,6 @@ type ServerConfigChange struct {
 
 // Capabilities reports which Drive Admin operations dsmctl currently exposes
 // for the selected backends, plus the package evidence the selection used.
-// TeamFoldersSet is modeled but fails closed in this slice.
 type Capabilities struct {
 	Module          string          `json:"module" jsonschema:"Stable module name: drive-admin"`
 	Package         PackageEvidence `json:"package" jsonschema:"Installed SynologyDrive package evidence observed before selection"`
@@ -117,7 +155,7 @@ type Capabilities struct {
 	ConnectionsRead bool            `json:"connections_read" jsonschema:"Whether active Drive client connections can be listed"`
 	TeamFoldersRead bool            `json:"team_folders_read" jsonschema:"Whether team folders can be listed"`
 	LogRead         bool            `json:"log_read" jsonschema:"Whether Drive server logs can be read"`
-	TeamFoldersSet  bool            `json:"team_folders_set" jsonschema:"Whether guarded team-folder changes are available; deferred, currently always false"`
+	TeamFoldersSet  bool            `json:"team_folders_set" jsonschema:"Whether guarded team-folder enable/disable and versioning changes are available"`
 	ConfigRead      bool            `json:"config_read" jsonschema:"Whether the Drive server database configuration can be read"`
 	ConfigSet       bool            `json:"config_set" jsonschema:"Whether guarded Drive server database configuration changes are available"`
 }

@@ -1,6 +1,6 @@
-// Package driveadmin implements independently selectable read operations for
-// the Synology Drive Server Admin Console: service status, active connections,
-// team folders, and Drive server logs.
+// Package driveadmin implements independently selectable operations for the
+// Synology Drive Server Admin Console: service status, active connections,
+// team folders (read and guarded set), and Drive server logs.
 //
 // Drive's WebAPI behavior follows the installed SynologyDrive package version,
 // not the DSM release, so every variant composes its API matcher with a
@@ -9,9 +9,6 @@
 // generations fail closed instead of receiving untested requests, and a NAS
 // without the package reports each operation as unsupported with the package
 // evidence in the selection reason.
-//
-// Team-folder changes are modeled as a variant-less operation so capabilities
-// can name them, but they have no backend in this slice and always fail closed.
 package driveadmin
 
 import (
@@ -167,9 +164,64 @@ var logOperation = compatibility.Operation[driveadmin.LogQuery, driveadmin.Log]{
 	},
 }
 
-// teamFoldersSetOperation is modeled but has no variants, so it always reports
-// unsupported and fails closed until the first verified write backend ships.
-var teamFoldersSetOperation = compatibility.Operation[Input, struct{}]{Name: TeamFoldersSetCapabilityName}
+// TeamFolderSetInput is one Share.set entry. Enable routes the entry to the
+// handler's enable/disable path when present; without it the entry is a
+// versioning-only change and DSM merges omitted rotate fields from the stored
+// view settings. Field semantics verified against the Drive server source
+// (handlers/share/set.cpp) and live on Drive 4.0.3 (WI-050).
+type TeamFolderSetInput struct {
+	ShareName     string
+	Enable        *bool
+	MaxVersions   *int
+	VersionPolicy string
+	RetentionDays *int
+}
+
+// TeamFolderMutationResult records the selected backend for one team-folder set.
+type TeamFolderMutationResult struct {
+	Backend string `json:"backend" jsonschema:"Selected DSM compatibility backend"`
+	API     string `json:"api" jsonschema:"DSM WebAPI used for the change"`
+	Version int    `json:"version" jsonschema:"DSM WebAPI version used for the change"`
+	Method  string `json:"method" jsonschema:"DSM WebAPI method used for the change"`
+}
+
+// teamFoldersSetOperation performs one guarded team-folder change. The share
+// parameter is a JSON array; exactly one entry is sent so a plan maps to one
+// team folder. The handler answers success with an empty data object and
+// silently skips ineligible shares, so callers must verify the postcondition
+// by re-reading the team-folder list.
+var teamFoldersSetOperation = compatibility.Operation[TeamFolderSetInput, TeamFolderMutationResult]{
+	Name: TeamFoldersSetCapabilityName,
+	Variants: []compatibility.Variant[TeamFolderSetInput, TeamFolderMutationResult]{
+		{
+			Name: "drive-share-v1", API: ShareAPIName, Version: 1, Priority: 10,
+			Match: compatibility.All(compatibility.APIVersion(ShareAPIName, 1), baselinePackage),
+			Execute: func(ctx context.Context, executor compatibility.Executor, input TeamFolderSetInput) (TeamFolderMutationResult, error) {
+				entry := map[string]any{"share_name": input.ShareName}
+				if input.Enable != nil {
+					entry["share_enable"] = *input.Enable
+				}
+				if input.MaxVersions != nil {
+					entry["rotate_cnt"] = *input.MaxVersions
+				}
+				if input.VersionPolicy != "" {
+					entry["rotate_policy"] = input.VersionPolicy
+				}
+				if input.RetentionDays != nil {
+					entry["rotate_days"] = *input.RetentionDays
+				}
+				_, err := executor.Execute(ctx, compatibility.Request{
+					API: ShareAPIName, Version: 1, Method: "set",
+					JSONParameters: map[string]any{"share": []map[string]any{entry}},
+				})
+				if err != nil {
+					return TeamFolderMutationResult{}, fmt.Errorf("call %s.set v1: %w", ShareAPIName, err)
+				}
+				return TeamFolderMutationResult{}, nil
+			},
+		},
+	},
+}
 
 // APINames lists every DSM API this module may use, so the facade can discover
 // them in one call before selecting variants.
@@ -233,4 +285,12 @@ func ExecuteTeamFolders(ctx context.Context, target compatibility.Target, execut
 
 func ExecuteLog(ctx context.Context, target compatibility.Target, executor compatibility.Executor, query driveadmin.LogQuery) (driveadmin.Log, compatibility.Selection, error) {
 	return logOperation.Run(ctx, target, executor, query)
+}
+
+func ExecuteTeamFoldersSet(ctx context.Context, target compatibility.Target, executor compatibility.Executor, input TeamFolderSetInput) (TeamFolderMutationResult, compatibility.Selection, error) {
+	result, selection, err := teamFoldersSetOperation.Run(ctx, target, executor, input)
+	if err == nil {
+		result.Backend, result.API, result.Version, result.Method = selection.Backend, selection.API, selection.Version, "set"
+	}
+	return result, selection, err
 }
