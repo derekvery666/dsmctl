@@ -81,7 +81,8 @@ button{font:inherit;cursor:pointer}
 .brand-mark i{display:block;border-radius:2px;background:rgba(255,255,255,.94)}
 .brand-copy strong{display:block;font-size:15px;line-height:1.15;letter-spacing:.01em}
 .brand-copy span{display:block;margin-top:2px;color:var(--muted);font-size:11px}
-h1{margin:0 0 18px;font-size:25px;letter-spacing:-.02em}
+h1{margin:0 0 6px;font-size:25px;letter-spacing:-.02em}
+.target{margin:0 0 20px;color:var(--slate-600);font-size:13px;word-break:break-all}
 .status{display:flex;gap:11px;align-items:flex-start;margin:0 0 22px;padding:12px 14px;border-radius:10px;background:var(--color-action-soft);color:var(--brand-700);font-size:13px}
 .dot{flex:none;width:9px;height:9px;margin-top:5px;border-radius:50%;background:var(--color-action)}
 [data-state="waiting"] .dot{animation:pulse 1.6s ease-in-out infinite}
@@ -109,6 +110,7 @@ h1{margin:0 0 18px;font-size:25px;letter-spacing:-.02em}
 <main class="card">
   <div class="brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="brand-copy"><strong>dsmctl</strong><span data-i18n="brandSub">DSM web sign-in</span></span></div>
   <h1 data-i18n="heading">Sign in to DSM</h1>
+  <p class="target">` + dsmOrigin + `</p>
   <div class="status" role="status">
     <span class="dot" aria-hidden="true"></span>
     <span>

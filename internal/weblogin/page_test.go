@@ -83,3 +83,12 @@ func TestPageIsSelfContained(t *testing.T) {
 		}
 	}
 }
+
+// The page asks the user to authenticate against a NAS; it must say which
+// one, so the user can check the origin before typing a password anywhere.
+func TestPageShowsTargetNAS(t *testing.T) {
+	page := buildPage(testLoginURL, testDSMOrigin)
+	if !strings.Contains(page, `<p class="target">`+testDSMOrigin+`</p>`) {
+		t.Error("page must visibly name the NAS origin it signs in to")
+	}
+}

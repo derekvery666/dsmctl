@@ -28,7 +28,8 @@ text that displays raw server response strings.
   using the documented brand/slate scales and semantic aliases from
   `internal/gateway/admin/ui.go`.
 - Centered single-card layout: gateway canvas gradient backdrop, brand mark,
-  product title, status area, primary action button, and two footnote lines
+  product title, a target line naming the NAS origin being signed in to,
+  status area, primary action button, and two footnote lines
   stating the flow's security facts (password entered only on the NAS's own
   page; PKCE + Noise-encrypted code exchange).
 - Four visual states — waiting, exchanging, success, failure — switched by the
