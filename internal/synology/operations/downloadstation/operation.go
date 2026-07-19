@@ -455,10 +455,41 @@ var schedulerGetOp = settingsGetOp("download.settings.scheduler.get", SettingsSc
 var schedulerSetOp = settingsSetOp("download.settings.scheduler.set", SettingsSchedulerAPIName, 1, "scheduler", encodeSchedulerSettings)
 var globalGetOp = settingsGetOp("download.settings.global.get", SettingsGlobalAPIName, 2, decodeGlobalSettings)
 var globalSetOp = settingsSetOp("download.settings.global.set", SettingsGlobalAPIName, 2, "global", encodeGlobalSettings)
+var autoExtractionGetOp = settingsGetOp("download.settings.auto_extraction.get", SettingsAutoExtractionAPIName, 1, decodeAutoExtractionSettings)
+var autoExtractionSetOp = settingsSetOp("download.settings.auto_extraction.set", SettingsAutoExtractionAPIName, 1, "auto_extraction", encodeAutoExtractionChange)
 
 func encodeRssSettings(r downloadstation.RssSettings) url.Values {
 	v := url.Values{}
 	v.Set("update_interval", strconv.Itoa(r.UpdateIntervalMinutes))
+	return v
+}
+
+// encodeAutoExtractionChange builds a PARTIAL set: only the fields present in
+// the patch are sent. The AutoExtraction handler reads each parameter with a
+// HasParam guard and leaves unspecified fields (including the passwords it never
+// returns) untouched, so a non-secret patch never disturbs stored passwords. The
+// on-the-wire unzip_location parameter is a boolean (extract to the local
+// folder), distinct from the string the read returns.
+func encodeAutoExtractionChange(c downloadstation.AutoExtractionSettingsChange) url.Values {
+	v := url.Values{}
+	if c.EnableUnzip != nil {
+		v.Set("enable_unzip", boolParam(*c.EnableUnzip))
+	}
+	if c.CreateSubfolder != nil {
+		v.Set("create_subfolder", boolParam(*c.CreateSubfolder))
+	}
+	if c.DeleteArchive != nil {
+		v.Set("delete_archive", boolParam(*c.DeleteArchive))
+	}
+	if c.UnzipOverwrite != nil {
+		v.Set("unzip_overwrite", boolParam(*c.UnzipOverwrite))
+	}
+	if c.UnzipToLocal != nil {
+		v.Set("unzip_location", boolParam(*c.UnzipToLocal))
+	}
+	if c.UnzipToPath != nil {
+		v.Set("unzip_to_path", *c.UnzipToPath)
+	}
 	return v
 }
 
@@ -524,6 +555,12 @@ func ExecuteGlobalGet(ctx context.Context, t compatibility.Target, e compatibili
 }
 func ExecuteGlobalSet(ctx context.Context, t compatibility.Target, e compatibility.Executor, d downloadstation.GlobalSettings) (downloadstation.SettingsMutationResult, compatibility.Selection, error) {
 	return runSettingsSet(ctx, globalSetOp, t, e, d)
+}
+func ExecuteAutoExtractionGet(ctx context.Context, t compatibility.Target, e compatibility.Executor) (downloadstation.AutoExtractionSettings, compatibility.Selection, error) {
+	return runSettingsGet(ctx, autoExtractionGetOp, t, e)
+}
+func ExecuteAutoExtractionSet(ctx context.Context, t compatibility.Target, e compatibility.Executor, change downloadstation.AutoExtractionSettingsChange) (downloadstation.SettingsMutationResult, compatibility.Selection, error) {
+	return runSettingsSet(ctx, autoExtractionSetOp, t, e, change)
 }
 
 func SelectSettingsWrite(target compatibility.Target) (compatibility.Selection, error) {

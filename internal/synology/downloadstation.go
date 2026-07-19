@@ -178,6 +178,12 @@ func (c *Client) DownloadStationSettingsGroup(ctx context.Context, group string)
 			return nil, downloadStationReadError("global settings", evidence, err)
 		}
 		return json.Marshal(g)
+	case "auto_extraction":
+		a, _, err := downloadstationops.ExecuteAutoExtractionGet(ctx, c.target, lockedExecutor{client: c})
+		if err != nil {
+			return nil, downloadStationReadError("auto-extraction settings", evidence, err)
+		}
+		return json.Marshal(a)
 	default:
 		return nil, fmt.Errorf("unsupported settings group %q", group)
 	}
@@ -253,6 +259,15 @@ func (c *Client) ApplyDownloadStationSettingsChange(ctx context.Context, change 
 		result, _, err := downloadstationops.ExecuteGlobalSet(ctx, c.target, lockedExecutor{client: c}, mergeGlobalSettings(current, *change.Global))
 		if err != nil {
 			return DownloadStationSettingsMutationResult{}, fmt.Errorf("apply Download Station global settings: %w", err)
+		}
+		return result, nil
+	case change.AutoExtraction != nil:
+		// Auto-extraction is a partial set: send only the patched non-secret
+		// fields directly, so the archive passwords the read never returns are
+		// left untouched. No read-merge is performed.
+		result, _, err := downloadstationops.ExecuteAutoExtractionSet(ctx, c.target, lockedExecutor{client: c}, *change.AutoExtraction)
+		if err != nil {
+			return DownloadStationSettingsMutationResult{}, fmt.Errorf("apply Download Station auto-extraction settings: %w", err)
 		}
 		return result, nil
 	default:
