@@ -27,6 +27,11 @@ type DownloadStationStatisticsResult struct {
 	Statistics synology.DownloadStationStatistics `json:"statistics" jsonschema:"Aggregate transfer statistics"`
 }
 
+type DownloadStationSettingsResult struct {
+	NAS      string                           `json:"nas" jsonschema:"NAS profile used for the request"`
+	Settings synology.DownloadStationSettings `json:"settings" jsonschema:"Full detailed Download Station configuration"`
+}
+
 func (s *Service) GetDownloadStationCapabilities(ctx context.Context, requestedNAS string) (DownloadStationCapabilitiesResult, error) {
 	name, client, err := s.manager.Client(ctx, requestedNAS)
 	if err != nil {
@@ -73,4 +78,16 @@ func (s *Service) GetDownloadStationStatistics(ctx context.Context, requestedNAS
 		return DownloadStationStatisticsResult{}, authenticationError(name, err)
 	}
 	return DownloadStationStatisticsResult{NAS: name, Statistics: stats}, nil
+}
+
+func (s *Service) GetDownloadStationSettings(ctx context.Context, requestedNAS string) (DownloadStationSettingsResult, error) {
+	name, client, err := s.manager.Client(ctx, requestedNAS)
+	if err != nil {
+		return DownloadStationSettingsResult{}, err
+	}
+	settings, err := client.DownloadStationSettings(ctx)
+	if err != nil {
+		return DownloadStationSettingsResult{}, authenticationError(name, err)
+	}
+	return DownloadStationSettingsResult{NAS: name, Settings: settings}, nil
 }

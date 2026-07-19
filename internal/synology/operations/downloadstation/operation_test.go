@@ -3,6 +3,7 @@ package downloadstation
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -29,6 +30,13 @@ func dsTarget(packageVersion string) compatibility.Target {
 	target.SetAPI(ScheduleAPIName, compatibility.APIInfo{Path: "DownloadStation/schedule.cgi", MinVersion: 1, MaxVersion: 1})
 	target.SetAPI(StatisticAPIName, compatibility.APIInfo{Path: "DownloadStation/statistic.cgi", MinVersion: 1, MaxVersion: 1})
 	target.SetAPI(TaskAPIName, compatibility.APIInfo{Path: "DownloadStation/task.cgi", MinVersion: 1, MaxVersion: 3})
+	for _, api := range []string{
+		SettingsGlobalAPIName, SettingsBTAPIName, SettingsEmuleAPIName, SettingsEmuleLocationAPIName,
+		SettingsFtpHttpAPIName, SettingsNzbAPIName, SettingsAutoExtractionAPIName, SettingsLocationAPIName,
+		SettingsRssAPIName, SettingsSchedulerAPIName,
+	} {
+		target.SetAPI(api, compatibility.APIInfo{Path: "entry.cgi", MinVersion: 1, MaxVersion: 2})
+	}
 	if packageVersion != "" {
 		target.SetInstalledPackages([]compatibility.InstalledPackage{
 			{ID: PackageID, Version: compatibility.ParsePackageVersion(packageVersion), Running: true},
@@ -118,6 +126,61 @@ func TestStatisticsDecode(t *testing.T) {
 	}
 }
 
+func TestSettingsComposesAllGroups(t *testing.T) {
+	// Live shapes captured on Download Station 4.1.2-5012.
+	target := dsTarget("4.1.2-5012")
+	settings, selection, err := ExecuteSettings(context.Background(), target, routeExecutor{t: t, routes: map[string]string{
+		"SYNO.DownloadStation2.Settings.Global get":         `{"download_volume":"/volume1","enable_emule":false,"enable_unzip_service":false}`,
+		"SYNO.DownloadStation2.Settings.BT get":             `{"dht_port":6881,"enable_dht":true,"enable_port_forwarding":false,"enable_preview":true,"enable_seeding_auto_remove":false,"encrypt":"auto","max_download_rate":0,"max_peer":50,"max_upload_rate":20,"seeding_interval":0,"seeding_ratio":0,"tcp_port":16881}`,
+		"SYNO.DownloadStation2.Settings.Emule get":          `{"enable_emule":false}`,
+		"SYNO.DownloadStation2.Settings.Emule.Location get": `{"default_destination":"emule/incoming"}`,
+		"SYNO.DownloadStation2.Settings.FtpHttp get":        `{"enable_ftp_max_conn":false,"ftp_http_max_download_rate":0,"ftp_max_conn":3}`,
+		"SYNO.DownloadStation2.Settings.Nzb get":            `{"conn_per_download":2,"enable_auth":false,"enable_encryption":false,"enable_parchive":true,"enable_remove_parfiles":false,"max_download_rate":0,"port":119,"server":"","username":""}`,
+		"SYNO.DownloadStation2.Settings.AutoExtraction get": `{"create_subfolder":false,"delete_archive":false,"enable_unzip":false,"enable_unzip_service":false,"passwords":["secret"],"unzip_location":"current_folder","unzip_overwrite":false,"unzip_to_path":"","username":""}`,
+		"SYNO.DownloadStation2.Settings.Location get":       `{"default_destination":"downloads","enable_delete_torrent_nzb_watch":false,"enable_torrent_nzb_watch":false,"torrent_nzb_watch_folder":""}`,
+		"SYNO.DownloadStation2.Settings.Rss get":            `{"update_interval":1440}`,
+		"SYNO.DownloadStation2.Settings.Scheduler get":      `{"download_rate":0,"enable_schedule":false,"max_tasks":10,"max_tasks_limit":80,"order":"request","schedule":"1111","upload_rate":0}`,
+	}})
+	if err != nil {
+		t.Fatalf("ExecuteSettings() error = %v", err)
+	}
+	if !selection.Supported {
+		t.Fatalf("selection = %#v", selection)
+	}
+	if settings.Global.DownloadVolume != "/volume1" {
+		t.Fatalf("global = %#v", settings.Global)
+	}
+	if settings.BT.TCPPort != 16881 || settings.BT.DHTPort != 6881 || !settings.BT.EnableDHT || settings.BT.Encryption != "auto" || settings.BT.MaxUploadRate != 20 || settings.BT.MaxPeer != 50 {
+		t.Fatalf("bt = %#v", settings.BT)
+	}
+	if settings.Emule.Enabled || settings.Emule.DefaultDestination != "emule/incoming" {
+		t.Fatalf("emule = %#v", settings.Emule)
+	}
+	if settings.FtpHttp.MaxConn != 3 || settings.Nzb.Port != 119 || !settings.Nzb.EnableParchive {
+		t.Fatalf("ftphttp/nzb = %#v %#v", settings.FtpHttp, settings.Nzb)
+	}
+	// The archive password value must never surface; only the boolean does.
+	if !settings.AutoExtraction.PasswordConfigured {
+		t.Fatalf("auto-extraction password flag = %#v", settings.AutoExtraction)
+	}
+	if got := fmt.Sprintf("%#v", settings.AutoExtraction); strings.Contains(got, "secret") {
+		t.Fatalf("auto-extraction leaked the archive password: %s", got)
+	}
+	if settings.Location.DefaultDestination != "downloads" || settings.Rss.UpdateIntervalMinutes != 1440 {
+		t.Fatalf("location/rss = %#v %#v", settings.Location, settings.Rss)
+	}
+	if settings.Scheduler.MaxTasks != 10 || settings.Scheduler.MaxTasksLimit != 80 || settings.Scheduler.Order != "request" || settings.Scheduler.ScheduleBitmap != "1111" {
+		t.Fatalf("scheduler = %#v", settings.Scheduler)
+	}
+}
+
+func TestSettingsFailsClosedWithoutPackage(t *testing.T) {
+	target := dsTarget("")
+	if selection, err := SelectSettings(target); !compatibility.IsUnsupported(err) || selection.Supported {
+		t.Fatalf("SelectSettings without package = %#v, %v", selection, err)
+	}
+}
+
 func TestFailsClosedWithoutPackage(t *testing.T) {
 	// APIs present but the package catalog does not contain DownloadStation.
 	target := dsTarget("")
@@ -163,9 +226,14 @@ func TestDecodersRejectMalformedShapes(t *testing.T) {
 	}
 }
 
-func TestAPINamesCoverLegacySurface(t *testing.T) {
+func TestAPINamesCoverLegacyAndSettings(t *testing.T) {
 	got := APINames()
-	want := []string{InfoAPIName, ScheduleAPIName, StatisticAPIName, TaskAPIName}
+	want := []string{
+		InfoAPIName, ScheduleAPIName, StatisticAPIName, TaskAPIName,
+		SettingsGlobalAPIName, SettingsBTAPIName, SettingsEmuleAPIName, SettingsEmuleLocationAPIName,
+		SettingsFtpHttpAPIName, SettingsNzbAPIName, SettingsAutoExtractionAPIName, SettingsLocationAPIName,
+		SettingsRssAPIName, SettingsSchedulerAPIName,
+	}
 	if len(got) != len(want) {
 		t.Fatalf("APINames() = %#v", got)
 	}

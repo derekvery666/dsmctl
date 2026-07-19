@@ -10,6 +10,7 @@ package downloadstation
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 
@@ -26,9 +27,23 @@ const (
 	StatisticAPIName = "SYNO.DownloadStation.Statistic"
 	TaskAPIName      = "SYNO.DownloadStation.Task"
 
+	// The detailed settings live on the newer DownloadStation2 API generation
+	// (all served from entry.cgi).
+	SettingsGlobalAPIName         = "SYNO.DownloadStation2.Settings.Global"
+	SettingsBTAPIName             = "SYNO.DownloadStation2.Settings.BT"
+	SettingsEmuleAPIName          = "SYNO.DownloadStation2.Settings.Emule"
+	SettingsEmuleLocationAPIName  = "SYNO.DownloadStation2.Settings.Emule.Location"
+	SettingsFtpHttpAPIName        = "SYNO.DownloadStation2.Settings.FtpHttp"
+	SettingsNzbAPIName            = "SYNO.DownloadStation2.Settings.Nzb"
+	SettingsAutoExtractionAPIName = "SYNO.DownloadStation2.Settings.AutoExtraction"
+	SettingsLocationAPIName       = "SYNO.DownloadStation2.Settings.Location"
+	SettingsRssAPIName            = "SYNO.DownloadStation2.Settings.Rss"
+	SettingsSchedulerAPIName      = "SYNO.DownloadStation2.Settings.Scheduler"
+
 	ServiceReadCapabilityName   = "download.service.read"
 	TaskReadCapabilityName      = "download.task.read"
 	StatisticReadCapabilityName = "download.statistic.read"
+	SettingsReadCapabilityName  = "download.settings.read"
 )
 
 // baselinePackage gates every variant on Download Station 3.x+, covering the
@@ -118,8 +133,85 @@ var statisticOperation = compatibility.Operation[Input, downloadstation.Statisti
 	},
 }
 
+// getSetting fetches and decodes one DownloadStation2.Settings.* API.
+func getSetting[T any](ctx context.Context, executor compatibility.Executor, api string, version int, decode func(json.RawMessage) (T, error)) (T, error) {
+	var zero T
+	data, err := executor.Execute(ctx, compatibility.Request{API: api, Version: version, Method: "get"})
+	if err != nil {
+		return zero, fmt.Errorf("call %s.get: %w", api, err)
+	}
+	return decode(data)
+}
+
+// settingsOperation composes the detailed DownloadStation2.Settings.* reads into
+// one normalized Settings value. It is gated on the Settings.Global API (which
+// the DownloadStation package always registers) plus the package baseline.
+var settingsOperation = compatibility.Operation[Input, downloadstation.Settings]{
+	Name: SettingsReadCapabilityName,
+	Variants: []compatibility.Variant[Input, downloadstation.Settings]{
+		{
+			Name: "downloadstation2-settings-v1", API: SettingsGlobalAPIName, Version: 2, Priority: 10,
+			Match: compatibility.All(compatibility.APIVersion(SettingsGlobalAPIName, 2), baselinePackage),
+			Execute: func(ctx context.Context, executor compatibility.Executor, _ Input) (downloadstation.Settings, error) {
+				var s downloadstation.Settings
+				var err error
+				if s.Global, err = getSetting(ctx, executor, SettingsGlobalAPIName, 2, decodeGlobalSettings); err != nil {
+					return downloadstation.Settings{}, err
+				}
+				if s.BT, err = getSetting(ctx, executor, SettingsBTAPIName, 1, decodeBTSettings); err != nil {
+					return downloadstation.Settings{}, err
+				}
+				emuleEnabled, err := getSetting(ctx, executor, SettingsEmuleAPIName, 1, decodeEmuleSettings)
+				if err != nil {
+					return downloadstation.Settings{}, err
+				}
+				emuleDest, err := getSetting(ctx, executor, SettingsEmuleLocationAPIName, 1, func(d json.RawMessage) (string, error) {
+					return decodeDefaultDestination(d, "Download Station eMule location settings")
+				})
+				if err != nil {
+					return downloadstation.Settings{}, err
+				}
+				s.Emule = downloadstation.EmuleSettings{Enabled: emuleEnabled, DefaultDestination: emuleDest}
+				if s.FtpHttp, err = getSetting(ctx, executor, SettingsFtpHttpAPIName, 1, decodeFtpHttpSettings); err != nil {
+					return downloadstation.Settings{}, err
+				}
+				if s.Nzb, err = getSetting(ctx, executor, SettingsNzbAPIName, 1, decodeNzbSettings); err != nil {
+					return downloadstation.Settings{}, err
+				}
+				if s.AutoExtraction, err = getSetting(ctx, executor, SettingsAutoExtractionAPIName, 1, decodeAutoExtractionSettings); err != nil {
+					return downloadstation.Settings{}, err
+				}
+				if s.Location, err = getSetting(ctx, executor, SettingsLocationAPIName, 1, decodeLocationSettings); err != nil {
+					return downloadstation.Settings{}, err
+				}
+				if s.Rss, err = getSetting(ctx, executor, SettingsRssAPIName, 1, decodeRssSettings); err != nil {
+					return downloadstation.Settings{}, err
+				}
+				if s.Scheduler, err = getSetting(ctx, executor, SettingsSchedulerAPIName, 1, decodeSchedulerSettings); err != nil {
+					return downloadstation.Settings{}, err
+				}
+				return s, nil
+			},
+		},
+	},
+}
+
 func APINames() []string {
-	return []string{InfoAPIName, ScheduleAPIName, StatisticAPIName, TaskAPIName}
+	return []string{
+		InfoAPIName, ScheduleAPIName, StatisticAPIName, TaskAPIName,
+		SettingsGlobalAPIName, SettingsBTAPIName, SettingsEmuleAPIName, SettingsEmuleLocationAPIName,
+		SettingsFtpHttpAPIName, SettingsNzbAPIName, SettingsAutoExtractionAPIName, SettingsLocationAPIName,
+		SettingsRssAPIName, SettingsSchedulerAPIName,
+	}
+}
+
+func SelectSettings(target compatibility.Target) (compatibility.Selection, error) {
+	_, selection, err := settingsOperation.Select(target)
+	return selection, err
+}
+
+func ExecuteSettings(ctx context.Context, target compatibility.Target, executor compatibility.Executor) (downloadstation.Settings, compatibility.Selection, error) {
+	return settingsOperation.Run(ctx, target, executor, Input{})
 }
 
 func SelectService(target compatibility.Target) (compatibility.Selection, error) {

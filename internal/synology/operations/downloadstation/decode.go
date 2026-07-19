@@ -247,3 +247,222 @@ func deref(value *string) string {
 	}
 	return *value
 }
+
+func decodeGlobalSettings(data json.RawMessage) (downloadstation.GlobalSettings, error) {
+	var resp struct {
+		DownloadVolume     *string `json:"download_volume"`
+		EnableEmule        *bool   `json:"enable_emule"`
+		EnableUnzipService *bool   `json:"enable_unzip_service"`
+	}
+	if err := unmarshalObject(data, "Download Station global settings", &resp); err != nil {
+		return downloadstation.GlobalSettings{}, err
+	}
+	if resp.EnableEmule == nil {
+		return downloadstation.GlobalSettings{}, errors.New("decode Download Station global settings: required field \"enable_emule\" is missing")
+	}
+	return downloadstation.GlobalSettings{
+		DownloadVolume:      strings.TrimSpace(deref(resp.DownloadVolume)),
+		EmuleEnabled:        *resp.EnableEmule,
+		UnzipServiceEnabled: resp.EnableUnzipService != nil && *resp.EnableUnzipService,
+	}, nil
+}
+
+func decodeBTSettings(data json.RawMessage) (downloadstation.BTSettings, error) {
+	var resp struct {
+		TCPPort                 *int    `json:"tcp_port"`
+		DHTPort                 int     `json:"dht_port"`
+		EnableDHT               bool    `json:"enable_dht"`
+		EnablePortForwarding    bool    `json:"enable_port_forwarding"`
+		EnablePreview           bool    `json:"enable_preview"`
+		Encrypt                 *string `json:"encrypt"`
+		MaxDownloadRate         int     `json:"max_download_rate"`
+		MaxUploadRate           int     `json:"max_upload_rate"`
+		MaxPeer                 int     `json:"max_peer"`
+		SeedingRatio            int     `json:"seeding_ratio"`
+		SeedingInterval         int     `json:"seeding_interval"`
+		EnableSeedingAutoRemove bool    `json:"enable_seeding_auto_remove"`
+	}
+	if err := unmarshalObject(data, "Download Station BT settings", &resp); err != nil {
+		return downloadstation.BTSettings{}, err
+	}
+	if resp.TCPPort == nil {
+		return downloadstation.BTSettings{}, errors.New("decode Download Station BT settings: required field \"tcp_port\" is missing")
+	}
+	return downloadstation.BTSettings{
+		TCPPort:                 *resp.TCPPort,
+		DHTPort:                 resp.DHTPort,
+		EnableDHT:               resp.EnableDHT,
+		EnablePortForwarding:    resp.EnablePortForwarding,
+		EnablePreview:           resp.EnablePreview,
+		Encryption:              strings.TrimSpace(deref(resp.Encrypt)),
+		MaxDownloadRate:         resp.MaxDownloadRate,
+		MaxUploadRate:           resp.MaxUploadRate,
+		MaxPeer:                 resp.MaxPeer,
+		SeedingRatio:            resp.SeedingRatio,
+		SeedingInterval:         resp.SeedingInterval,
+		EnableSeedingAutoRemove: resp.EnableSeedingAutoRemove,
+	}, nil
+}
+
+func decodeEmuleSettings(data json.RawMessage) (bool, error) {
+	var resp struct {
+		EnableEmule *bool `json:"enable_emule"`
+	}
+	if err := unmarshalObject(data, "Download Station eMule settings", &resp); err != nil {
+		return false, err
+	}
+	if resp.EnableEmule == nil {
+		return false, errors.New("decode Download Station eMule settings: required field \"enable_emule\" is missing")
+	}
+	return *resp.EnableEmule, nil
+}
+
+func decodeDefaultDestination(data json.RawMessage, what string) (string, error) {
+	var resp struct {
+		DefaultDestination *string `json:"default_destination"`
+	}
+	if err := unmarshalObject(data, what, &resp); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(deref(resp.DefaultDestination)), nil
+}
+
+func decodeFtpHttpSettings(data json.RawMessage) (downloadstation.FtpHttpSettings, error) {
+	var resp struct {
+		EnableMaxConn   *bool `json:"enable_ftp_max_conn"`
+		MaxDownloadRate int   `json:"ftp_http_max_download_rate"`
+		MaxConn         int   `json:"ftp_max_conn"`
+	}
+	if err := unmarshalObject(data, "Download Station FTP/HTTP settings", &resp); err != nil {
+		return downloadstation.FtpHttpSettings{}, err
+	}
+	if resp.EnableMaxConn == nil {
+		return downloadstation.FtpHttpSettings{}, errors.New("decode Download Station FTP/HTTP settings: required field \"enable_ftp_max_conn\" is missing")
+	}
+	return downloadstation.FtpHttpSettings{
+		MaxDownloadRate: resp.MaxDownloadRate,
+		EnableMaxConn:   *resp.EnableMaxConn,
+		MaxConn:         resp.MaxConn,
+	}, nil
+}
+
+func decodeNzbSettings(data json.RawMessage) (downloadstation.NzbSettings, error) {
+	var resp struct {
+		Server               *string `json:"server"`
+		Port                 *int    `json:"port"`
+		Username             *string `json:"username"`
+		EnableAuth           bool    `json:"enable_auth"`
+		EnableEncryption     bool    `json:"enable_encryption"`
+		EnableParchive       bool    `json:"enable_parchive"`
+		EnableRemoveParfiles bool    `json:"enable_remove_parfiles"`
+		ConnPerDownload      int     `json:"conn_per_download"`
+		MaxDownloadRate      int     `json:"max_download_rate"`
+	}
+	if err := unmarshalObject(data, "Download Station NZB settings", &resp); err != nil {
+		return downloadstation.NzbSettings{}, err
+	}
+	if resp.Port == nil {
+		return downloadstation.NzbSettings{}, errors.New("decode Download Station NZB settings: required field \"port\" is missing")
+	}
+	return downloadstation.NzbSettings{
+		Server:               strings.TrimSpace(deref(resp.Server)),
+		Port:                 *resp.Port,
+		Username:             strings.TrimSpace(deref(resp.Username)),
+		EnableAuth:           resp.EnableAuth,
+		EnableEncryption:     resp.EnableEncryption,
+		EnableParchive:       resp.EnableParchive,
+		EnableRemoveParfiles: resp.EnableRemoveParfiles,
+		ConnPerDownload:      resp.ConnPerDownload,
+		MaxDownloadRate:      resp.MaxDownloadRate,
+	}, nil
+}
+
+func decodeAutoExtractionSettings(data json.RawMessage) (downloadstation.AutoExtractionSettings, error) {
+	var resp struct {
+		EnableUnzip        *bool    `json:"enable_unzip"`
+		EnableUnzipService bool     `json:"enable_unzip_service"`
+		CreateSubfolder    bool     `json:"create_subfolder"`
+		DeleteArchive      bool     `json:"delete_archive"`
+		UnzipOverwrite     bool     `json:"unzip_overwrite"`
+		UnzipLocation      *string  `json:"unzip_location"`
+		UnzipToPath        *string  `json:"unzip_to_path"`
+		Passwords          []string `json:"passwords"`
+	}
+	if err := unmarshalObject(data, "Download Station auto-extraction settings", &resp); err != nil {
+		return downloadstation.AutoExtractionSettings{}, err
+	}
+	if resp.EnableUnzip == nil {
+		return downloadstation.AutoExtractionSettings{}, errors.New("decode Download Station auto-extraction settings: required field \"enable_unzip\" is missing")
+	}
+	return downloadstation.AutoExtractionSettings{
+		EnableUnzip:        *resp.EnableUnzip,
+		EnableUnzipService: resp.EnableUnzipService,
+		CreateSubfolder:    resp.CreateSubfolder,
+		DeleteArchive:      resp.DeleteArchive,
+		UnzipOverwrite:     resp.UnzipOverwrite,
+		UnzipLocation:      strings.TrimSpace(deref(resp.UnzipLocation)),
+		UnzipToPath:        strings.TrimSpace(deref(resp.UnzipToPath)),
+		PasswordConfigured: len(resp.Passwords) > 0,
+	}, nil
+}
+
+func decodeLocationSettings(data json.RawMessage) (downloadstation.LocationSettings, error) {
+	var resp struct {
+		DefaultDestination          *string `json:"default_destination"`
+		EnableTorrentNzbWatch       *bool   `json:"enable_torrent_nzb_watch"`
+		EnableDeleteTorrentNzbWatch bool    `json:"enable_delete_torrent_nzb_watch"`
+		TorrentNzbWatchFolder       *string `json:"torrent_nzb_watch_folder"`
+	}
+	if err := unmarshalObject(data, "Download Station location settings", &resp); err != nil {
+		return downloadstation.LocationSettings{}, err
+	}
+	if resp.EnableTorrentNzbWatch == nil {
+		return downloadstation.LocationSettings{}, errors.New("decode Download Station location settings: required field \"enable_torrent_nzb_watch\" is missing")
+	}
+	return downloadstation.LocationSettings{
+		DefaultDestination:          strings.TrimSpace(deref(resp.DefaultDestination)),
+		EnableTorrentNzbWatch:       *resp.EnableTorrentNzbWatch,
+		EnableDeleteTorrentNzbWatch: resp.EnableDeleteTorrentNzbWatch,
+		TorrentNzbWatchFolder:       strings.TrimSpace(deref(resp.TorrentNzbWatchFolder)),
+	}, nil
+}
+
+func decodeRssSettings(data json.RawMessage) (downloadstation.RssSettings, error) {
+	var resp struct {
+		UpdateInterval *int `json:"update_interval"`
+	}
+	if err := unmarshalObject(data, "Download Station RSS settings", &resp); err != nil {
+		return downloadstation.RssSettings{}, err
+	}
+	if resp.UpdateInterval == nil {
+		return downloadstation.RssSettings{}, errors.New("decode Download Station RSS settings: required field \"update_interval\" is missing")
+	}
+	return downloadstation.RssSettings{UpdateIntervalMinutes: *resp.UpdateInterval}, nil
+}
+
+func decodeSchedulerSettings(data json.RawMessage) (downloadstation.SchedulerSettings, error) {
+	var resp struct {
+		EnableSchedule *bool   `json:"enable_schedule"`
+		DownloadRate   int     `json:"download_rate"`
+		UploadRate     int     `json:"upload_rate"`
+		MaxTasks       int     `json:"max_tasks"`
+		MaxTasksLimit  int     `json:"max_tasks_limit"`
+		Order          *string `json:"order"`
+		Schedule       *string `json:"schedule"`
+	}
+	if err := unmarshalObject(data, "Download Station scheduler settings", &resp); err != nil {
+		return downloadstation.SchedulerSettings{}, err
+	}
+	if resp.EnableSchedule == nil {
+		return downloadstation.SchedulerSettings{}, errors.New("decode Download Station scheduler settings: required field \"enable_schedule\" is missing")
+	}
+	return downloadstation.SchedulerSettings{
+		EnableSchedule: *resp.EnableSchedule,
+		DownloadRate:   resp.DownloadRate,
+		UploadRate:     resp.UploadRate,
+		MaxTasks:       resp.MaxTasks,
+		MaxTasksLimit:  resp.MaxTasksLimit,
+		Order:          strings.TrimSpace(deref(resp.Order)),
+		ScheduleBitmap: strings.TrimSpace(deref(resp.Schedule)),
+	}, nil
+}

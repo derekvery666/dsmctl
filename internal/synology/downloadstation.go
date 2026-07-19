@@ -12,6 +12,7 @@ import (
 type DownloadStationServiceState = downloadstation.ServiceState
 type DownloadStationTasks = downloadstation.Tasks
 type DownloadStationStatistics = downloadstation.Statistics
+type DownloadStationSettings = downloadstation.Settings
 type DownloadStationCapabilities = downloadstation.Capabilities
 
 func (c *Client) downloadStationEvidenceLocked() downloadstation.PackageEvidence {
@@ -85,6 +86,26 @@ func (c *Client) DownloadStationStatistics(ctx context.Context) (DownloadStation
 	return stats, nil
 }
 
+// DownloadStationSettings reads the full detailed configuration (BT, eMule,
+// FTP/HTTP, NZB, auto-extraction, location, RSS, scheduler, and general) from
+// the SYNO.DownloadStation2.Settings.* APIs.
+func (c *Client) DownloadStationSettings(ctx context.Context) (DownloadStationSettings, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, downloadstationops.APINames()...); err != nil {
+		return DownloadStationSettings{}, fmt.Errorf("prepare Download Station target: %w", err)
+	}
+	evidence := c.downloadStationEvidenceLocked()
+	settings, _, err := downloadstationops.ExecuteSettings(ctx, c.target, lockedExecutor{client: c})
+	if err != nil {
+		return DownloadStationSettings{}, downloadStationReadError("settings", evidence, err)
+	}
+	settings.Package = evidence
+	c.target.AddCapability(downloadstationops.SettingsReadCapabilityName)
+	return settings, nil
+}
+
 // DownloadStationCapabilities reports the Download Station reads plus package
 // evidence, each selected independently and gated on the installed package.
 func (c *Client) DownloadStationCapabilities(ctx context.Context) (DownloadStationCapabilities, CompatibilityReport, error) {
@@ -98,6 +119,7 @@ func (c *Client) DownloadStationCapabilities(ctx context.Context) (DownloadStati
 		downloadstationops.SelectService,
 		downloadstationops.SelectTask,
 		downloadstationops.SelectStatistic,
+		downloadstationops.SelectSettings,
 	}
 	selections := make([]compatibility.Selection, 0, len(selectors))
 	for _, selectOperation := range selectors {
@@ -112,6 +134,7 @@ func (c *Client) DownloadStationCapabilities(ctx context.Context) (DownloadStati
 		downloadstationops.ServiceReadCapabilityName,
 		downloadstationops.TaskReadCapabilityName,
 		downloadstationops.StatisticReadCapabilityName,
+		downloadstationops.SettingsReadCapabilityName,
 	}
 	for index, name := range capabilityNames {
 		if supported(index) {
@@ -124,6 +147,7 @@ func (c *Client) DownloadStationCapabilities(ctx context.Context) (DownloadStati
 		ServiceRead:   supported(0),
 		TaskRead:      supported(1),
 		StatisticRead: supported(2),
+		SettingsRead:  supported(3),
 	}
 	return capabilities, c.target.Report(selections...), nil
 }

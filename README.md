@@ -114,6 +114,7 @@ dsmctl download capabilities --nas office
 dsmctl download service --nas office --json
 dsmctl download tasks --nas office
 dsmctl download statistics --nas office
+dsmctl download settings --nas office
 ```
 
 The one External Access write so far is the QuickConnect relay toggle, through
@@ -258,6 +259,7 @@ Available tools:
 - `get_download_station_service`: read Download Station service configuration (version, destination, rate limits, schedule); read-only.
 - `get_download_station_tasks`: list Download Station download tasks with type, size, status, and transfer speed; read-only.
 - `get_download_station_statistics`: read the current aggregate download/upload speed; read-only.
+- `get_download_station_settings`: read the full detailed settings (BT, eMule, FTP/HTTP, NZB, auto-extraction, location, RSS, scheduler); passwords never returned; read-only.
 - `plan_package_change`: validate a start/stop/uninstall lifecycle action or an automatic-update settings change and return a state-bound approval plan without mutating DSM; install, update, and trust-level changes are rejected.
 - `apply_package_plan`: apply an approved, unchanged Package Center plan (lifecycle or settings) and verify the terminal package-state or settings postcondition.
 

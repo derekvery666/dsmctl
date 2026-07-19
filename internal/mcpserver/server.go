@@ -171,6 +171,11 @@ type getDownloadStationStatisticsOutput struct {
 	Statistics synology.DownloadStationStatistics `json:"statistics" jsonschema:"Aggregate transfer statistics"`
 }
 
+type getDownloadStationSettingsOutput struct {
+	NAS      string                           `json:"nas" jsonschema:"NAS profile used for the request"`
+	Settings synology.DownloadStationSettings `json:"settings" jsonschema:"Full detailed Download Station configuration"`
+}
+
 type planControlPanelTimeChangeInput struct {
 	NAS     string                  `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 	Request controlpanel.TimeChange `json:"request" jsonschema:"Patch-only time zone, display format, or NTP intent"`
@@ -1015,6 +1020,19 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getDownloadStationStatisticsOutput{}, err
 		}
 		return nil, getDownloadStationStatisticsOutput{NAS: result.NAS, Statistics: result.Statistics}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_download_station_settings",
+		Title:       "Get Download Station settings",
+		Description: "Read the full detailed Download Station configuration for a NAS: BitTorrent (ports, DHT, encryption, peers, seeding), eMule, FTP/HTTP, NZB, auto-extraction, destination/watch-folder, RSS, and the bandwidth scheduler. The NZB password and auto-extraction passwords are never returned. This tool never changes settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDownloadStationInput) (*mcp.CallToolResult, getDownloadStationSettingsOutput, error) {
+		result, err := service.GetDownloadStationSettings(ctx, input.NAS)
+		if err != nil {
+			return nil, getDownloadStationSettingsOutput{}, err
+		}
+		return nil, getDownloadStationSettingsOutput{NAS: result.NAS, Settings: result.Settings}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

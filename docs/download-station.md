@@ -2,15 +2,17 @@
 
 A read-only module for the Synology Download Station package, package-version
 gated on the installed `DownloadStation` package like the Photos and Surveillance
-modules. It targets the stable, publicly-documented legacy
-`SYNO.DownloadStation.*` API (each legacy API is served from its own CGI path,
-which the client resolves from the discovered API registry).
+modules. The service/task/statistic reads use the stable, publicly-documented
+legacy `SYNO.DownloadStation.*` API (each served from its own CGI path, resolved
+from the discovered API registry); the full detailed settings read uses the
+newer `SYNO.DownloadStation2.Settings.*` API generation (all on `entry.cgi`).
 
 ```console
 dsmctl download capabilities --nas office
 dsmctl download service --nas office --json
 dsmctl download tasks --nas office
 dsmctl download statistics --nas office
+dsmctl download settings --nas office
 ```
 
 - **`capabilities`** reports the installed package evidence (installed, version,
@@ -26,13 +28,21 @@ dsmctl download statistics --nas office
   because the verification NAS had no task to populate the list.
 - **`statistics`** reads `SYNO.DownloadStation.Statistic` (`getinfo`): the
   aggregate download and upload speed in bytes/s.
+- **`settings`** composes the `SYNO.DownloadStation2.Settings.*` reads into the
+  full detailed configuration: BitTorrent (TCP/DHT ports, DHT, port forwarding,
+  preview, encryption, rate limits, max peers, seeding), eMule, FTP/HTTP, NZB,
+  automatic extraction, destination/watch-folder, RSS refresh interval, and the
+  bandwidth scheduler (with DSM's raw 168-slot weekly bitmap). The NZB password
+  and archive-extraction passwords are never surfaced — only a
+  `password_configured` flag is.
 
 MCP exposes the same reads through `get_download_station_capabilities`,
-`get_download_station_service`, `get_download_station_tasks`, and
-`get_download_station_statistics`. All are read-only.
+`get_download_station_service`, `get_download_station_tasks`,
+`get_download_station_statistics`, and `get_download_station_settings`. All are
+read-only.
 
-Field shapes are live-verified on Download Station 4.1.2. Task mutations
-(create/pause/resume/delete/edit), the global-config writes, RSS, BT search, and
-the richer `SYNO.DownloadStation2.*` API generation are out of scope for this
-read module — see
+Field shapes are live-verified on Download Station 4.1.2. Everything writable —
+task mutations (create/pause/resume/delete/edit), settings writes — plus BT/eMule
+search, RSS management, and eMule server management are still out of scope for
+this read module; see
 [WI-043](../spec/work-items/WI-043-download-station.md).

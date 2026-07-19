@@ -84,6 +84,109 @@ type Statistics struct {
 	Package       PackageEvidence `json:"package" jsonschema:"Installed Download Station package evidence"`
 }
 
+// GlobalSettings is the Download Station general configuration.
+type GlobalSettings struct {
+	DownloadVolume      string `json:"download_volume,omitempty" jsonschema:"Default download volume mount point"`
+	EmuleEnabled        bool   `json:"emule_enabled" jsonschema:"Whether eMule is enabled"`
+	UnzipServiceEnabled bool   `json:"unzip_service_enabled" jsonschema:"Whether the auto-unzip service is enabled"`
+}
+
+// BTSettings is the BitTorrent configuration. Rates are in KB/s (0 = unlimited).
+type BTSettings struct {
+	TCPPort                 int    `json:"tcp_port" jsonschema:"BitTorrent listening TCP port"`
+	DHTPort                 int    `json:"dht_port" jsonschema:"DHT UDP port"`
+	EnableDHT               bool   `json:"enable_dht" jsonschema:"Whether DHT is enabled"`
+	EnablePortForwarding    bool   `json:"enable_port_forwarding" jsonschema:"Whether UPnP/NAT-PMP port forwarding is enabled"`
+	EnablePreview           bool   `json:"enable_preview" jsonschema:"Whether download preview is enabled"`
+	Encryption              string `json:"encryption,omitempty" jsonschema:"Protocol encryption policy, such as auto, on, or off"`
+	MaxDownloadRate         int    `json:"max_download_rate" jsonschema:"Maximum download rate in KB/s; 0 = unlimited"`
+	MaxUploadRate           int    `json:"max_upload_rate" jsonschema:"Maximum upload rate in KB/s; 0 = unlimited"`
+	MaxPeer                 int    `json:"max_peer" jsonschema:"Maximum peers per torrent"`
+	SeedingRatio            int    `json:"seeding_ratio" jsonschema:"Stop seeding at this ratio (percent); 0 = no limit"`
+	SeedingInterval         int    `json:"seeding_interval" jsonschema:"Stop seeding after this many minutes; 0 = no limit"`
+	EnableSeedingAutoRemove bool   `json:"enable_seeding_auto_remove" jsonschema:"Whether completed tasks are auto-removed when seeding stops"`
+}
+
+// EmuleSettings is the eMule configuration.
+type EmuleSettings struct {
+	Enabled            bool   `json:"enabled" jsonschema:"Whether eMule is enabled"`
+	DefaultDestination string `json:"default_destination,omitempty" jsonschema:"eMule default download destination"`
+}
+
+// FtpHttpSettings is the FTP/HTTP download configuration.
+type FtpHttpSettings struct {
+	MaxDownloadRate int  `json:"max_download_rate" jsonschema:"FTP/HTTP maximum download rate in KB/s; 0 = unlimited"`
+	EnableMaxConn   bool `json:"enable_max_conn" jsonschema:"Whether the per-task FTP connection limit is enforced"`
+	MaxConn         int  `json:"max_conn" jsonschema:"Maximum FTP connections per task"`
+}
+
+// NzbSettings is the NZB (Usenet) configuration. The news-server password is
+// never surfaced.
+type NzbSettings struct {
+	Server               string `json:"server,omitempty" jsonschema:"News server host"`
+	Port                 int    `json:"port" jsonschema:"News server port"`
+	Username             string `json:"username,omitempty" jsonschema:"News server username"`
+	EnableAuth           bool   `json:"enable_auth" jsonschema:"Whether news-server authentication is enabled"`
+	EnableEncryption     bool   `json:"enable_encryption" jsonschema:"Whether SSL to the news server is enabled"`
+	EnableParchive       bool   `json:"enable_parchive" jsonschema:"Whether PAR2 repair is enabled"`
+	EnableRemoveParfiles bool   `json:"enable_remove_parfiles" jsonschema:"Whether PAR2 files are removed after repair"`
+	ConnPerDownload      int    `json:"conn_per_download" jsonschema:"Connections per download"`
+	MaxDownloadRate      int    `json:"max_download_rate" jsonschema:"NZB maximum download rate in KB/s; 0 = unlimited"`
+}
+
+// AutoExtractionSettings is the automatic archive extraction configuration.
+// Archive passwords are never surfaced.
+type AutoExtractionSettings struct {
+	EnableUnzip        bool   `json:"enable_unzip" jsonschema:"Whether automatic extraction is enabled"`
+	EnableUnzipService bool   `json:"enable_unzip_service" jsonschema:"Whether the unzip service is enabled"`
+	CreateSubfolder    bool   `json:"create_subfolder" jsonschema:"Whether a subfolder is created per archive"`
+	DeleteArchive      bool   `json:"delete_archive" jsonschema:"Whether the archive is deleted after extraction"`
+	UnzipOverwrite     bool   `json:"unzip_overwrite" jsonschema:"Whether existing files are overwritten"`
+	UnzipLocation      string `json:"unzip_location,omitempty" jsonschema:"Extraction location mode, such as current_folder"`
+	UnzipToPath        string `json:"unzip_to_path,omitempty" jsonschema:"Extraction destination when a fixed path is used"`
+	PasswordConfigured bool   `json:"password_configured" jsonschema:"Whether one or more extraction passwords are configured; the values are never returned"`
+}
+
+// LocationSettings is the destination and watch-folder configuration.
+type LocationSettings struct {
+	DefaultDestination          string `json:"default_destination,omitempty" jsonschema:"Default download destination shared folder"`
+	EnableTorrentNzbWatch       bool   `json:"enable_torrent_nzb_watch" jsonschema:"Whether the torrent/NZB watch folder is enabled"`
+	EnableDeleteTorrentNzbWatch bool   `json:"enable_delete_torrent_nzb_watch" jsonschema:"Whether watched torrent/NZB files are deleted after import"`
+	TorrentNzbWatchFolder       string `json:"torrent_nzb_watch_folder,omitempty" jsonschema:"Watch folder path"`
+}
+
+// RssSettings is the RSS auto-download configuration.
+type RssSettings struct {
+	UpdateIntervalMinutes int `json:"update_interval_minutes" jsonschema:"RSS feed refresh interval in minutes"`
+}
+
+// SchedulerSettings is the bandwidth/alternative-rate schedule. Schedule is the
+// raw 168-character weekly bitmap DSM stores (7 days x 24 hours).
+type SchedulerSettings struct {
+	EnableSchedule bool   `json:"enable_schedule" jsonschema:"Whether the download schedule is enabled"`
+	DownloadRate   int    `json:"download_rate" jsonschema:"Scheduled download rate in KB/s; 0 = unlimited"`
+	UploadRate     int    `json:"upload_rate" jsonschema:"Scheduled upload rate in KB/s; 0 = unlimited"`
+	MaxTasks       int    `json:"max_tasks" jsonschema:"Maximum simultaneous tasks"`
+	MaxTasksLimit  int    `json:"max_tasks_limit" jsonschema:"Upper bound DSM allows for max_tasks"`
+	Order          string `json:"order,omitempty" jsonschema:"Task ordering policy, such as request"`
+	ScheduleBitmap string `json:"schedule_bitmap,omitempty" jsonschema:"Raw 168-character weekly on/off bitmap (7 days x 24 hours)"`
+}
+
+// Settings is the full normalized Download Station configuration composed from
+// the SYNO.DownloadStation2.Settings.* APIs.
+type Settings struct {
+	Global         GlobalSettings         `json:"global" jsonschema:"General settings"`
+	BT             BTSettings             `json:"bt" jsonschema:"BitTorrent settings"`
+	Emule          EmuleSettings          `json:"emule" jsonschema:"eMule settings"`
+	FtpHttp        FtpHttpSettings        `json:"ftp_http" jsonschema:"FTP/HTTP settings"`
+	Nzb            NzbSettings            `json:"nzb" jsonschema:"NZB settings"`
+	AutoExtraction AutoExtractionSettings `json:"auto_extraction" jsonschema:"Automatic extraction settings"`
+	Location       LocationSettings       `json:"location" jsonschema:"Destination and watch-folder settings"`
+	Rss            RssSettings            `json:"rss" jsonschema:"RSS settings"`
+	Scheduler      SchedulerSettings      `json:"scheduler" jsonschema:"Bandwidth-schedule settings"`
+	Package        PackageEvidence        `json:"package" jsonschema:"Installed Download Station package evidence"`
+}
+
 // Capabilities reports which Download Station reads dsmctl exposes for the
 // installed package.
 type Capabilities struct {
@@ -92,4 +195,5 @@ type Capabilities struct {
 	ServiceRead   bool            `json:"service_read" jsonschema:"Whether service configuration can be read"`
 	TaskRead      bool            `json:"task_read" jsonschema:"Whether the download task list can be read"`
 	StatisticRead bool            `json:"statistic_read" jsonschema:"Whether transfer statistics can be read"`
+	SettingsRead  bool            `json:"settings_read" jsonschema:"Whether the full detailed settings can be read"`
 }

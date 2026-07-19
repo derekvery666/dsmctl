@@ -60,6 +60,7 @@ type Client interface {
 	DownloadStationServiceState(ctx context.Context) (synology.DownloadStationServiceState, error)
 	DownloadStationTasks(ctx context.Context) (synology.DownloadStationTasks, error)
 	DownloadStationStatistics(ctx context.Context) (synology.DownloadStationStatistics, error)
+	DownloadStationSettings(ctx context.Context) (synology.DownloadStationSettings, error)
 	DownloadStationCapabilities(ctx context.Context) (synology.DownloadStationCapabilities, synology.CompatibilityReport, error)
 }
 

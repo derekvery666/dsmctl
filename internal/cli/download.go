@@ -21,7 +21,34 @@ func newDownloadCommand(opts *options) *cobra.Command {
 		newDownloadServiceCommand(opts),
 		newDownloadTasksCommand(opts),
 		newDownloadStatisticsCommand(opts),
+		newDownloadSettingsCommand(opts),
 	)
+	return command
+}
+
+func newDownloadSettingsCommand(opts *options) *cobra.Command {
+	var jsonOutput bool
+	command := &cobra.Command{
+		Use:   "settings",
+		Short: "Show the full Download Station settings (BT, eMule, FTP/HTTP, NZB, auto-extract, location, RSS, scheduler)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.GetDownloadStationSettings(cmd.Context(), opts.nas)
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return encodeIndentedJSON(cmd.OutOrStdout(), result)
+			}
+			return writeDownloadSettings(cmd, result)
+		},
+	}
+	command.Flags().BoolVar(&jsonOutput, "json", false, "output structured JSON")
 	return command
 }
 
@@ -141,6 +168,7 @@ func writeDownloadCapabilities(cmd *cobra.Command, result application.DownloadSt
 	fmt.Fprintf(writer, "Service read:\t%s\n", yesNo(c.ServiceRead))
 	fmt.Fprintf(writer, "Task read:\t%s\n", yesNo(c.TaskRead))
 	fmt.Fprintf(writer, "Statistic read:\t%s\n", yesNo(c.StatisticRead))
+	fmt.Fprintf(writer, "Settings read:\t%s\n", yesNo(c.SettingsRead))
 	fmt.Fprintln(writer, "\nOPERATIONS")
 	fmt.Fprintln(writer, "OPERATION\tSUPPORTED\tBACKEND\tAPI\tVERSION")
 	for _, operation := range result.Report.Operations {
@@ -189,5 +217,57 @@ func writeDownloadStatistics(cmd *cobra.Command, result application.DownloadStat
 	fmt.Fprintf(writer, "NAS:\t%s\n", result.NAS)
 	fmt.Fprintf(writer, "Download speed (B/s):\t%d\n", result.Statistics.SpeedDownload)
 	fmt.Fprintf(writer, "Upload speed (B/s):\t%d\n", result.Statistics.SpeedUpload)
+	return writer.Flush()
+}
+
+func writeDownloadSettings(cmd *cobra.Command, result application.DownloadStationSettingsResult) error {
+	writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+	s := result.Settings
+	fmt.Fprintf(writer, "NAS:\t%s\n", result.NAS)
+	fmt.Fprintf(writer, "Download volume:\t%s\n", valueOrDash(s.Global.DownloadVolume))
+	fmt.Fprintf(writer, "eMule enabled:\t%s\n", yesNo(s.Global.EmuleEnabled))
+	fmt.Fprintf(writer, "Auto-unzip service:\t%s\n", yesNo(s.Global.UnzipServiceEnabled))
+
+	fmt.Fprintln(writer, "\nBITTORRENT")
+	fmt.Fprintf(writer, "  TCP / DHT port:\t%d / %d\n", s.BT.TCPPort, s.BT.DHTPort)
+	fmt.Fprintf(writer, "  DHT / port-forwarding / preview:\t%s / %s / %s\n", yesNo(s.BT.EnableDHT), yesNo(s.BT.EnablePortForwarding), yesNo(s.BT.EnablePreview))
+	fmt.Fprintf(writer, "  Encryption:\t%s\n", valueOrDash(s.BT.Encryption))
+	fmt.Fprintf(writer, "  Max down/up (KB/s):\t%d / %d\n", s.BT.MaxDownloadRate, s.BT.MaxUploadRate)
+	fmt.Fprintf(writer, "  Max peers:\t%d\n", s.BT.MaxPeer)
+	fmt.Fprintf(writer, "  Seeding ratio / interval / auto-remove:\t%d%% / %dm / %s\n", s.BT.SeedingRatio, s.BT.SeedingInterval, yesNo(s.BT.EnableSeedingAutoRemove))
+
+	fmt.Fprintln(writer, "\nEMULE")
+	fmt.Fprintf(writer, "  Enabled:\t%s\n", yesNo(s.Emule.Enabled))
+	fmt.Fprintf(writer, "  Default destination:\t%s\n", valueOrDash(s.Emule.DefaultDestination))
+
+	fmt.Fprintln(writer, "\nFTP/HTTP")
+	fmt.Fprintf(writer, "  Max download (KB/s):\t%d\n", s.FtpHttp.MaxDownloadRate)
+	fmt.Fprintf(writer, "  Per-task conn limit / max conn:\t%s / %d\n", yesNo(s.FtpHttp.EnableMaxConn), s.FtpHttp.MaxConn)
+
+	fmt.Fprintln(writer, "\nNZB")
+	fmt.Fprintf(writer, "  Server:\t%s:%d\n", valueOrDash(s.Nzb.Server), s.Nzb.Port)
+	fmt.Fprintf(writer, "  Auth / SSL:\t%s / %s\n", yesNo(s.Nzb.EnableAuth), yesNo(s.Nzb.EnableEncryption))
+	fmt.Fprintf(writer, "  PAR2 repair / remove:\t%s / %s\n", yesNo(s.Nzb.EnableParchive), yesNo(s.Nzb.EnableRemoveParfiles))
+	fmt.Fprintf(writer, "  Conn per download / max down (KB/s):\t%d / %d\n", s.Nzb.ConnPerDownload, s.Nzb.MaxDownloadRate)
+
+	fmt.Fprintln(writer, "\nAUTO-EXTRACTION")
+	fmt.Fprintf(writer, "  Enabled / service:\t%s / %s\n", yesNo(s.AutoExtraction.EnableUnzip), yesNo(s.AutoExtraction.EnableUnzipService))
+	fmt.Fprintf(writer, "  Subfolder / delete archive / overwrite:\t%s / %s / %s\n", yesNo(s.AutoExtraction.CreateSubfolder), yesNo(s.AutoExtraction.DeleteArchive), yesNo(s.AutoExtraction.UnzipOverwrite))
+	fmt.Fprintf(writer, "  Location:\t%s\n", valueOrDash(s.AutoExtraction.UnzipLocation))
+	fmt.Fprintf(writer, "  Password configured:\t%s\n", yesNo(s.AutoExtraction.PasswordConfigured))
+
+	fmt.Fprintln(writer, "\nLOCATION / WATCH FOLDER")
+	fmt.Fprintf(writer, "  Default destination:\t%s\n", valueOrDash(s.Location.DefaultDestination))
+	fmt.Fprintf(writer, "  Watch enabled / delete after import:\t%s / %s\n", yesNo(s.Location.EnableTorrentNzbWatch), yesNo(s.Location.EnableDeleteTorrentNzbWatch))
+	fmt.Fprintf(writer, "  Watch folder:\t%s\n", valueOrDash(s.Location.TorrentNzbWatchFolder))
+
+	fmt.Fprintln(writer, "\nRSS")
+	fmt.Fprintf(writer, "  Update interval (min):\t%d\n", s.Rss.UpdateIntervalMinutes)
+
+	fmt.Fprintln(writer, "\nSCHEDULER")
+	fmt.Fprintf(writer, "  Enabled:\t%s\n", yesNo(s.Scheduler.EnableSchedule))
+	fmt.Fprintf(writer, "  Scheduled down/up (KB/s):\t%d / %d\n", s.Scheduler.DownloadRate, s.Scheduler.UploadRate)
+	fmt.Fprintf(writer, "  Max tasks (limit):\t%d (%d)\n", s.Scheduler.MaxTasks, s.Scheduler.MaxTasksLimit)
+	fmt.Fprintf(writer, "  Order:\t%s\n", valueOrDash(s.Scheduler.Order))
 	return writer.Flush()
 }

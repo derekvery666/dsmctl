@@ -41,6 +41,12 @@ are present on DSM 7.3; the legacy surface is simpler and version-stable).
   speed.
 - **Statistics** — `SYNO.DownloadStation.Statistic` (`getinfo`): aggregate
   download/upload speed.
+- **Settings** — the newer `SYNO.DownloadStation2.Settings.*` generation (all on
+  `entry.cgi`) composed into one detailed configuration: BT (ports, DHT, port
+  forwarding, preview, encryption, rate limits, max peers, seeding), eMule,
+  FTP/HTTP, NZB, auto-extraction, destination/watch-folder, RSS interval, and the
+  scheduler (raw 168-slot weekly bitmap). The NZB and archive-extraction
+  passwords are never decoded into the model.
 - Package-version gating on `DownloadStation` (>= 3.0, verified on 4.1.2) so a
   NAS without it fails closed with package evidence.
 
@@ -49,10 +55,14 @@ are present on DSM 7.3; the legacy surface is simpler and version-stable).
 - Task mutations (`create` / `pause` / `resume` / `delete` / `edit`) — a guarded
   plan/apply follow-on. `create` in particular makes the NAS fetch external
   content, so it is deferred until scoped with the right guardrails.
-- RSS (`RSS.Site` / `RSS.Feed`), BT search (`BTSearch`), eMule search, and the
-  per-task BT/file/tracker/peer/NZB detail sub-resources.
-- The richer `SYNO.DownloadStation2.*` API generation.
-- Global config writes (`Info.setserverconfig`, `Schedule.setconfig`).
+- RSS (`RSS.Site` / `RSS.Feed`), BT search (`BTSearch`), eMule search, eMule
+  server management, and the per-task BT/file/tracker/peer/NZB detail
+  sub-resources.
+- **Settings writes** (`DownloadStation2.Settings.*` `set`) — the settings are
+  read-only here; guarded writes are a follow-on.
+- The task-management side of `SYNO.DownloadStation2.*` (`Task`, `Task.List`,
+  `Task.BT.*`); the read module uses only the `Settings.*` slice of that
+  generation plus the legacy Task list.
 
 ## Design constraints
 
@@ -74,9 +84,11 @@ are present on DSM 7.3; the legacy surface is simpler and version-stable).
 
 ## Acceptance criteria
 
-- [x] `download capabilities|service|tasks|statistics` (CLI) and the matching
-      `get_download_station_*` MCP tools return normalized state with package
-      evidence.
+- [x] `download capabilities|service|tasks|statistics|settings` (CLI) and the
+      matching `get_download_station_*` MCP tools return normalized state with
+      package evidence.
+- [x] `settings` composes the ten `DownloadStation2.Settings.*` reads, live-verified
+      on 4.1.2; NZB/archive passwords never surface (unit test asserts no leak).
 - [x] Package-gating: reads/selection fail closed without DownloadStation and
       below the 3.0 baseline; capabilities carry installed/version/running.
 - [x] Decoder + composition unit tests (service composes three reads; tolerant
