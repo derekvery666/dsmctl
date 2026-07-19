@@ -125,6 +125,13 @@ echo '{"action":"create","uris":["https://example.com/file.iso"],"destination":"
 dsmctl download tasks apply --nas office -f task.plan.json --approve <hash-from-plan>
 ```
 
+BitTorrent settings are changed the same way (patch-only, full-object merge):
+
+```console
+echo '{"bt":{"max_upload_rate":15}}' | dsmctl download settings plan --nas office -o bt.plan.json
+dsmctl download settings apply --nas office -f bt.plan.json --approve <hash-from-plan>
+```
+
 The one External Access write so far is the QuickConnect relay toggle, through
 the same plan/apply contract:
 
@@ -270,6 +277,8 @@ Available tools:
 - `get_download_station_settings`: read the full detailed settings (BT, eMule, FTP/HTTP, NZB, auto-extraction, location, RSS, scheduler); passwords never returned; read-only.
 - `plan_download_station_task_change`: validate a task create/pause/resume/delete request and return a target-bound approval plan without mutating DSM.
 - `apply_download_station_task_plan`: apply an approved, unchanged task plan and verify the postcondition (created/paused/resumed/deleted).
+- `plan_download_station_settings_change`: validate a BitTorrent settings patch and return a state-bound approval plan without mutating DSM.
+- `apply_download_station_settings_plan`: apply an approved, unchanged settings plan (full-object merge) and verify each changed field.
 - `plan_package_change`: validate a start/stop/uninstall lifecycle action or an automatic-update settings change and return a state-bound approval plan without mutating DSM; install, update, and trust-level changes are rejected.
 - `apply_package_plan`: apply an approved, unchanged Package Center plan (lifecycle or settings) and verify the terminal package-state or settings postcondition.
 

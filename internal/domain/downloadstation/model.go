@@ -139,6 +139,39 @@ type BTSettings struct {
 	EnableSeedingAutoRemove bool   `json:"enable_seeding_auto_remove" jsonschema:"Whether completed tasks are auto-removed when seeding stops"`
 }
 
+// BTSettingsChange is a patch-only BitTorrent settings intent. A nil field
+// keeps the current value.
+type BTSettingsChange struct {
+	TCPPort                 *int    `json:"tcp_port,omitempty" jsonschema:"Desired BitTorrent TCP port"`
+	DHTPort                 *int    `json:"dht_port,omitempty" jsonschema:"Desired DHT UDP port"`
+	EnableDHT               *bool   `json:"enable_dht,omitempty" jsonschema:"Enable or disable DHT"`
+	EnablePortForwarding    *bool   `json:"enable_port_forwarding,omitempty" jsonschema:"Enable or disable UPnP/NAT-PMP port forwarding"`
+	EnablePreview           *bool   `json:"enable_preview,omitempty" jsonschema:"Enable or disable download preview"`
+	Encryption              *string `json:"encryption,omitempty" jsonschema:"Protocol encryption policy: auto, on, or off"`
+	MaxDownloadRate         *int    `json:"max_download_rate,omitempty" jsonschema:"Maximum download rate in KB/s; 0 = unlimited"`
+	MaxUploadRate           *int    `json:"max_upload_rate,omitempty" jsonschema:"Maximum upload rate in KB/s; 0 = unlimited"`
+	MaxPeer                 *int    `json:"max_peer,omitempty" jsonschema:"Maximum peers per torrent"`
+	SeedingRatio            *int    `json:"seeding_ratio,omitempty" jsonschema:"Stop-seeding ratio in percent; 0 = no limit"`
+	SeedingInterval         *int    `json:"seeding_interval,omitempty" jsonschema:"Stop-seeding interval in minutes; 0 = no limit"`
+	EnableSeedingAutoRemove *bool   `json:"enable_seeding_auto_remove,omitempty" jsonschema:"Auto-remove completed tasks when seeding stops"`
+}
+
+// SettingsChange is a patch across Download Station settings groups. Exactly one
+// group patch is present per change. More groups are added as they are
+// implemented as guarded writes.
+type SettingsChange struct {
+	BT *BTSettingsChange `json:"bt,omitempty" jsonschema:"BitTorrent settings patch"`
+}
+
+// SettingsMutationResult records the DSM backend that accepted a settings write.
+type SettingsMutationResult struct {
+	Backend string `json:"backend" jsonschema:"Selected DSM compatibility backend"`
+	API     string `json:"api" jsonschema:"DSM WebAPI used for the change"`
+	Version int    `json:"version" jsonschema:"DSM WebAPI version used for the change"`
+	Method  string `json:"method" jsonschema:"DSM WebAPI method used for the change"`
+	Group   string `json:"group" jsonschema:"Settings group changed, such as bt"`
+}
+
 // EmuleSettings is the eMule configuration.
 type EmuleSettings struct {
 	Enabled            bool   `json:"enabled" jsonschema:"Whether eMule is enabled"`
@@ -229,4 +262,5 @@ type Capabilities struct {
 	StatisticRead bool            `json:"statistic_read" jsonschema:"Whether transfer statistics can be read"`
 	SettingsRead  bool            `json:"settings_read" jsonschema:"Whether the full detailed settings can be read"`
 	TaskWrite     bool            `json:"task_write" jsonschema:"Whether guarded task create/pause/resume/delete is available"`
+	SettingsWrite bool            `json:"settings_write" jsonschema:"Whether guarded settings changes (BT group) are available"`
 }

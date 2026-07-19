@@ -50,6 +50,10 @@ func newDownloadSettingsCommand(opts *options) *cobra.Command {
 		},
 	}
 	command.Flags().BoolVar(&jsonOutput, "json", false, "output structured JSON")
+	command.AddCommand(
+		newDownloadSettingsPlanCommand(opts),
+		newDownloadSettingsApplyCommand(opts),
+	)
 	return command
 }
 
@@ -219,6 +223,63 @@ func newDownloadStatisticsCommand(opts *options) *cobra.Command {
 	return command
 }
 
+func newDownloadSettingsPlanCommand(opts *options) *cobra.Command {
+	var inputPath, outputPath string
+	command := &cobra.Command{
+		Use:   "plan",
+		Short: "Validate a settings patch (BitTorrent group) and emit an approval plan as JSON",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var request downloadstation.SettingsChange
+			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
+				return fmt.Errorf("read settings change: %w", err)
+			}
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			plan, err := service.PlanDownloadStationSettingsChange(cmd.Context(), opts.nas, request)
+			if err != nil {
+				return err
+			}
+			return encodeJSONOutput(cmd, outputPath, plan)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "settings change JSON file, or - for stdin")
+	command.Flags().StringVarP(&outputPath, "output", "o", "-", "plan JSON file, or - for stdout")
+	return command
+}
+
+func newDownloadSettingsApplyCommand(opts *options) *cobra.Command {
+	var inputPath, approvalHash string
+	command := &cobra.Command{
+		Use:   "apply",
+		Short: "Apply a settings plan after hash and stale-state validation",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var plan application.DownloadStationSettingsPlan
+			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
+				return fmt.Errorf("read settings plan: %w", err)
+			}
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.ApplyDownloadStationSettingsPlan(cmd.Context(), plan, approvalHash)
+			if err != nil {
+				return err
+			}
+			return encodeIndentedJSON(cmd.OutOrStdout(), result)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "settings plan JSON file, or - for stdin")
+	command.Flags().StringVar(&approvalHash, "approve", "", "exact SHA-256 hash printed by settings plan")
+	_ = command.MarkFlagRequired("approve")
+	return command
+}
+
 func writeDownloadCapabilities(cmd *cobra.Command, result application.DownloadStationCapabilitiesResult) error {
 	writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
 	c := result.Capabilities
@@ -232,6 +293,7 @@ func writeDownloadCapabilities(cmd *cobra.Command, result application.DownloadSt
 	fmt.Fprintf(writer, "Statistic read:\t%s\n", yesNo(c.StatisticRead))
 	fmt.Fprintf(writer, "Settings read:\t%s\n", yesNo(c.SettingsRead))
 	fmt.Fprintf(writer, "Task write (guarded):\t%s\n", yesNo(c.TaskWrite))
+	fmt.Fprintf(writer, "Settings write (guarded, BT):\t%s\n", yesNo(c.SettingsWrite))
 	fmt.Fprintln(writer, "\nOPERATIONS")
 	fmt.Fprintln(writer, "OPERATION\tSUPPORTED\tBACKEND\tAPI\tVERSION")
 	for _, operation := range result.Report.Operations {

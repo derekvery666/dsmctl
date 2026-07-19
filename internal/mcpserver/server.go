@@ -195,6 +195,24 @@ type applyDownloadStationTaskPlanOutput struct {
 	Result application.DownloadStationTaskApplyResult `json:"result" jsonschema:"Apply outcome including the affected task ids"`
 }
 
+type planDownloadStationSettingsChangeInput struct {
+	NAS     string                         `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request downloadstation.SettingsChange `json:"request" jsonschema:"Patch-only settings intent (BitTorrent group)"`
+}
+
+type planDownloadStationSettingsChangeOutput struct {
+	Plan application.DownloadStationSettingsPlan `json:"plan" jsonschema:"Validated plan bound to the complete observed settings group and approval hash"`
+}
+
+type applyDownloadStationSettingsPlanInput struct {
+	Plan         application.DownloadStationSettingsPlan `json:"plan" jsonschema:"Approved settings plan from plan_download_station_settings_change"`
+	ApprovalHash string                                 `json:"approval_hash" jsonschema:"Exact SHA-256 approval hash from the plan"`
+}
+
+type applyDownloadStationSettingsPlanOutput struct {
+	Result application.DownloadStationSettingsApplyResult `json:"result" jsonschema:"Apply outcome including the selected DSM mutation backend"`
+}
+
 type planControlPanelTimeChangeInput struct {
 	NAS     string                  `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 	Request controlpanel.TimeChange `json:"request" jsonschema:"Patch-only time zone, display format, or NTP intent"`
@@ -1078,6 +1096,32 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, applyDownloadStationTaskPlanOutput{}, err
 		}
 		return nil, applyDownloadStationTaskPlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_download_station_settings_change",
+		Title:       "Plan a Download Station settings change",
+		Description: "Validate a patch-only Download Station settings change (BitTorrent group: ports, DHT, port forwarding, preview, encryption, rate limits, max peers, seeding) and return an approval plan bound to the complete observed group state. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planDownloadStationSettingsChangeInput) (*mcp.CallToolResult, planDownloadStationSettingsChangeOutput, error) {
+		plan, err := service.PlanDownloadStationSettingsChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planDownloadStationSettingsChangeOutput{}, err
+		}
+		return nil, planDownloadStationSettingsChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_download_station_settings_plan",
+		Title:       "Apply an approved Download Station settings plan",
+		Description: "Apply an unmodified settings plan only while its approval hash and the complete observed settings group still match, merging the patch into the full group object and verifying each changed field. Enabling port forwarding increases external exposure and is high risk.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyDownloadStationSettingsPlanInput) (*mcp.CallToolResult, applyDownloadStationSettingsPlanOutput, error) {
+		result, err := service.ApplyDownloadStationSettingsPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyDownloadStationSettingsPlanOutput{}, err
+		}
+		return nil, applyDownloadStationSettingsPlanOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

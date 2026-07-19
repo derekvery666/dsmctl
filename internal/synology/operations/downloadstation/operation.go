@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/ychiu1211/dsmctl/internal/domain/downloadstation"
@@ -46,6 +47,7 @@ const (
 	StatisticReadCapabilityName = "download.statistic.read"
 	SettingsReadCapabilityName  = "download.settings.read"
 	TaskWriteCapabilityName     = "download.task.write"
+	SettingsWriteCapabilityName = "download.settings.write"
 )
 
 // baselinePackage gates every variant on Download Station 3.x+, covering the
@@ -275,6 +277,83 @@ var taskWriteOp = compatibility.Operation[downloadstation.TaskChange, downloadst
 func SelectTaskWrite(target compatibility.Target) (compatibility.Selection, error) {
 	_, selection, err := taskWriteOp.Select(target)
 	return selection, err
+}
+
+// btGetOp reads the current BitTorrent settings so a guarded write can merge a
+// patch into the complete object (the set is a full-object replace).
+var btGetOp = compatibility.Operation[Input, downloadstation.BTSettings]{
+	Name: "download.settings.bt.get",
+	Variants: []compatibility.Variant[Input, downloadstation.BTSettings]{
+		{
+			Name: "downloadstation2-settings-bt-get-v1", API: SettingsBTAPIName, Version: 1, Priority: 10,
+			Match: compatibility.All(compatibility.APIVersion(SettingsBTAPIName, 1), baselinePackage),
+			Execute: func(ctx context.Context, executor compatibility.Executor, _ Input) (downloadstation.BTSettings, error) {
+				data, err := executor.Execute(ctx, compatibility.Request{API: SettingsBTAPIName, Version: 1, Method: "get"})
+				if err != nil {
+					return downloadstation.BTSettings{}, fmt.Errorf("call %s.get: %w", SettingsBTAPIName, err)
+				}
+				return decodeBTSettings(data)
+			},
+		},
+	},
+}
+
+// btSetOp writes the full BitTorrent settings object via Settings.BT set (method
+// and full-object form encoding live-verified on 4.1.2).
+var btSetOp = compatibility.Operation[downloadstation.BTSettings, downloadstation.SettingsMutationResult]{
+	Name: SettingsWriteCapabilityName,
+	Variants: []compatibility.Variant[downloadstation.BTSettings, downloadstation.SettingsMutationResult]{
+		{
+			Name: "downloadstation2-settings-bt-set-v1", API: SettingsBTAPIName, Version: 1, Priority: 10,
+			Match: compatibility.All(compatibility.APIVersion(SettingsBTAPIName, 1), baselinePackage),
+			Execute: func(ctx context.Context, executor compatibility.Executor, desired downloadstation.BTSettings) (downloadstation.SettingsMutationResult, error) {
+				if _, err := executor.Execute(ctx, compatibility.Request{API: SettingsBTAPIName, Version: 1, Method: "set", Parameters: encodeBTSettings(desired)}); err != nil {
+					return downloadstation.SettingsMutationResult{}, fmt.Errorf("call %s.set: %w", SettingsBTAPIName, err)
+				}
+				return downloadstation.SettingsMutationResult{API: SettingsBTAPIName, Version: 1, Method: "set", Group: "bt"}, nil
+			},
+		},
+	},
+}
+
+func encodeBTSettings(bt downloadstation.BTSettings) url.Values {
+	boolStr := func(b bool) string {
+		if b {
+			return "true"
+		}
+		return "false"
+	}
+	v := url.Values{}
+	v.Set("tcp_port", strconv.Itoa(bt.TCPPort))
+	v.Set("dht_port", strconv.Itoa(bt.DHTPort))
+	v.Set("enable_dht", boolStr(bt.EnableDHT))
+	v.Set("enable_port_forwarding", boolStr(bt.EnablePortForwarding))
+	v.Set("enable_preview", boolStr(bt.EnablePreview))
+	v.Set("encrypt", bt.Encryption)
+	v.Set("max_download_rate", strconv.Itoa(bt.MaxDownloadRate))
+	v.Set("max_upload_rate", strconv.Itoa(bt.MaxUploadRate))
+	v.Set("max_peer", strconv.Itoa(bt.MaxPeer))
+	v.Set("seeding_ratio", strconv.Itoa(bt.SeedingRatio))
+	v.Set("seeding_interval", strconv.Itoa(bt.SeedingInterval))
+	v.Set("enable_seeding_auto_remove", boolStr(bt.EnableSeedingAutoRemove))
+	return v
+}
+
+func SelectSettingsWrite(target compatibility.Target) (compatibility.Selection, error) {
+	_, selection, err := btSetOp.Select(target)
+	return selection, err
+}
+
+func ExecuteBTGet(ctx context.Context, target compatibility.Target, executor compatibility.Executor) (downloadstation.BTSettings, compatibility.Selection, error) {
+	return btGetOp.Run(ctx, target, executor, Input{})
+}
+
+func ExecuteBTSet(ctx context.Context, target compatibility.Target, executor compatibility.Executor, desired downloadstation.BTSettings) (downloadstation.SettingsMutationResult, compatibility.Selection, error) {
+	result, selection, err := btSetOp.Run(ctx, target, executor, desired)
+	if err == nil {
+		result.Backend = selection.Backend
+	}
+	return result, selection, err
 }
 
 func ExecuteTaskWrite(ctx context.Context, target compatibility.Target, executor compatibility.Executor, change downloadstation.TaskChange) (downloadstation.TaskMutationResult, compatibility.Selection, error) {

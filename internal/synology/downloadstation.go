@@ -16,6 +16,9 @@ type DownloadStationStatistics = downloadstation.Statistics
 type DownloadStationSettings = downloadstation.Settings
 type DownloadStationTaskChange = downloadstation.TaskChange
 type DownloadStationTaskMutationResult = downloadstation.TaskMutationResult
+type DownloadStationBTSettings = downloadstation.BTSettings
+type DownloadStationSettingsChange = downloadstation.SettingsChange
+type DownloadStationSettingsMutationResult = downloadstation.SettingsMutationResult
 type DownloadStationCapabilities = downloadstation.Capabilities
 
 func (c *Client) downloadStationEvidenceLocked() downloadstation.PackageEvidence {
@@ -126,6 +129,87 @@ func (c *Client) ApplyDownloadStationTaskChange(ctx context.Context, change Down
 	return result, nil
 }
 
+// DownloadStationBTSettings reads the current BitTorrent settings group.
+func (c *Client) DownloadStationBTSettings(ctx context.Context) (DownloadStationBTSettings, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, downloadstationops.APINames()...); err != nil {
+		return DownloadStationBTSettings{}, fmt.Errorf("prepare Download Station target: %w", err)
+	}
+	bt, _, err := downloadstationops.ExecuteBTGet(ctx, c.target, lockedExecutor{client: c})
+	if err != nil {
+		return DownloadStationBTSettings{}, downloadStationReadError("BT settings", c.downloadStationEvidenceLocked(), err)
+	}
+	return bt, nil
+}
+
+// ApplyDownloadStationSettingsChange merges a settings-group patch into the
+// freshly read full group object and submits it, so a field the caller did not
+// specify is never reset. Only the BitTorrent group is supported so far.
+func (c *Client) ApplyDownloadStationSettingsChange(ctx context.Context, change DownloadStationSettingsChange) (DownloadStationSettingsMutationResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if change.BT == nil {
+		return DownloadStationSettingsMutationResult{}, fmt.Errorf("settings change has no supported group patch")
+	}
+	if err := c.preparePackageScopedTargetLocked(ctx, downloadstationops.APINames()...); err != nil {
+		return DownloadStationSettingsMutationResult{}, fmt.Errorf("prepare Download Station mutation target: %w", err)
+	}
+	current, _, err := downloadstationops.ExecuteBTGet(ctx, c.target, lockedExecutor{client: c})
+	if err != nil {
+		return DownloadStationSettingsMutationResult{}, downloadStationReadError("BT settings", c.downloadStationEvidenceLocked(), err)
+	}
+	desired := mergeBTSettings(current, *change.BT)
+	result, _, err := downloadstationops.ExecuteBTSet(ctx, c.target, lockedExecutor{client: c}, desired)
+	if err != nil {
+		return DownloadStationSettingsMutationResult{}, fmt.Errorf("apply Download Station BT settings: %w", err)
+	}
+	return result, nil
+}
+
+func mergeBTSettings(current downloadstation.BTSettings, patch downloadstation.BTSettingsChange) downloadstation.BTSettings {
+	desired := current
+	if patch.TCPPort != nil {
+		desired.TCPPort = *patch.TCPPort
+	}
+	if patch.DHTPort != nil {
+		desired.DHTPort = *patch.DHTPort
+	}
+	if patch.EnableDHT != nil {
+		desired.EnableDHT = *patch.EnableDHT
+	}
+	if patch.EnablePortForwarding != nil {
+		desired.EnablePortForwarding = *patch.EnablePortForwarding
+	}
+	if patch.EnablePreview != nil {
+		desired.EnablePreview = *patch.EnablePreview
+	}
+	if patch.Encryption != nil {
+		desired.Encryption = *patch.Encryption
+	}
+	if patch.MaxDownloadRate != nil {
+		desired.MaxDownloadRate = *patch.MaxDownloadRate
+	}
+	if patch.MaxUploadRate != nil {
+		desired.MaxUploadRate = *patch.MaxUploadRate
+	}
+	if patch.MaxPeer != nil {
+		desired.MaxPeer = *patch.MaxPeer
+	}
+	if patch.SeedingRatio != nil {
+		desired.SeedingRatio = *patch.SeedingRatio
+	}
+	if patch.SeedingInterval != nil {
+		desired.SeedingInterval = *patch.SeedingInterval
+	}
+	if patch.EnableSeedingAutoRemove != nil {
+		desired.EnableSeedingAutoRemove = *patch.EnableSeedingAutoRemove
+	}
+	return desired
+}
+
 // DownloadStationCapabilities reports the Download Station reads plus package
 // evidence, each selected independently and gated on the installed package.
 func (c *Client) DownloadStationCapabilities(ctx context.Context) (DownloadStationCapabilities, CompatibilityReport, error) {
@@ -141,6 +225,7 @@ func (c *Client) DownloadStationCapabilities(ctx context.Context) (DownloadStati
 		downloadstationops.SelectStatistic,
 		downloadstationops.SelectSettings,
 		downloadstationops.SelectTaskWrite,
+		downloadstationops.SelectSettingsWrite,
 	}
 	selections := make([]compatibility.Selection, 0, len(selectors))
 	for _, selectOperation := range selectors {
@@ -157,6 +242,7 @@ func (c *Client) DownloadStationCapabilities(ctx context.Context) (DownloadStati
 		downloadstationops.StatisticReadCapabilityName,
 		downloadstationops.SettingsReadCapabilityName,
 		downloadstationops.TaskWriteCapabilityName,
+		downloadstationops.SettingsWriteCapabilityName,
 	}
 	for index, name := range capabilityNames {
 		if supported(index) {
@@ -171,6 +257,7 @@ func (c *Client) DownloadStationCapabilities(ctx context.Context) (DownloadStati
 		StatisticRead: supported(2),
 		SettingsRead:  supported(3),
 		TaskWrite:     supported(4),
+		SettingsWrite: supported(5),
 	}
 	return capabilities, c.target.Report(selections...), nil
 }

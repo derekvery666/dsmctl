@@ -267,6 +267,40 @@ func TestTaskWriteFailsClosedWithoutPackage(t *testing.T) {
 	}
 }
 
+func TestBTSetEncodesFullObject(t *testing.T) {
+	target := dsTarget("4.1.2-5012")
+	exec := &captureExecutor{response: `{}`}
+	result, selection, err := ExecuteBTSet(context.Background(), target, exec, downloadstation.BTSettings{
+		TCPPort: 16881, DHTPort: 6881, EnableDHT: true, EnablePortForwarding: false, EnablePreview: true,
+		Encryption: "auto", MaxDownloadRate: 0, MaxUploadRate: 20, MaxPeer: 50,
+		SeedingRatio: 0, SeedingInterval: 0, EnableSeedingAutoRemove: false,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteBTSet() error = %v", err)
+	}
+	if !selection.Supported || result.Method != "set" || result.Group != "bt" || result.API != SettingsBTAPIName {
+		t.Fatalf("result = %#v", result)
+	}
+	req := exec.requests[0]
+	want := map[string]string{
+		"tcp_port": "16881", "dht_port": "6881", "enable_dht": "true", "enable_port_forwarding": "false",
+		"enable_preview": "true", "encrypt": "auto", "max_download_rate": "0", "max_upload_rate": "20",
+		"max_peer": "50", "seeding_ratio": "0", "seeding_interval": "0", "enable_seeding_auto_remove": "false",
+	}
+	for key, value := range want {
+		if got := req.Parameters.Get(key); got != value {
+			t.Fatalf("set param %q = %q, want %q", key, got, value)
+		}
+	}
+}
+
+func TestSettingsWriteFailsClosedWithoutPackage(t *testing.T) {
+	target := dsTarget("")
+	if selection, err := SelectSettingsWrite(target); !compatibility.IsUnsupported(err) || selection.Supported {
+		t.Fatalf("SelectSettingsWrite without package = %#v, %v", selection, err)
+	}
+}
+
 func TestFailsClosedWithoutPackage(t *testing.T) {
 	// APIs present but the package catalog does not contain DownloadStation.
 	target := dsTarget("")

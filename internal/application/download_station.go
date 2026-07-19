@@ -389,3 +389,286 @@ func downloadStationTaskPlanHash(plan DownloadStationTaskPlan) (string, error) {
 }
 
 var _ downloadStationTaskClient = (*synology.Client)(nil)
+
+// --- Guarded settings write (BitTorrent group) ---
+
+type DownloadStationSettingsPlan struct {
+	APIVersion          string                             `json:"api_version" jsonschema:"Plan schema version"`
+	NAS                 string                             `json:"nas" jsonschema:"NAS profile selected during planning"`
+	ProfileRevision     uint64                             `json:"profile_revision,omitempty" jsonschema:"Persistent gateway profile revision selected during planning"`
+	Request             downloadstation.SettingsChange     `json:"request" jsonschema:"Validated patch-only settings intent"`
+	Observed            synology.DownloadStationBTSettings `json:"observed" jsonschema:"Complete BT settings observed during planning"`
+	ObservedFingerprint string                             `json:"observed_fingerprint" jsonschema:"SHA-256 hash of the complete observed settings group"`
+	Risk                string                             `json:"risk" jsonschema:"Plan risk level"`
+	Warnings            []string                           `json:"warnings" jsonschema:"Operational warnings"`
+	Summary             []string                           `json:"summary" jsonschema:"Human-readable patch operations"`
+	Hash                string                             `json:"hash" jsonschema:"SHA-256 approval hash covering intent and full observed state"`
+}
+
+type DownloadStationSettingsApplyResult struct {
+	NAS      string                                         `json:"nas" jsonschema:"NAS profile used for apply"`
+	PlanHash string                                         `json:"plan_hash" jsonschema:"Approved plan hash"`
+	Applied  bool                                           `json:"applied" jsonschema:"Whether DSM accepted the change and postcondition verification passed"`
+	Result   synology.DownloadStationSettingsMutationResult `json:"result" jsonschema:"Selected DSM mutation backend"`
+}
+
+type downloadStationSettingsClient interface {
+	DownloadStationBTSettings(context.Context) (synology.DownloadStationBTSettings, error)
+	DownloadStationCapabilities(context.Context) (synology.DownloadStationCapabilities, synology.CompatibilityReport, error)
+	ApplyDownloadStationSettingsChange(context.Context, synology.DownloadStationSettingsChange) (synology.DownloadStationSettingsMutationResult, error)
+}
+
+func (s *Service) downloadStationSettingsClient(ctx context.Context, requestedNAS string) (string, downloadStationSettingsClient, error) {
+	name, generic, err := s.manager.Client(ctx, requestedNAS)
+	if err != nil {
+		return "", nil, err
+	}
+	client, ok := generic.(downloadStationSettingsClient)
+	if !ok {
+		return "", nil, fmt.Errorf("NAS client does not implement Download Station settings management")
+	}
+	return name, client, nil
+}
+
+func (s *Service) PlanDownloadStationSettingsChange(ctx context.Context, requestedNAS string, request downloadstation.SettingsChange) (DownloadStationSettingsPlan, error) {
+	if err := validateSettingsChangeShape(request); err != nil {
+		return DownloadStationSettingsPlan{}, err
+	}
+	name, client, err := s.downloadStationSettingsClient(ctx, requestedNAS)
+	if err != nil {
+		return DownloadStationSettingsPlan{}, err
+	}
+	plan, err := planDownloadStationSettingsWithClient(ctx, name, client, request)
+	if err != nil {
+		return DownloadStationSettingsPlan{}, err
+	}
+	plan.ProfileRevision, err = s.profileRevision(ctx, name)
+	if err == nil {
+		plan.Hash, err = downloadStationSettingsPlanHash(plan)
+	}
+	return plan, err
+}
+
+func (s *Service) ApplyDownloadStationSettingsPlan(ctx context.Context, plan DownloadStationSettingsPlan, approvalHash string) (DownloadStationSettingsApplyResult, error) {
+	if strings.TrimSpace(approvalHash) == "" || approvalHash != plan.Hash {
+		return DownloadStationSettingsApplyResult{}, fmt.Errorf("approval hash does not match the settings plan")
+	}
+	if plan.APIVersion != downloadStationAPIVersion || strings.TrimSpace(plan.NAS) == "" {
+		return DownloadStationSettingsApplyResult{}, fmt.Errorf("invalid settings plan metadata")
+	}
+	if err := validateSettingsChangeShape(plan.Request); err != nil {
+		return DownloadStationSettingsApplyResult{}, err
+	}
+	expectedHash, err := downloadStationSettingsPlanHash(plan)
+	if err != nil {
+		return DownloadStationSettingsApplyResult{}, err
+	}
+	if expectedHash != plan.Hash {
+		return DownloadStationSettingsApplyResult{}, fmt.Errorf("settings plan contents were modified after planning")
+	}
+	if err := s.authorizeRemoteApply(ctx, plan.NAS, plan.ProfileRevision, plan.Hash, plan.Risk); err != nil {
+		return DownloadStationSettingsApplyResult{}, err
+	}
+	if err := s.verifyProfileRevision(ctx, plan.NAS, plan.ProfileRevision); err != nil {
+		return DownloadStationSettingsApplyResult{}, err
+	}
+	name, client, err := s.downloadStationSettingsClient(ctx, plan.NAS)
+	if err != nil {
+		return DownloadStationSettingsApplyResult{}, err
+	}
+	if name != plan.NAS {
+		return DownloadStationSettingsApplyResult{}, fmt.Errorf("settings plan NAS %q resolved to different profile %q", plan.NAS, name)
+	}
+	current, err := planDownloadStationSettingsWithClient(ctx, plan.NAS, client, plan.Request)
+	if err != nil {
+		return DownloadStationSettingsApplyResult{}, fmt.Errorf("settings plan precondition no longer holds: %w", err)
+	}
+	current.ProfileRevision = plan.ProfileRevision
+	current.Hash, err = downloadStationSettingsPlanHash(current)
+	if err != nil {
+		return DownloadStationSettingsApplyResult{}, err
+	}
+	if current.ObservedFingerprint != plan.ObservedFingerprint || current.Hash != plan.Hash {
+		return DownloadStationSettingsApplyResult{}, fmt.Errorf("settings plan is stale; create a new plan")
+	}
+	result, err := client.ApplyDownloadStationSettingsChange(ctx, plan.Request)
+	if err != nil {
+		return DownloadStationSettingsApplyResult{}, authenticationError(plan.NAS, err)
+	}
+	if err := verifyDownloadStationBTPostcondition(ctx, client, *plan.Request.BT); err != nil {
+		return DownloadStationSettingsApplyResult{}, fmt.Errorf("verify settings change: %w", err)
+	}
+	return DownloadStationSettingsApplyResult{NAS: plan.NAS, PlanHash: plan.Hash, Applied: true, Result: result}, nil
+}
+
+func planDownloadStationSettingsWithClient(ctx context.Context, nas string, client downloadStationSettingsClient, request downloadstation.SettingsChange) (DownloadStationSettingsPlan, error) {
+	capabilities, _, err := client.DownloadStationCapabilities(ctx)
+	if err != nil {
+		return DownloadStationSettingsPlan{}, authenticationError(nas, err)
+	}
+	if !capabilities.SettingsRead || !capabilities.SettingsWrite {
+		return DownloadStationSettingsPlan{}, fmt.Errorf("NAS %q does not expose a verified Download Station settings read/write backend", nas)
+	}
+	observed, err := client.DownloadStationBTSettings(ctx)
+	if err != nil {
+		return DownloadStationSettingsPlan{}, authenticationError(nas, err)
+	}
+	if btChangeIsNoOp(observed, *request.BT) {
+		return DownloadStationSettingsPlan{}, fmt.Errorf("settings patch would not change the current BT settings")
+	}
+	plan := DownloadStationSettingsPlan{APIVersion: downloadStationAPIVersion, NAS: nas, Request: request, Observed: observed}
+	plan.ObservedFingerprint, err = hashJSON(plan.Observed)
+	if err != nil {
+		return DownloadStationSettingsPlan{}, err
+	}
+	plan.Risk, plan.Warnings, plan.Summary = btSettingsEffects(observed, *request.BT)
+	plan.Hash, err = downloadStationSettingsPlanHash(plan)
+	if err != nil {
+		return DownloadStationSettingsPlan{}, err
+	}
+	return plan, nil
+}
+
+func validateSettingsChangeShape(change downloadstation.SettingsChange) error {
+	if change.BT == nil {
+		return fmt.Errorf("settings change requires a supported group patch (bt)")
+	}
+	bt := change.BT
+	if bt.TCPPort == nil && bt.DHTPort == nil && bt.EnableDHT == nil && bt.EnablePortForwarding == nil &&
+		bt.EnablePreview == nil && bt.Encryption == nil && bt.MaxDownloadRate == nil && bt.MaxUploadRate == nil &&
+		bt.MaxPeer == nil && bt.SeedingRatio == nil && bt.SeedingInterval == nil && bt.EnableSeedingAutoRemove == nil {
+		return fmt.Errorf("bt settings patch has no fields")
+	}
+	for name, port := range map[string]*int{"tcp_port": bt.TCPPort, "dht_port": bt.DHTPort} {
+		if port != nil && (*port < 1 || *port > 65535) {
+			return fmt.Errorf("%s must be between 1 and 65535", name)
+		}
+	}
+	if bt.Encryption != nil {
+		switch strings.ToLower(strings.TrimSpace(*bt.Encryption)) {
+		case "auto", "on", "off":
+		default:
+			return fmt.Errorf("encryption must be auto, on, or off")
+		}
+	}
+	for name, rate := range map[string]*int{"max_download_rate": bt.MaxDownloadRate, "max_upload_rate": bt.MaxUploadRate, "seeding_ratio": bt.SeedingRatio, "seeding_interval": bt.SeedingInterval} {
+		if rate != nil && *rate < 0 {
+			return fmt.Errorf("%s must not be negative", name)
+		}
+	}
+	if bt.MaxPeer != nil && *bt.MaxPeer < 1 {
+		return fmt.Errorf("max_peer must be at least 1")
+	}
+	return nil
+}
+
+func btChangeIsNoOp(current synology.DownloadStationBTSettings, patch downloadstation.BTSettingsChange) bool {
+	return (patch.TCPPort == nil || *patch.TCPPort == current.TCPPort) &&
+		(patch.DHTPort == nil || *patch.DHTPort == current.DHTPort) &&
+		(patch.EnableDHT == nil || *patch.EnableDHT == current.EnableDHT) &&
+		(patch.EnablePortForwarding == nil || *patch.EnablePortForwarding == current.EnablePortForwarding) &&
+		(patch.EnablePreview == nil || *patch.EnablePreview == current.EnablePreview) &&
+		(patch.Encryption == nil || strings.EqualFold(*patch.Encryption, current.Encryption)) &&
+		(patch.MaxDownloadRate == nil || *patch.MaxDownloadRate == current.MaxDownloadRate) &&
+		(patch.MaxUploadRate == nil || *patch.MaxUploadRate == current.MaxUploadRate) &&
+		(patch.MaxPeer == nil || *patch.MaxPeer == current.MaxPeer) &&
+		(patch.SeedingRatio == nil || *patch.SeedingRatio == current.SeedingRatio) &&
+		(patch.SeedingInterval == nil || *patch.SeedingInterval == current.SeedingInterval) &&
+		(patch.EnableSeedingAutoRemove == nil || *patch.EnableSeedingAutoRemove == current.EnableSeedingAutoRemove)
+}
+
+func btSettingsEffects(current synology.DownloadStationBTSettings, patch downloadstation.BTSettingsChange) (string, []string, []string) {
+	summary := []string{}
+	warnings := []string{}
+	high := false
+	if patch.EnablePortForwarding != nil && *patch.EnablePortForwarding && !current.EnablePortForwarding {
+		warnings = append(warnings, "enabling port forwarding opens the BitTorrent port on the router, increasing external exposure")
+		high = true
+	}
+	if patch.TCPPort != nil && *patch.TCPPort != current.TCPPort {
+		summary = append(summary, fmt.Sprintf("change the BitTorrent TCP port from %d to %d", current.TCPPort, *patch.TCPPort))
+		warnings = append(warnings, "changing the listening port can interrupt active BitTorrent transfers")
+	}
+	if patch.DHTPort != nil && *patch.DHTPort != current.DHTPort {
+		summary = append(summary, fmt.Sprintf("change the DHT port from %d to %d", current.DHTPort, *patch.DHTPort))
+	}
+	if patch.Encryption != nil && !strings.EqualFold(*patch.Encryption, current.Encryption) {
+		summary = append(summary, fmt.Sprintf("set protocol encryption to %q", strings.ToLower(strings.TrimSpace(*patch.Encryption))))
+	}
+	if patch.MaxDownloadRate != nil && *patch.MaxDownloadRate != current.MaxDownloadRate {
+		summary = append(summary, fmt.Sprintf("set the BT max download rate to %d KB/s", *patch.MaxDownloadRate))
+	}
+	if patch.MaxUploadRate != nil && *patch.MaxUploadRate != current.MaxUploadRate {
+		summary = append(summary, fmt.Sprintf("set the BT max upload rate to %d KB/s", *patch.MaxUploadRate))
+	}
+	if patch.MaxPeer != nil && *patch.MaxPeer != current.MaxPeer {
+		summary = append(summary, fmt.Sprintf("set max peers to %d", *patch.MaxPeer))
+	}
+	for label, cond := range map[string]bool{
+		"toggle DHT":                    patch.EnableDHT != nil && *patch.EnableDHT != current.EnableDHT,
+		"toggle download preview":       patch.EnablePreview != nil && *patch.EnablePreview != current.EnablePreview,
+		"toggle seeding auto-remove":    patch.EnableSeedingAutoRemove != nil && *patch.EnableSeedingAutoRemove != current.EnableSeedingAutoRemove,
+		"toggle port forwarding":        patch.EnablePortForwarding != nil && *patch.EnablePortForwarding != current.EnablePortForwarding,
+		"change seeding ratio/interval": (patch.SeedingRatio != nil && *patch.SeedingRatio != current.SeedingRatio) || (patch.SeedingInterval != nil && *patch.SeedingInterval != current.SeedingInterval),
+	} {
+		if cond {
+			summary = append(summary, label)
+		}
+	}
+	risk := "medium"
+	if high {
+		risk = "high"
+	}
+	return risk, warnings, summary
+}
+
+func verifyDownloadStationBTPostcondition(ctx context.Context, client downloadStationSettingsClient, patch downloadstation.BTSettingsChange) error {
+	bt, err := client.DownloadStationBTSettings(ctx)
+	if err != nil {
+		return err
+	}
+	if patch.TCPPort != nil && bt.TCPPort != *patch.TCPPort {
+		return fmt.Errorf("tcp_port is %d, want %d", bt.TCPPort, *patch.TCPPort)
+	}
+	if patch.DHTPort != nil && bt.DHTPort != *patch.DHTPort {
+		return fmt.Errorf("dht_port is %d, want %d", bt.DHTPort, *patch.DHTPort)
+	}
+	if patch.EnableDHT != nil && bt.EnableDHT != *patch.EnableDHT {
+		return fmt.Errorf("enable_dht mismatch")
+	}
+	if patch.EnablePortForwarding != nil && bt.EnablePortForwarding != *patch.EnablePortForwarding {
+		return fmt.Errorf("enable_port_forwarding mismatch")
+	}
+	if patch.EnablePreview != nil && bt.EnablePreview != *patch.EnablePreview {
+		return fmt.Errorf("enable_preview mismatch")
+	}
+	if patch.Encryption != nil && !strings.EqualFold(bt.Encryption, strings.TrimSpace(*patch.Encryption)) {
+		return fmt.Errorf("encryption is %q, want %q", bt.Encryption, *patch.Encryption)
+	}
+	if patch.MaxDownloadRate != nil && bt.MaxDownloadRate != *patch.MaxDownloadRate {
+		return fmt.Errorf("max_download_rate is %d, want %d", bt.MaxDownloadRate, *patch.MaxDownloadRate)
+	}
+	if patch.MaxUploadRate != nil && bt.MaxUploadRate != *patch.MaxUploadRate {
+		return fmt.Errorf("max_upload_rate is %d, want %d", bt.MaxUploadRate, *patch.MaxUploadRate)
+	}
+	if patch.MaxPeer != nil && bt.MaxPeer != *patch.MaxPeer {
+		return fmt.Errorf("max_peer is %d, want %d", bt.MaxPeer, *patch.MaxPeer)
+	}
+	if patch.SeedingRatio != nil && bt.SeedingRatio != *patch.SeedingRatio {
+		return fmt.Errorf("seeding_ratio mismatch")
+	}
+	if patch.SeedingInterval != nil && bt.SeedingInterval != *patch.SeedingInterval {
+		return fmt.Errorf("seeding_interval mismatch")
+	}
+	if patch.EnableSeedingAutoRemove != nil && bt.EnableSeedingAutoRemove != *patch.EnableSeedingAutoRemove {
+		return fmt.Errorf("enable_seeding_auto_remove mismatch")
+	}
+	return nil
+}
+
+func downloadStationSettingsPlanHash(plan DownloadStationSettingsPlan) (string, error) {
+	plan.Hash = ""
+	return hashJSON(plan)
+}
+
+var _ downloadStationSettingsClient = (*synology.Client)(nil)

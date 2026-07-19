@@ -68,7 +68,27 @@ external content and `delete` removes the task, so those are **high** risk;
 `pause` is medium. MCP exposes `plan_download_station_task_change` and
 `apply_download_station_task_plan` (excluded from the read-only gateway).
 
+## Guarded settings write
+
+Settings are changed through the same plan/apply contract. A change is a
+patch-only per-group patch; so far the **BitTorrent** group is writable (ports,
+DHT, port forwarding, preview, encryption, rate limits, max peers, seeding):
+
+```console
+echo '{"bt":{"max_upload_rate":15,"enable_preview":false}}' | dsmctl download settings plan --nas office -o bt.plan.json
+dsmctl download settings apply --nas office -f bt.plan.json --approve <hash>
+```
+
+Because the DSM `set` is a full-object replace, apply reads the complete BT
+group, merges the patch, and submits the whole object so an unspecified field is
+never reset; the plan binds to the complete observed group and apply verifies
+each changed field. Enabling port forwarding opens the BitTorrent port on the
+router (external exposure) and is high risk; other BT changes are medium. MCP
+exposes `plan_download_station_settings_change` and
+`apply_download_station_settings_plan` (excluded from the read-only gateway).
+
 Field shapes are live-verified on Download Station 4.1.2. Still out of scope:
-`edit` (rename/re-target a task), settings writes, BT/eMule search, RSS
-management, and eMule server management — see
+task `edit` (rename/re-target), settings writes for the other groups (eMule,
+FTP/HTTP, NZB, auto-extraction, location, RSS, scheduler, global), BT/eMule
+search, RSS management, and eMule server management — see
 [WI-043](../spec/work-items/WI-043-download-station.md).
