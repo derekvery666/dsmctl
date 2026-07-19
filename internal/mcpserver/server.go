@@ -20,6 +20,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/domain/identity"
 	"github.com/ychiu1211/dsmctl/internal/domain/nfsexport"
 	"github.com/ychiu1211/dsmctl/internal/domain/packagecenter"
+	"github.com/ychiu1211/dsmctl/internal/domain/office"
 	"github.com/ychiu1211/dsmctl/internal/domain/photos"
 	"github.com/ychiu1211/dsmctl/internal/domain/resmon"
 	"github.com/ychiu1211/dsmctl/internal/domain/rsyncservice"
@@ -601,6 +602,54 @@ type applyPhotosPlanInput struct {
 
 type applyPhotosPlanOutput struct {
 	Result application.PhotosApplyResult `json:"result" jsonschema:"Photos mutation result after stale-state and postcondition checks"`
+}
+
+type getOfficeInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getOfficeCapabilitiesOutput struct {
+	NAS          string                       `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.OfficeCapabilities  `json:"capabilities" jsonschema:"Selected Office settings operations and package evidence"`
+	Report       synology.CompatibilityReport `json:"report" jsonschema:"Discovered APIs and selected Office backend"`
+}
+
+type getOfficeInfoOutput struct {
+	NAS  string              `json:"nas" jsonschema:"NAS profile used for the request"`
+	Info synology.OfficeInfo `json:"info" jsonschema:"Normalized Synology Office deployment info"`
+}
+
+type getOfficeSettingsOutput struct {
+	NAS      string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	Settings synology.OfficeSystemSettings `json:"settings" jsonschema:"Normalized system-wide Synology Office settings"`
+}
+
+type getOfficePreferencesOutput struct {
+	NAS         string                     `json:"nas" jsonschema:"NAS profile used for the request"`
+	Preferences synology.OfficePreferences `json:"preferences" jsonschema:"Calling user's normalized Synology Office editor preferences"`
+}
+
+type getOfficeFontsOutput struct {
+	NAS   string                `json:"nas" jsonschema:"NAS profile used for the request"`
+	Fonts []synology.OfficeFont `json:"fonts" jsonschema:"Name-sorted Synology Office font inventory"`
+}
+
+type planOfficeChangeInput struct {
+	NAS     string        `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request office.Change `json:"request" jsonschema:"Patch-only Office settings intent (exactly one scope: system or preferences)"`
+}
+
+type planOfficeChangeOutput struct {
+	Plan application.OfficePlan `json:"plan" jsonschema:"Validated plan bound to the complete observed scope state and approval hash"`
+}
+
+type applyOfficePlanInput struct {
+	Plan         application.OfficePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_office_change"`
+	ApprovalHash string                 `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved Office plan"`
+}
+
+type applyOfficePlanOutput struct {
+	Result application.OfficeApplyResult `json:"result" jsonschema:"Office mutation result after stale-state and postcondition checks"`
 }
 
 type getSurveillanceInput struct {
@@ -1929,6 +1978,97 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, applyPhotosPlanOutput{}, err
 		}
 		return nil, applyPhotosPlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_office_capabilities",
+		Title:       "Get Synology Office capabilities",
+		Description: "Report whether Synology Office settings can be read and changed on the selected NAS, plus the installed package evidence.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getOfficeInput) (*mcp.CallToolResult, getOfficeCapabilitiesOutput, error) {
+		result, err := service.GetOfficeCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getOfficeCapabilitiesOutput{}, err
+		}
+		return nil, getOfficeCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_office_info",
+		Title:       "Get Synology Office info",
+		Description: "Read the Synology Office deployment info (version, whether the session user is an Office manager, document schema versions) without changing DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getOfficeInput) (*mcp.CallToolResult, getOfficeInfoOutput, error) {
+		result, err := service.GetOfficeInfo(ctx, input.NAS)
+		if err != nil {
+			return nil, getOfficeInfoOutput{}, err
+		}
+		return nil, getOfficeInfoOutput{NAS: result.NAS, Info: result.Info}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_office_settings",
+		Title:       "Get Synology Office system settings",
+		Description: "Read the system-wide Synology Office settings (automatic version-history cleanup) without changing DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getOfficeInput) (*mcp.CallToolResult, getOfficeSettingsOutput, error) {
+		result, err := service.GetOfficeSettings(ctx, input.NAS)
+		if err != nil {
+			return nil, getOfficeSettingsOutput{}, err
+		}
+		return nil, getOfficeSettingsOutput{NAS: result.NAS, Settings: result.Settings}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_office_preferences",
+		Title:       "Get Synology Office preferences",
+		Description: "Read the calling user's own Synology Office editor preferences (ruler, formula panel, default locale, AI languages) without changing DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getOfficeInput) (*mcp.CallToolResult, getOfficePreferencesOutput, error) {
+		result, err := service.GetOfficePreferences(ctx, input.NAS)
+		if err != nil {
+			return nil, getOfficePreferencesOutput{}, err
+		}
+		return nil, getOfficePreferencesOutput{NAS: result.NAS, Preferences: result.Preferences}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_office_fonts",
+		Title:       "List Synology Office fonts",
+		Description: "List the Synology Office font inventory (name and localized display name) without changing DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getOfficeInput) (*mcp.CallToolResult, getOfficeFontsOutput, error) {
+		result, err := service.GetOfficeFonts(ctx, input.NAS)
+		if err != nil {
+			return nil, getOfficeFontsOutput{}, err
+		}
+		return nil, getOfficeFontsOutput{NAS: result.NAS, Fonts: result.Fonts}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_office_change",
+		Title:       "Plan a Synology Office settings change",
+		Description: "Validate one patch-only Synology Office settings request (system scope or the calling user's preferences scope), read the current state, and return a hash-bound approval plan. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planOfficeChangeInput) (*mcp.CallToolResult, planOfficeChangeOutput, error) {
+		plan, err := service.PlanOfficeChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planOfficeChangeOutput{}, err
+		}
+		return nil, planOfficeChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_office_plan",
+		Title:       "Apply an approved Synology Office plan",
+		Description: "Apply an unmodified Synology Office plan only while its approval hash and complete observed scope state still match, then verify the requested postcondition.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyOfficePlanInput) (*mcp.CallToolResult, applyOfficePlanOutput, error) {
+		result, err := service.ApplyOfficePlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyOfficePlanOutput{}, err
+		}
+		return nil, applyOfficePlanOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

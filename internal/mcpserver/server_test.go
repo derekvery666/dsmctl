@@ -62,8 +62,8 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools() error = %v", err)
 	}
-	if len(tools.Tools) != 114 {
-		t.Fatalf("ListTools() returned %d tools, want 114", len(tools.Tools))
+	if len(tools.Tools) != 121 {
+		t.Fatalf("ListTools() returned %d tools, want 121", len(tools.Tools))
 	}
 	for _, tool := range tools.Tools {
 		if scope, ok := ToolScope(tool.Name); !ok || scope == "" {
@@ -98,6 +98,12 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"get_tftp_service_state":              false,
 		"get_photos_capabilities":             false,
 		"get_photos_settings":                 false,
+		"get_office_capabilities":             false,
+		"get_office_info":                     false,
+		"get_office_settings":                 false,
+		"get_office_preferences":              false,
+		"get_office_fonts":                    false,
+		"plan_office_change":                  false,
 		"get_san_capabilities":                false,
 		"get_san_state":                       false,
 		"get_share_capabilities":              false,
@@ -151,6 +157,7 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"apply_rsync_service_plan":          false,
 		"apply_tftp_service_plan":           false,
 		"apply_photos_plan":                 false,
+		"apply_office_plan":                 false,
 		"apply_drive_config_plan":           false,
 		"apply_surveillance_home_mode_plan": false,
 		"apply_package_plan":                false,

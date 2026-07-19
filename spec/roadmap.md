@@ -48,6 +48,7 @@ flowchart LR
   WI019["WI-019 Package Center"] --> WI022["WI-022 Package-scoped operations + Drive Admin"]
   WI022 --> WI043["WI-043 Download Station"]
   WI006 --> WI049["WI-049 FileStation module"]
+  WI022 --> WI050["WI-050 Synology Office settings"]
   WI023["WI-023 LAN device discovery"]
 ```
 
@@ -103,6 +104,7 @@ flowchart LR
 | [WI-046](work-items/WI-046-gateway-admin-ui-spacing-feedback.md) | P2 | `done` | G | WI-038 | Correct Admin UI vertical rhythm, password grouping, and dismissible feedback behavior. |
 | [WI-047](work-items/WI-047-admin-ui-workflow-redesign.md) | P1 | `done` | G | WI-045, WI-046 | Redesign authenticated pages around resource lists, state-aware actions, and guided workflows. |
 | [WI-048](work-items/WI-048-mcp-oauth-url-login.md) | P0 | `done` | G | WI-045 | Add standards-based MCP OAuth URL login while retaining manual client tokens. |
+| [WI-050](work-items/WI-050-office-admin.md) | P2 | `done` | C | WI-019, WI-022 | Synology Office settings module: info/system-setting/preferences/fonts reads + guarded system and preference writes (package-gated on `Spreadsheet`), CLI + MCP, live-verified; font mutations and per-object settings deferred. |
 | [WI-049](work-items/WI-049-file-station.md) | P1 | `in_progress` | C | WI-006 | Full read/write FileStation module (core SYNO.FileStation.*), shipped + live-verified end-to-end on DSM 7.3: reads (list/stat/search/dir-size/md5/virtual-folders/permission-check), streaming download+upload binary transport, and the mutation surface (create/rename/copy/move/delete/compress/extract/upload + sharing links) via hash-bound plan/apply, plus favorites and background-task list — across CLI (`file …`) and MCP (114 tools; read-only gateway strips writes + content transfer). Optional follow-ons: Sharing.edit/clear_invalid, Thumb, BackgroundTask.clear_finished. |
 
 Parallel groups indicate likely file overlap. Items in different groups may run
