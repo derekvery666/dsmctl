@@ -57,10 +57,16 @@ type Certificates struct {
 }
 
 // Capabilities reports which certificate operations dsmctl currently exposes.
-// This slice is read-only; the guarded writes (import, set-default, service
-// binding, delete) are modeled in the work item but deferred because every one
-// can break admin TLS and needs explicit per-operation live authorization.
+// Reads come from SYNO.Core.Certificate.CRT; the guarded writes (import,
+// set-default, service binding, delete) are gated on the CRT and Service APIs
+// being advertised. Every write is high risk and rides plan/apply.
 type Capabilities struct {
 	Module           string `json:"module" jsonschema:"Stable module name: certificate"`
 	CertificatesRead bool   `json:"certificates_read" jsonschema:"Whether the installed-certificate inventory can be read"`
+	Import           bool   `json:"import" jsonschema:"Whether a certificate bundle can be imported (high risk)"`
+	SetDefault       bool   `json:"set_default" jsonschema:"Whether the default certificate can be set (high risk)"`
+	BindService      bool   `json:"bind_service" jsonschema:"Whether a service can be bound to a certificate (high risk)"`
+	Delete           bool   `json:"delete" jsonschema:"Whether a certificate can be deleted (high risk)"`
+	Export           bool   `json:"export" jsonschema:"Whether a certificate archive can be exported to a local file (extracts the private key)"`
+	Mutations        bool   `json:"mutations" jsonschema:"Whether any guarded certificate write is available"`
 }

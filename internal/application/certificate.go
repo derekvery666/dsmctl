@@ -8,12 +8,12 @@ import (
 )
 
 type CertificatesResult struct {
-	NAS          string                 `json:"nas" jsonschema:"NAS profile used for the request"`
-	Certificates synology.Certificates  `json:"certificates" jsonschema:"Installed certificates with their bound services"`
+	NAS          string                `json:"nas" jsonschema:"NAS profile used for the request"`
+	Certificates synology.Certificates `json:"certificates" jsonschema:"Installed certificates with their bound services"`
 }
 
 type CertificateCapabilitiesResult struct {
-	NAS          string                          `json:"nas" jsonschema:"NAS profile used for the request"`
+	NAS          string                           `json:"nas" jsonschema:"NAS profile used for the request"`
 	Capabilities synology.CertificateCapabilities `json:"capabilities" jsonschema:"Certificate operations currently exposed by dsmctl"`
 	Report       synology.CompatibilityReport     `json:"report" jsonschema:"Discovered APIs and selected certificate backend"`
 }
@@ -21,6 +21,12 @@ type CertificateCapabilitiesResult struct {
 type certificateClient interface {
 	Certificates(context.Context) (synology.Certificates, error)
 	CertificateCapabilities(context.Context) (synology.CertificateCapabilities, synology.CompatibilityReport, error)
+	ImportCertificate(context.Context, synology.CertificateImportRequest) (synology.CertificateMutationResult, error)
+	SetDefaultCertificate(ctx context.Context, id, description string) (synology.CertificateMutationResult, error)
+	BindCertificateService(ctx context.Context, service, certID string) (synology.CertificateMutationResult, error)
+	DeleteCertificate(ctx context.Context, id string) (synology.CertificateMutationResult, error)
+	ExportCertificate(ctx context.Context, id string) (*synology.DownloadContent, error)
+	RepinLeafFingerprint(fingerprint string) error
 }
 
 func (s *Service) GetCertificates(ctx context.Context, requestedNAS string) (CertificatesResult, error) {

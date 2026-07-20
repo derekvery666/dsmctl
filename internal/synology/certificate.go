@@ -36,7 +36,7 @@ func (c *Client) CertificateCapabilities(ctx context.Context) (CertificateCapabi
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if err := c.prepareCompatibilityTargetLocked(ctx, certops.APINames()...); err != nil {
+	if err := c.prepareCompatibilityTargetLocked(ctx, certops.MutationAPINames()...); err != nil {
 		return CertificateCapabilities{}, CompatibilityReport{}, fmt.Errorf("prepare certificate capabilities target: %w", err)
 	}
 	selection, err := certops.SelectCertificates(c.target)
@@ -46,9 +46,20 @@ func (c *Client) CertificateCapabilities(ctx context.Context) (CertificateCapabi
 	if selection.Supported {
 		c.target.AddCapability(certops.CertificatesReadCapabilityName)
 	}
+	// Writes are gated per independent API boundary: import/set-default/delete/
+	// export ride CRT; the service binding rides Service (which may be absent
+	// even when CRT is present, and vice versa).
+	crtWrites := certops.SupportsCRTWrites(c.target)
+	serviceBinding := certops.SupportsServiceBinding(c.target)
 	capabilities := CertificateCapabilities{
 		Module:           certificate.ModuleName,
 		CertificatesRead: selection.Supported,
+		Import:           crtWrites,
+		SetDefault:       crtWrites,
+		Delete:           crtWrites,
+		Export:           crtWrites,
+		BindService:      serviceBinding,
+		Mutations:        crtWrites || serviceBinding,
 	}
 	return capabilities, c.target.Report(selection), nil
 }

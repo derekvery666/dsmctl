@@ -23,6 +23,11 @@ func NewReadOnly(service *application.Service, version string) *mcp.Server {
 		"get_filestation_file_content",
 		"get_filestation_thumbnail",
 		"get_drive_log_export",
+		// Certificate export extracts private-key material to a local file; the
+		// plan/apply pair mutates the certificate store (every write is high risk).
+		"get_certificate_export",
+		"plan_certificate_change",
+		"apply_certificate_plan",
 		"plan_filestation_change",
 		"apply_filestation_plan",
 		"plan_account_change",

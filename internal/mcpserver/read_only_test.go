@@ -48,6 +48,8 @@ func TestNewReadOnlyOmitsPlanAndApplyTools(t *testing.T) {
 	exfiltration := map[string]bool{
 		"get_filestation_file_content": false,
 		"get_filestation_thumbnail":    false,
+		// Certificate export extracts private-key material to a local file.
+		"get_certificate_export": false,
 	}
 	for _, tool := range tools.Tools {
 		if strings.HasPrefix(tool.Name, "plan_") || strings.HasPrefix(tool.Name, "apply_") {
