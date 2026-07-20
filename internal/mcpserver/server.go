@@ -28,6 +28,8 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/domain/resmon"
 	"github.com/ychiu1211/dsmctl/internal/domain/rsyncservice"
 	"github.com/ychiu1211/dsmctl/internal/domain/san"
+	"github.com/ychiu1211/dsmctl/internal/domain/accountprotection"
+	"github.com/ychiu1211/dsmctl/internal/domain/securityadvisor"
 	"github.com/ychiu1211/dsmctl/internal/domain/servicediscovery"
 	"github.com/ychiu1211/dsmctl/internal/domain/share"
 	"github.com/ychiu1211/dsmctl/internal/domain/snapshotreplication"
@@ -1290,6 +1292,28 @@ type getSecurityAdvisorCapabilitiesOutput struct {
 	Report       synology.CompatibilityReport         `json:"report" jsonschema:"Discovered APIs and selected Security Advisor backends"`
 }
 
+type planSecurityAdvisorScheduleChangeInput struct {
+	NAS     string                         `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request securityadvisor.ScheduleChange `json:"request" jsonschema:"Patch-only scan schedule and security-baseline intent"`
+}
+
+type planSecurityAdvisorScheduleChangeOutput struct {
+	Plan application.SecurityAdvisorSchedulePlan `json:"plan" jsonschema:"Validated plan bound to the complete observed configuration and approval hash"`
+}
+
+type applySecurityAdvisorSchedulePlanInput struct {
+	Plan         application.SecurityAdvisorSchedulePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_security_advisor_schedule_change"`
+	ApprovalHash string                                  `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved security advisor plan"`
+}
+
+type applySecurityAdvisorSchedulePlanOutput struct {
+	Result application.SecurityAdvisorScheduleApplyResult `json:"result" jsonschema:"Schedule + baseline mutation result after stale-state and postcondition checks"`
+}
+
+type runSecurityScanOutput struct {
+	Result application.SecurityAdvisorScanActionResult `json:"result" jsonschema:"Result of triggering a full Security Advisor scan"`
+}
+
 type accountProtectionInput struct {
 	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 }
@@ -1316,8 +1340,68 @@ type getEnforceTwoFactorOutput struct {
 
 type getAccountProtectionCapabilitiesOutput struct {
 	NAS          string                                 `json:"nas" jsonschema:"NAS profile used for the request"`
-	Capabilities synology.AccountProtectionCapabilities `json:"capabilities" jsonschema:"Account-protection reads currently exposed by dsmctl"`
+	Capabilities synology.AccountProtectionCapabilities `json:"capabilities" jsonschema:"Account-protection reads and guarded writes currently exposed by dsmctl"`
 	Report       synology.CompatibilityReport           `json:"report" jsonschema:"Discovered APIs and selected account-protection backends"`
+}
+
+type planAutoBlockChangeInput struct {
+	NAS     string                            `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request accountprotection.AutoBlockChange `json:"request" jsonschema:"Patch-only Auto Block settings intent"`
+}
+
+type planAutoBlockChangeOutput struct {
+	Plan application.AutoBlockSettingsPlan `json:"plan" jsonschema:"Validated plan bound to the complete observed settings and approval hash"`
+}
+
+type applyAutoBlockPlanInput struct {
+	Plan         application.AutoBlockSettingsPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_account_protection_autoblock_change"`
+	ApprovalHash string                           `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
+}
+
+type accountProtectionApplyOutput struct {
+	Result application.AccountProtectionApplyResult `json:"result" jsonschema:"Mutation result after stale-state and postcondition checks"`
+}
+
+type planAccountProtectionThresholdsChangeInput struct {
+	NAS     string                                    `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request accountprotection.AccountProtectionChange `json:"request" jsonschema:"Patch-only Account Protection thresholds intent"`
+}
+
+type planAccountProtectionThresholdsChangeOutput struct {
+	Plan application.AccountProtectionThresholdsPlan `json:"plan" jsonschema:"Validated plan bound to the complete observed thresholds and approval hash"`
+}
+
+type applyAccountProtectionThresholdsPlanInput struct {
+	Plan         application.AccountProtectionThresholdsPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_account_protection_thresholds_change"`
+	ApprovalHash string                                      `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
+}
+
+type planEnforceTwoFactorChangeInput struct {
+	NAS     string                                   `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request accountprotection.EnforceTwoFactorChange `json:"request" jsonschema:"Enforced-2FA policy scope intent (otp_enforce_option); enabling requires allow_lockout_override"`
+}
+
+type planEnforceTwoFactorChangeOutput struct {
+	Plan application.EnforceTwoFactorPlan `json:"plan" jsonschema:"Validated plan bound to the observed policy and approval hash"`
+}
+
+type applyEnforceTwoFactorPlanInput struct {
+	Plan         application.EnforceTwoFactorPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_account_protection_enforce_2fa_change"`
+	ApprovalHash string                          `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
+}
+
+type planAutoBlockListChangeInput struct {
+	NAS     string                       `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request accountprotection.IPListEdit `json:"request" jsonschema:"Single allow/block list add or remove; self-lockout edits require allow_lockout_override"`
+}
+
+type planAutoBlockListChangeOutput struct {
+	Plan application.AutoBlockListPlan `json:"plan" jsonschema:"Validated plan bound to the complete observed lists, active sources, and approval hash"`
+}
+
+type applyAutoBlockListPlanInput struct {
+	Plan         application.AutoBlockListPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_account_protection_list_change"`
+	ApprovalHash string                       `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
 }
 
 type firewallInput struct {
@@ -3468,7 +3552,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_security_advisor_capabilities",
 		Title:       "Get Security Advisor capabilities",
-		Description: "Report which Security Advisor operations dsmctl supports on the selected NAS and the backend for each. Each SYNO.Core.SecurityScan.* API is an independent boundary, so status/findings and schedule/baseline reads are reported separately and a NAS without Security Advisor reports them unsupported without erroring. run_scan and schedule/baseline writes are reported from the advertised APIs but are deferred and never executed by this read slice.",
+		Description: "Report which Security Advisor operations dsmctl supports on the selected NAS and the backend for each. Each SYNO.Core.SecurityScan.* API is an independent boundary, so the status/findings read, the schedule/baseline read, the guarded schedule/baseline write, and the run-scan action are reported separately and a NAS without Security Advisor reports them unsupported without erroring.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getSecurityAdvisorInput) (*mcp.CallToolResult, getSecurityAdvisorCapabilitiesOutput, error) {
 		result, err := service.GetSecurityAdvisorCapabilities(ctx, input.NAS)
@@ -3494,7 +3578,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_security_advisor_schedule",
 		Title:       "Get Security Advisor schedule and baseline",
-		Description: "Read the Security Advisor scan schedule and the active security baseline (for example home or company): whether a scheduled scan is enabled, its time and weekday, and the baseline group. This tool never changes the NAS; changing the schedule or baseline is a deferred, guarded write.",
+		Description: "Read the Security Advisor scan schedule and the active security baseline (for example home or company): whether a scheduled scan is enabled, its time and weekday, and the baseline group. This tool never changes the NAS; changing the schedule or baseline goes through plan_security_advisor_schedule_change and apply_security_advisor_schedule_plan.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getSecurityAdvisorInput) (*mcp.CallToolResult, getSecurityAdvisorScheduleOutput, error) {
 		result, err := service.GetSecurityAdvisorSchedule(ctx, input.NAS)
@@ -3502,6 +3586,45 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getSecurityAdvisorScheduleOutput{}, err
 		}
 		return nil, getSecurityAdvisorScheduleOutput{NAS: result.NAS, Configuration: result.Configuration}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_security_advisor_schedule_change",
+		Title:       "Plan a Security Advisor schedule and baseline change",
+		Description: "Validate a patch-only scan schedule and security-baseline change (enable/disable the scheduled scan, its weekday and time, and switch the baseline between home and company) and return an approval plan bound to the complete observed configuration. Loosening the audit — switching from the business (company) baseline to the home baseline, or disabling the scheduled scan — is classified high risk and named in the plan summary. The custom checklist baseline is not managed here. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planSecurityAdvisorScheduleChangeInput) (*mcp.CallToolResult, planSecurityAdvisorScheduleChangeOutput, error) {
+		plan, err := service.PlanSecurityAdvisorScheduleChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planSecurityAdvisorScheduleChangeOutput{}, err
+		}
+		return nil, planSecurityAdvisorScheduleChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_security_advisor_schedule_plan",
+		Title:       "Apply an approved Security Advisor schedule plan",
+		Description: "Apply an unmodified Security Advisor schedule + baseline plan only while its approval hash and the complete observed configuration still match, then re-read to verify every requested field took effect. The write is patch-only: unspecified fields are preserved. DSM rejects the change while a scan is running.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applySecurityAdvisorSchedulePlanInput) (*mcp.CallToolResult, applySecurityAdvisorSchedulePlanOutput, error) {
+		result, err := service.ApplySecurityAdvisorSchedulePlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applySecurityAdvisorSchedulePlanOutput{}, err
+		}
+		return nil, applySecurityAdvisorSchedulePlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "run_security_scan",
+		Title:       "Run a Security Advisor scan now",
+		Description: "Trigger a full Security Advisor scan on demand (Control Panel > Security > Security Advisor). A scan is CPU/IO-heavy on the NAS and changes no configuration; track its progress with get_security_advisor_status. This action is never invoked implicitly by a read and is classified low risk because it changes no security posture.",
+		Annotations: actionAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getSecurityAdvisorInput) (*mcp.CallToolResult, runSecurityScanOutput, error) {
+		result, err := service.RunSecurityScan(ctx, input.NAS)
+		if err != nil {
+			return nil, runSecurityScanOutput{}, err
+		}
+		return nil, runSecurityScanOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -3567,6 +3690,110 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getEnforceTwoFactorOutput{}, err
 		}
 		return nil, getEnforceTwoFactorOutput{NAS: result.NAS, Policy: result.Policy}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_account_protection_autoblock_change",
+		Title:       "Plan an Auto Block settings change",
+		Description: "Validate a patch-only Auto Block settings change (enabled, attempts, within_minutes, expire_enabled, expire_days) and return an approval plan bound to the complete observed settings. Disabling Auto Block, raising the attempt threshold, or lengthening the detection window weakens blocking and is classified high risk; DSM binds the thresholds only when Auto Block is enabled, which the postcondition re-read enforces. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planAutoBlockChangeInput) (*mcp.CallToolResult, planAutoBlockChangeOutput, error) {
+		plan, err := service.PlanAutoBlockChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planAutoBlockChangeOutput{}, err
+		}
+		return nil, planAutoBlockChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_account_protection_autoblock_plan",
+		Title:       "Apply an approved Auto Block settings plan",
+		Description: "Apply an unmodified Auto Block settings plan only while its approval hash and the complete observed settings still match, then re-read to verify every requested field took effect. The write is patch-only: unspecified fields are preserved by merging into a freshly read state.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyAutoBlockPlanInput) (*mcp.CallToolResult, accountProtectionApplyOutput, error) {
+		result, err := service.ApplyAutoBlockPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, accountProtectionApplyOutput{}, err
+		}
+		return nil, accountProtectionApplyOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_account_protection_list_change",
+		Title:       "Plan an Auto Block allow/block list edit",
+		Description: "Validate a patch-only add or remove of exactly one Auto Block allow/block list entry (keyed by ip + kind) and return an approval plan bound to the complete observed lists and the currently active connections. The edit never sends a whole-list payload, so sibling entries are untouched. Blocking an active source or a broad subnet, and removing an active source from the allow list, are self-lockout risks refused without allow_lockout_override; allow-listing a broad subnet is classified high risk. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planAutoBlockListChangeInput) (*mcp.CallToolResult, planAutoBlockListChangeOutput, error) {
+		plan, err := service.PlanAutoBlockListChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planAutoBlockListChangeOutput{}, err
+		}
+		return nil, planAutoBlockListChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_account_protection_list_plan",
+		Title:       "Apply an approved Auto Block list edit plan",
+		Description: "Apply an unmodified Auto Block allow/block list edit plan only while its approval hash and the complete observed state (lists plus active connections) still match, then re-read to verify the single entry was added or removed. Exactly one entry is touched; sibling entries are never reset.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyAutoBlockListPlanInput) (*mcp.CallToolResult, accountProtectionApplyOutput, error) {
+		result, err := service.ApplyAutoBlockListPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, accountProtectionApplyOutput{}, err
+		}
+		return nil, accountProtectionApplyOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_account_protection_thresholds_change",
+		Title:       "Plan an Account Protection thresholds change",
+		Description: "Validate a patch-only Account Protection (SmartBlock) thresholds change (enabled plus the untrusted/trusted attempt, window, and block-duration thresholds) and return an approval plan bound to the complete observed thresholds. Disabling Account Protection, raising an attempt threshold, or lengthening a detection window weakens blocking and is classified high risk. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planAccountProtectionThresholdsChangeInput) (*mcp.CallToolResult, planAccountProtectionThresholdsChangeOutput, error) {
+		plan, err := service.PlanAccountProtectionThresholdsChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planAccountProtectionThresholdsChangeOutput{}, err
+		}
+		return nil, planAccountProtectionThresholdsChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_account_protection_thresholds_plan",
+		Title:       "Apply an approved Account Protection thresholds plan",
+		Description: "Apply an unmodified Account Protection thresholds plan only while its approval hash and the complete observed thresholds still match, then re-read to verify every requested field took effect. The write is patch-only: unspecified fields are preserved by merging into a freshly read state.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyAccountProtectionThresholdsPlanInput) (*mcp.CallToolResult, accountProtectionApplyOutput, error) {
+		result, err := service.ApplyAccountProtectionThresholdsPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, accountProtectionApplyOutput{}, err
+		}
+		return nil, accountProtectionApplyOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_account_protection_enforce_2fa_change",
+		Title:       "Plan an enforced-2FA policy change",
+		Description: "Validate a change to the domain-wide enforced-2FA policy scope (otp_enforce_option) and return an approval plan bound to the observed policy. Every enforced-2FA change is high risk: enabling enforcement can lock out an administrator who has not enrolled 2FA and is refused without allow_lockout_override, and disabling it weakens the posture. This sets policy only; it never enrolls a user or reads any OTP secret. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planEnforceTwoFactorChangeInput) (*mcp.CallToolResult, planEnforceTwoFactorChangeOutput, error) {
+		plan, err := service.PlanEnforceTwoFactorChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planEnforceTwoFactorChangeOutput{}, err
+		}
+		return nil, planEnforceTwoFactorChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_account_protection_enforce_2fa_plan",
+		Title:       "Apply an approved enforced-2FA policy plan",
+		Description: "Apply an unmodified enforced-2FA policy plan only while its approval hash and the observed policy still match, then re-read to verify the scope took effect. This sets the enforcement policy only; it never enrolls a user or touches any OTP secret.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyEnforceTwoFactorPlanInput) (*mcp.CallToolResult, accountProtectionApplyOutput, error) {
+		result, err := service.ApplyEnforceTwoFactorPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, accountProtectionApplyOutput{}, err
+		}
+		return nil, accountProtectionApplyOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -4165,6 +4392,19 @@ func mutationAnnotations() *mcp.ToolAnnotations {
 	return &mcp.ToolAnnotations{
 		ReadOnlyHint:    false,
 		DestructiveHint: boolPointer(true),
+		IdempotentHint:  false,
+		OpenWorldHint:   boolPointer(true),
+	}
+}
+
+// actionAnnotations marks a load-heavy action that changes no persisted
+// configuration (so it is not destructive) but is not a read and is not
+// idempotent: running it again starts another scan. It is still stripped from
+// the read-only gateway.
+func actionAnnotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint:    false,
+		DestructiveHint: boolPointer(false),
 		IdempotentHint:  false,
 		OpenWorldHint:   boolPointer(true),
 	}
