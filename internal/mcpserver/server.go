@@ -1519,7 +1519,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_filestation_sharing_links",
 		Title:       "List FileStation sharing links",
-		Description: "List the public sharing links on a NAS (id, path, public URL, password protection, status). Manage links with plan_filestation_change using the sharelink_create and sharelink_delete actions. This tool is read-only.",
+		Description: "List the public sharing links on a NAS (id, path, public URL, password protection, status). Manage links with plan_filestation_change using the sharelink_create, sharelink_edit, sharelink_delete, and sharelink_clear_invalid actions. This tool is read-only.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input fileStationNASInput) (*mcp.CallToolResult, getFileStationSharingLinksOutput, error) {
 		result, err := service.GetFileStationSharingLinks(ctx, input.NAS)
@@ -1545,7 +1545,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "plan_filestation_change",
 		Title:       "Plan a FileStation change",
-		Description: "Validate a FileStation mutation (create_folder, rename, copy, move, delete, compress, extract, upload, sharelink_create, or sharelink_delete) and return an approval plan bound to the observed state. The plan surfaces risk, warnings (data loss, overwrite, public exposure), and a hash. This tool never mutates the NAS. Move, delete, and sharelink_create (anonymous public URL) are high risk; upload reads local_path on the host running dsmctl.",
+		Description: "Validate a FileStation mutation (create_folder, rename, copy, move, delete, compress, extract, upload, sharelink_create, sharelink_edit, sharelink_delete, or sharelink_clear_invalid) and return an approval plan bound to the observed state. The plan surfaces risk, warnings (data loss, overwrite, public exposure), and a hash. This tool never mutates the NAS. Move, delete, and sharelink_create (anonymous public URL) are high risk; upload reads local_path on the host running dsmctl.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planFileStationChangeInput) (*mcp.CallToolResult, planFileStationChangeOutput, error) {
 		plan, err := service.PlanFileStationChange(ctx, input.NAS, input.Request)
