@@ -158,6 +158,7 @@ advertises at runtime.
 | Synology Office (settings, system, fonts) | DSM 7.3.2-86009 Update 1 (DS923+) | Synology Office 3.7.2-22592 | WI-051, WI-052 |
 | Synology Drive — team folders | DSM 7.3.2 | Synology Drive 4.0.3-27892 | WI-050 |
 | Synology Drive — admin (nodes, connections, logs, activation) | DSM 7.3.2 | Synology Drive 4.0.3-27892 | WI-053–WI-057 |
+| Login Portal (DSM access, application portals, reverse-proxy list) | DSM 7.3 | — | WI-070 |
 
 ### Adding a row
 
