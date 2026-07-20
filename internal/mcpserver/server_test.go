@@ -62,8 +62,8 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools() error = %v", err)
 	}
-	if len(tools.Tools) != 183 {
-		t.Fatalf("ListTools() returned %d tools, want 183", len(tools.Tools))
+	if len(tools.Tools) != 191 {
+		t.Fatalf("ListTools() returned %d tools, want 191", len(tools.Tools))
 	}
 	for _, tool := range tools.Tools {
 		if scope, ok := ToolScope(tool.Name); !ok || scope == "" {
@@ -150,6 +150,15 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"get_security_advisor_status":           false,
 		"get_security_advisor_schedule":         false,
 		"plan_security_advisor_schedule_change": false,
+		"get_account_protection_capabilities":   false,
+		"get_account_protection_autoblock":      false,
+		"get_account_protection_autoblock_list": false,
+		"get_account_protection":                false,
+		"get_account_protection_enforce_2fa":    false,
+		"plan_account_protection_autoblock_change":    false,
+		"plan_account_protection_list_change":         false,
+		"plan_account_protection_thresholds_change":   false,
+		"plan_account_protection_enforce_2fa_change":  false,
 		"get_firewall_capabilities":             false,
 		"get_firewall_status":                   false,
 		"get_firewall_profiles":                 false,
@@ -178,6 +187,10 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"apply_package_plan":                   false,
 		"apply_resource_recording_plan":        false,
 		"apply_security_advisor_schedule_plan": false,
+		"apply_account_protection_autoblock_plan":     false,
+		"apply_account_protection_list_plan":          false,
+		"apply_account_protection_thresholds_plan":    false,
+		"apply_account_protection_enforce_2fa_plan":   false,
 	}
 	for _, tool := range tools.Tools {
 		if _, ok := mutationTools[tool.Name]; ok {
