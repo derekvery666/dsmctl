@@ -121,6 +121,35 @@ func (r *Repository) Password(ctx context.Context, profileName string, profile c
 	return r.environment.Password(ctx, profileName, profile)
 }
 
+// StoredPassword returns the password held in the encrypted vault for the
+// profile. Unlike Password it never falls back to environment variables, so
+// the human-gated reveal shows exactly what the vault stores; a profile
+// without a vault entry reports ErrNotFound.
+func (r *Repository) StoredPassword(ctx context.Context, profileName string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	var password string
+	err := r.db.View(func(tx *bolt.Tx) error {
+		record, err := readProfile(tx, profileName)
+		if err != nil {
+			return err
+		}
+		if record.PasswordSecretID == "" {
+			return ErrNotFound
+		}
+		plaintext, _, err := r.secret(tx, record.PasswordSecretID, secretPassword, record.ID)
+		if err == nil {
+			password = string(plaintext)
+		}
+		return err
+	})
+	if err != nil {
+		return "", err
+	}
+	return password, nil
+}
+
 func (r *Repository) SavePassword(ctx context.Context, profileName, password string) (uint64, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err

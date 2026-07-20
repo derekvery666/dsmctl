@@ -89,6 +89,15 @@ flowchart LR
     WI019 --> WI080["WI-080 Universal Search index"]
   end
   WI079 -. "encrypted-share keys" .-> WI008
+  WI009 --> WI084["WI-084 Password store + human-gated reveal"]
+  WI015 --> WI084
+  WI032 --> WI084
+  WI084 --> WI083["WI-083 Fresh-NAS first-admin provision"]
+  WI023 -. "find fresh NAS" .-> WI083
+  WI085["WI-085 DSM OS install from .pat"] --> WI083
+  WI023 --> WI085
+  WI086["WI-086 Remote-provision authorization"] --> WI083
+  WI016 --> WI086
 ```
 
 ## Work queue
@@ -177,6 +186,10 @@ flowchart LR
 | [WI-080](work-items/WI-080-universalsearch.md) | P3 | `proposed` | C | WI-019, WI-022 | Universal Search index management (package-gated): read indexed folders+status; guarded add/remove/reindex. |
 | [WI-081](work-items/WI-081-automatic-tls-trust-enrollment.md) | P2 | `in_progress` | G | WI-032, WI-048 | Automatic TLS trust enrollment: shared `internal/tlstrust` package + CLI `auth` and Gateway-admin trust-on-first-use enrollment, replacing manual fingerprint paste without weakening pin-on-first-use (a changed pin is never silently re-trusted). Committed on `claude/tls-trust-enrollment-wi081`; resolves the mis-filed-as-WI-051 number collision (that file is removed). |
 | [WI-082](work-items/WI-082-local-package-install.md) | P2 | `done` | C | WI-019, WI-029 | Local (offline) `.spk` install via `Installation.upload` → `install` (task_id/path), reusing WI-029 status machinery; CLI + MCP; read-only gateway strips the plan/apply tools. Live-verified on the DSM 7.3 lab (Text Editor `.spk` install → confirm → uninstall, wire shape needed no correction). |
+| [WI-083](work-items/WI-083-fresh-nas-provision.md) | P2 | `in_progress` | H | WI-084, WI-023, WI-086 | Fresh-NAS first-admin provision (CLI + Admin UI + remote MCP): `SYNO.Entry.Request` compound on the auto-logged-in setup session, generated password stored via WI-084 (never returned over MCP). **Decisions (2026-07-21): scope includes online OS install (→WI-085) and first-admin; surface is local admin + remote MCP (→WI-086); reuse not rewrite.** **Shipped this session: shared `Service.ProvisionFirstAdmin`/`FinishSetup` operation (reusing the ported `internal/provision` core), thin `dsmctl provision` CLI (user live-confirmed), and the gateway Admin-UI adapter (`POST …/provision` + vault sink + "Provision fresh NAS" dialog, 5 langs) so a provisioned password lands in the vault and is revealable via WI-084.** Pending: remote MCP tool (WI-086), online install (WI-085), one live Admin-UI fresh-NAS verify. |
+| [WI-084](work-items/WI-084-password-store-reveal.md) | P1 | `in_progress` | G | WI-009, WI-015, WI-032 | NAS password credential-store lifecycle: CLI `auth password set/remove/reveal` against the OS keyring (with keyring-first runtime resolver), and a rate-limited, audited, re-authenticated Admin UI password reveal on the gateway vault; Admin UI also gains an Open-NAS link and Copy-account button. Implements the WI-008 human-gated-reveal decision. |
+| [WI-085](work-items/WI-085-dsm-os-install-pat.md) | P3 | `in_progress` | H | WI-023 | DSM OS installation on never-installed hardware, **online-first**. **Shipped + live-verified 2026-07-21**: reverse-engineered the Web Assistant `/webman/*.cgi` API ([[dsm-web-assistant-install-api]]) — `get_state.cgi` detection (not_install/sys_crash/sys_migrat + internet_*_ok + version), `install.cgi` online install, `get_install_progress.cgi`, completion via SYNO.API.Info at the setup URL — as `internal/provision/install.go` + CLI `dsmctl install` (detect-only default; `--install --yes` gated by serial confirm). Live: online-reinstalled DS918+ 10.17.36.255 → DSM 7.3.1-86003 → provisioned admin deryck (password in Windows vault). Pending: sys_migrat, offline `.pat`, gateway/MCP surface, install→first-admin one-shot. |
+| [WI-086](work-items/WI-086-remote-provision-authorization.md) | P2 | `in_progress` | F | WI-016, WI-045 | Remote-provision authorization: a distinct `nas.provision` scope + two MCP tools over shared operations — `provision_nas` (existing credential-less profile) and `provision_discovered_nas` (un-enrolled device by LAN url: private-IP-only guard, TOFU cert pin, creates the profile, never auto-allowlists). Both refuse re-provisioning, never return the password, and are stripped from the read-only gateway; managed gateway installs a vault sink. **Shipped this session, unit-verified (incl. TOFU against a loopback TLS server); live remote-client + fresh-NAS verify pending.** LAN-TOFU MITM is a documented accepted bootstrap risk. Amends `gateway-deployment.md`. |
 
 Parallel groups indicate likely file overlap. Items in different groups may run
 at the same time after checking their `touches` lists. Only one agent should

@@ -78,7 +78,32 @@ func (s *SecureStore) Password(ctx context.Context, profileName string, profile 
 	if name == "" {
 		name = DefaultEnvironmentVariable(profileName)
 	}
-	return "", fmt.Errorf("password for NAS %q is unavailable; run 'dsmctl auth login --nas %s' or set %s", profileName, profileName, name)
+	return "", fmt.Errorf("password for NAS %q is unavailable; run 'dsmctl auth login --nas %s', store one with 'dsmctl auth password set --nas %s', or set %s", profileName, profileName, profileName, name)
+}
+
+// ErrNoStoredPassword reports that the OS credential store holds no password
+// entry for the profile. It deliberately does not consider environment
+// fallbacks: reveal and removal operate on the stored entry only.
+var ErrNoStoredPassword = errors.New("no password is stored in the OS credential store for this NAS")
+
+// StoredPassword returns the password persisted in the OS credential store.
+// Unlike Password it never consults environment variables, so callers that
+// display or audit the stored entry see exactly what the store holds.
+func (s *SecureStore) StoredPassword(ctx context.Context, profileName string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	password, err := s.keyring.Get(keyringService, passwordKey(profileName))
+	if errors.Is(err, keyring.ErrNotFound) {
+		return "", ErrNoStoredPassword
+	}
+	if err != nil {
+		return "", fmt.Errorf("read password for NAS %q from OS credential store: %w", profileName, err)
+	}
+	if password == "" {
+		return "", ErrNoStoredPassword
+	}
+	return password, nil
 }
 
 func (s *SecureStore) SavePassword(ctx context.Context, profileName, password string) error {

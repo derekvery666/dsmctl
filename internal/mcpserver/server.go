@@ -1378,6 +1378,42 @@ func New(service *application.Service, version string) *mcp.Server {
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "provision_nas",
+		Title:       "Provision a fresh NAS (create first administrator)",
+		Description: "Create the first administrator on a factory-fresh NAS that is in its DSM setup window, behind an already-added, credential-less NAS profile. The administrator password is generated on the server and stored in the credential store; it is NEVER returned, logged, or accepted as input — retrieve it afterward only through the human-gated reveal. Refuses a profile that already holds a stored credential (so a grant cannot re-provision a set-up NAS). Remote callers need the nas.provision scope and the target NAS in their allowlist.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input application.ProvisionRequest) (*mcp.CallToolResult, application.ProvisionResult, error) {
+		result, err := service.ProvisionNAS(ctx, input)
+		if err != nil {
+			return nil, application.ProvisionResult{}, err
+		}
+		return nil, result, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "provision_discovered_nas",
+		Title:       "Provision a discovered, un-enrolled fresh NAS",
+		Description: "Provision a factory-fresh NAS that has NO profile yet, by its LAN url (for example one just returned by discover_lan_devices). The server restricts the target to a private/loopback/link-local address, trusts the certificate it observes on first contact, creates a pinned profile, then creates the first administrator. The generated password is stored in the credential store and is NEVER returned or logged — retrieve it only through the human-gated reveal. The new profile is not added to any token's allowlist. Remote callers need the nas.provision scope; this is a LAN/VPN bootstrap and sends a generated password to the device, so grant it only to a trusted provisioning client.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input application.ProvisionRequest) (*mcp.CallToolResult, application.ProvisionResult, error) {
+		result, err := service.ProvisionDiscoveredNAS(ctx, input)
+		if err != nil {
+			return nil, application.ProvisionResult{}, err
+		}
+		return nil, result, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "install_discovered_nas",
+		Title:       "Detect and online-install DSM on a discovered device",
+		Description: "Detect the DSM install state of a discovered LAN device (never installed, crashed, or migratable) by its Web Assistant url, and — with trigger=true — start an ONLINE DSM install (the device downloads DSM from Synology and reboots). This is DESTRUCTIVE: it erases the device's disks. It does not wait for the multi-minute install/reboot; re-call to check state, then create the first administrator with provision_discovered_nas. The offline .pat path (host downloads the image) is CLI-only. Remote callers need the nas.provision scope; the target is bounded to LAN/VPN addresses.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input application.InstallRequest) (*mcp.CallToolResult, application.InstallStatus, error) {
+		result, err := service.InstallDiscoveredNAS(ctx, input)
+		if err != nil {
+			return nil, application.InstallStatus{}, err
+		}
+		return nil, result, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_system_info",
 		Description: "Log in to a configured Synology NAS and return basic DSM system information.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getSystemInfoInput) (*mcp.CallToolResult, getSystemInfoOutput, error) {

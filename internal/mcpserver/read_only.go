@@ -15,6 +15,13 @@ func NewReadOnly(service *application.Service, version string) *mcp.Server {
 	server := New(service, version)
 	server.RemoveTools(
 		"discover_lan_devices",
+		// provision_nas / provision_discovered_nas mint a NAS's first administrator
+		// credential; they are mutations and belong only on the authorized managed
+		// surface (WI-086), never on the developer read-only gateway.
+		"provision_nas",
+		"provision_discovered_nas",
+		// install_discovered_nas triggers a destructive OS install on a LAN device.
+		"install_discovered_nas",
 		// FileStation content transfer and mutations never reach the read-only
 		// gateway: get_filestation_file_content / get_filestation_thumbnail would
 		// exfiltrate file bytes to a remote caller, and the plan/apply pair
