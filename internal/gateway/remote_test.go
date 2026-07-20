@@ -246,6 +246,46 @@ func TestManagedMCPAuthenticatesBeforeInitializeFiltersToolsAndNAS(t *testing.T)
 	}
 }
 
+// TestManagedMCPUnknownToolReturnsErrorWithoutCrashing is an end-to-end
+// regression test for a remote denial-of-service. ToolScope classifies any
+// unregistered get_/plan_/apply_/explain_-prefixed name as a known scope, so a
+// read-scoped managed token with access to at least one NAS can call one; it
+// passes the policy gate, clears AuthorizeRemoteTarget, and reaches the go-sdk
+// dispatcher, which returns a typed-nil *mcp.CallToolResult boxed in the result
+// interface (the assertion succeeds but the pointer is nil). Before the nil
+// guard in remotePolicyMiddleware, dereferencing IsError panicked in a bare
+// goroutine with no recover and crashed the whole gateway process. The managed
+// server must instead surface a clean error for the unknown tool.
+func TestManagedMCPUnknownToolReturnsErrorWithoutCrashing(t *testing.T) {
+	cfg := config.New()
+	cfg.NAS["allowed"] = config.Profile{URL: "https://allowed.invalid", Revision: 1}
+	manager := runtime.NewManager(cfg, credentials.NewEnvironment())
+	service := application.NewService(cfg, manager)
+	t.Cleanup(func() { _ = service.Close(context.Background()) })
+	reader := remotepolicy.Principal{TokenID: "reader-id", Name: "reader", Scopes: map[string]struct{}{remotepolicy.ScopeRead: {}}, NAS: map[string]struct{}{"allowed": {}}}
+	authenticator := &memoryAuthenticator{principals: map[string]remotepolicy.Principal{"reader-token": reader}}
+	auditor := &memoryAuditor{}
+	server, err := New(Options{MCPServer: mcpserver.NewRemote(service, "test", auditor), MCPAuthenticator: authenticator, MCPAuditor: auditor, OAuthProvider: &memoryOAuthProvider{}, AllowedHosts: []string{"127.0.0.1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpServer := httptest.NewServer(server.Handler())
+	defer httpServer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	session := connectManagedClient(t, ctx, httpServer.URL, "reader-token")
+	defer session.Close()
+
+	// get_bogus is unregistered but classifies to nas.read, so it passes the
+	// policy gate and reaches the dispatcher. Without the nil guard this crashed
+	// the whole test process; with it the call returns an error cleanly.
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "get_bogus", Arguments: map[string]any{"nas": "allowed"}})
+	if err == nil && (result == nil || !result.IsError) {
+		t.Fatalf("unknown tool did not surface an error: result=%#v err=%v", result, err)
+	}
+}
+
 func TestIdentityRateLimiterIsPerPrincipal(t *testing.T) {
 	limiter := newIdentityLimiter()
 	now := time.Now()
