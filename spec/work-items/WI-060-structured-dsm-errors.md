@@ -1,7 +1,7 @@
 ---
 id: WI-060
 title: Structured DSM error taxonomy across CLI and MCP
-status: ready
+status: in_progress
 priority: P1
 owner: ""
 depends_on: []
