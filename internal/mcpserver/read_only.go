@@ -40,6 +40,13 @@ func NewReadOnly(service *application.Service, version string) *mcp.Server {
 		"apply_account_protection_thresholds_plan",
 		"plan_account_protection_enforce_2fa_change",
 		"apply_account_protection_enforce_2fa_plan",
+		// Terminal & SNMP guarded writes (WI-071). Enabling SSH/Telnet or disabling
+		// SSH is high risk; the SNMP set carries the community secret. Both pairs are
+		// stripped from the read-only gateway.
+		"plan_terminal_change",
+		"apply_terminal_plan",
+		"plan_snmp_change",
+		"apply_snmp_plan",
 		"plan_certificate_change",
 		"apply_certificate_plan",
 		"plan_filestation_change",

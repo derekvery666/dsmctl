@@ -35,6 +35,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/domain/storage"
 	"github.com/ychiu1211/dsmctl/internal/domain/surveillance"
 	"github.com/ychiu1211/dsmctl/internal/domain/syslog"
+	"github.com/ychiu1211/dsmctl/internal/domain/terminalsnmp"
 	"github.com/ychiu1211/dsmctl/internal/domain/tftpservice"
 	"github.com/ychiu1211/dsmctl/internal/synology"
 )
@@ -1173,8 +1174,40 @@ type getSNMPStateOutput struct {
 
 type getTerminalSNMPCapabilitiesOutput struct {
 	NAS          string                            `json:"nas" jsonschema:"NAS profile used for the request"`
-	Capabilities synology.TerminalSNMPCapabilities `json:"capabilities" jsonschema:"Terminal and SNMP reads currently exposed by dsmctl"`
+	Capabilities synology.TerminalSNMPCapabilities `json:"capabilities" jsonschema:"Terminal and SNMP reads and guarded writes currently exposed by dsmctl"`
 	Report       synology.CompatibilityReport      `json:"report" jsonschema:"Discovered APIs and selected Terminal/SNMP backends"`
+}
+
+type planTerminalChangeInput struct {
+	NAS     string                      `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request terminalsnmp.TerminalChange `json:"request" jsonschema:"Patch-only Terminal intent (ssh_enabled, ssh_port, telnet_enabled, console_forbidden)"`
+}
+
+type planTerminalChangeOutput struct {
+	Plan application.TerminalChangePlan `json:"plan" jsonschema:"Validated plan bound to the complete observed Terminal state and approval hash"`
+}
+
+type applyTerminalPlanInput struct {
+	Plan         application.TerminalChangePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_terminal_change"`
+	ApprovalHash string                         `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
+}
+
+type terminalSNMPApplyOutput struct {
+	Result application.TerminalSNMPApplyResult `json:"result" jsonschema:"Mutation result after stale-state and postcondition checks; carries no secret"`
+}
+
+type planSNMPChangeInput struct {
+	NAS     string                  `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request terminalsnmp.SNMPChange `json:"request" jsonschema:"Patch-only SNMP intent. The read community is a secret referenced by community_credential_ref (env:NAME) and resolved only at apply time"`
+}
+
+type planSNMPChangeOutput struct {
+	Plan application.SNMPChangePlan `json:"plan" jsonschema:"Validated plan bound to the complete observed SNMP state and approval hash; carries no community string or SNMPv3 password"`
+}
+
+type applySNMPPlanInput struct {
+	Plan         application.SNMPChangePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_snmp_change"`
+	ApprovalHash string                     `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
 }
 
 type planCertificateChangeInput struct {
@@ -3441,6 +3474,58 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getSNMPStateOutput{}, err
 		}
 		return nil, getSNMPStateOutput{NAS: result.NAS, SNMP: result.SNMP}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_terminal_change",
+		Title:       "Plan a Terminal (SSH/Telnet/console) change",
+		Description: "Validate a patch-only Terminal change (ssh_enabled, ssh_port, telnet_enabled, console_forbidden) and return an approval plan bound to the complete observed Terminal state. Enabling SSH or Telnet, or disabling SSH, changes the remote-shell attack surface and is classified high risk; an SSH-port change warns to verify the matching firewall/port forward separately. dsmctl drives DSM over the WebAPI session (not SSH), so its own access survives. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planTerminalChangeInput) (*mcp.CallToolResult, planTerminalChangeOutput, error) {
+		plan, err := service.PlanTerminalChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planTerminalChangeOutput{}, err
+		}
+		return nil, planTerminalChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_terminal_plan",
+		Title:       "Apply an approved Terminal plan",
+		Description: "Apply an unmodified Terminal plan only while its approval hash and the complete observed state still match, then re-read to verify every requested field took effect. The write is patch-only: unspecified switches are preserved by merging into a freshly read state.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyTerminalPlanInput) (*mcp.CallToolResult, terminalSNMPApplyOutput, error) {
+		result, err := service.ApplyTerminalPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, terminalSNMPApplyOutput{}, err
+		}
+		return nil, terminalSNMPApplyOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_snmp_change",
+		Title:       "Plan an SNMP change",
+		Description: "Validate a patch-only SNMP change (enabled, v1_v2c_enabled, v3_enabled, location, contact, and the read community via community_credential_ref) and return an approval plan bound to the complete observed SNMP state. The read community is a SECRET supplied as community_credential_ref (env:NAME): only the reference name enters the plan and approval hash, never the community value. Every SNMP change is medium risk. Enabling SNMPv3 is not supported (its DSM credential write wire is unverified); only disabling v3 is available. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planSNMPChangeInput) (*mcp.CallToolResult, planSNMPChangeOutput, error) {
+		plan, err := service.PlanSNMPChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planSNMPChangeOutput{}, err
+		}
+		return nil, planSNMPChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_snmp_plan",
+		Title:       "Apply an approved SNMP plan",
+		Description: "Apply an unmodified SNMP plan only while its approval hash and the complete observed state still match, then re-read to verify. When the plan sets the read community, the secret is resolved from its env:NAME reference only now and rides solely the SNMP set request body — never the plan, hash, result, or logs. The write is patch-only: unspecified fields are preserved by merging into a freshly read state.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applySNMPPlanInput) (*mcp.CallToolResult, terminalSNMPApplyOutput, error) {
+		result, err := service.ApplySNMPPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, terminalSNMPApplyOutput{}, err
+		}
+		return nil, terminalSNMPApplyOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
