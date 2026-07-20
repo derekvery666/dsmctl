@@ -1113,6 +1113,24 @@ type getDriveFileVersionsOutput struct {
 	Versions synology.DriveNodeVersions `json:"versions" jsonschema:"Stored version history for the node"`
 }
 
+type planDriveRestoreInput struct {
+	NAS     string                        `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request application.NodeRestoreChange `json:"request" jsonschema:"Node restore intent: team folder, node paths from get_drive_files, and options"`
+}
+
+type planDriveRestoreOutput struct {
+	Plan application.DriveNodeRestorePlan `json:"plan" jsonschema:"Validated plan bound to the resolved node entries and approval hash"`
+}
+
+type applyDriveRestorePlanInput struct {
+	Plan         application.DriveNodeRestorePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_drive_restore"`
+	ApprovalHash string                          `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved restore plan"`
+}
+
+type applyDriveRestorePlanOutput struct {
+	Result application.DriveNodeRestoreApplyResult `json:"result" jsonschema:"Restore result after the task completes and the view is re-read"`
+}
+
 type planDriveConnectionKickInput struct {
 	NAS       string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 	SessionID string `json:"session_id" jsonschema:"Drive client session identifier exactly as listed by get_drive_admin_connections"`
@@ -2954,6 +2972,32 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getDriveFileVersionsOutput{}, err
 		}
 		return nil, getDriveFileVersionsOutput{NAS: result.NAS, Versions: result.Versions}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_drive_restore",
+		Title:       "Plan a Drive node restore",
+		Description: "Validate restoring a set of node paths (from get_drive_files, including removed entries) in one Synology Drive view and return an approval plan bound to the resolved nodes. Recovering removed nodes is additive (medium risk); restoring in place over a currently-present file overwrites its content (high risk). Set copy_to to restore into another folder instead. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planDriveRestoreInput) (*mcp.CallToolResult, planDriveRestoreOutput, error) {
+		plan, err := service.PlanDriveNodeRestore(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planDriveRestoreOutput{}, err
+		}
+		return nil, planDriveRestoreOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_drive_restore_plan",
+		Title:       "Apply an approved Drive node restore",
+		Description: "Restore the nodes in an unmodified plan only while its approval hash and the resolved node entries still match. Drive runs the restore as an asynchronous task (one at a time); dsmctl polls it to completion and verifies the requested nodes are no longer removed by re-reading the view.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyDriveRestorePlanInput) (*mcp.CallToolResult, applyDriveRestorePlanOutput, error) {
+		result, err := service.ApplyDriveNodeRestorePlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyDriveRestorePlanOutput{}, err
+		}
+		return nil, applyDriveRestorePlanOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

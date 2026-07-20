@@ -458,6 +458,74 @@ func TestExecuteNodesRequestShapeAndDecode(t *testing.T) {
 	}
 }
 
+func TestExecuteNodeRestoreStartRequestShape(t *testing.T) {
+	// start answers {"task_id":N}.
+	executor := &capturingExecutor{response: json.RawMessage(`{"task_id":12345}`)}
+	input := NodeRestoreInput{
+		Target: "@projects", Override: true, IncludeRemoved: true,
+		Nodes: []NodeRestoreItem{{NodeID: "21", SyncID: "37", FileType: 1, Path: "/old", Name: "old"}},
+	}
+	taskID, _, err := ExecuteNodeRestoreStart(context.Background(), driveTarget("4.0.3-27892", true), executor, input)
+	if err != nil {
+		t.Fatalf("ExecuteNodeRestoreStart() error = %v", err)
+	}
+	if executor.request.API != NodeRestoreAPIName || executor.request.Version != 1 || executor.request.Method != "start" {
+		t.Fatalf("request = %#v", executor.request)
+	}
+	parameters := executor.request.JSONParameters
+	if parameters["target"] != "@projects" || parameters["override"] != true || parameters["include_removed"] != true {
+		t.Fatalf("parameters = %#v", parameters)
+	}
+	// Source-verified (handlers/node/restore/start.cpp): nodes is an array of
+	// {node_id, sync_id, file_type, path, name}.
+	entries, ok := parameters["nodes"].([]map[string]any)
+	if !ok || len(entries) != 1 {
+		t.Fatalf("nodes = %#v", parameters["nodes"])
+	}
+	entry := entries[0]
+	if entry["node_id"] != "21" || entry["sync_id"] != "37" || entry["file_type"] != 1 || entry["path"] != "/old" || entry["name"] != "old" {
+		t.Fatalf("entry = %#v", entry)
+	}
+	if _, present := parameters["copy_to"]; present {
+		t.Fatalf("copy_to should be omitted when empty: %#v", parameters)
+	}
+	if taskID != "12345" {
+		t.Fatalf("task id = %q", taskID)
+	}
+
+	// A missing sync_id defaults to "0"; copy_to is forwarded when set.
+	executor = &capturingExecutor{response: json.RawMessage(`{"task_id":1}`)}
+	input = NodeRestoreInput{Target: "user", CopyTo: "/recovered", Nodes: []NodeRestoreItem{{NodeID: "5", Path: "/x", Name: "x"}}}
+	if _, _, err := ExecuteNodeRestoreStart(context.Background(), driveTarget("4.0.3-27892", true), executor, input); err != nil {
+		t.Fatalf("ExecuteNodeRestoreStart() error = %v", err)
+	}
+	entry = executor.request.JSONParameters["nodes"].([]map[string]any)[0]
+	if entry["sync_id"] != "0" {
+		t.Fatalf("missing sync_id should default to 0: %#v", entry)
+	}
+	if executor.request.JSONParameters["copy_to"] != "/recovered" {
+		t.Fatalf("copy_to = %#v", executor.request.JSONParameters["copy_to"])
+	}
+}
+
+func TestExecuteNodeRestoreStatusAndFinish(t *testing.T) {
+	executor := &capturingExecutor{response: json.RawMessage(`{"current":3,"total":3}`)}
+	progress, err := ExecuteNodeRestoreStatus(context.Background(), executor)
+	if err != nil {
+		t.Fatalf("ExecuteNodeRestoreStatus() error = %v", err)
+	}
+	if executor.request.Method != "status" || progress.Current != 3 || progress.Total != 3 {
+		t.Fatalf("progress = %#v request = %#v", progress, executor.request)
+	}
+	finishExec := &capturingExecutor{response: json.RawMessage(`{}`)}
+	if err := ExecuteNodeRestoreFinish(context.Background(), finishExec); err != nil {
+		t.Fatalf("ExecuteNodeRestoreFinish() error = %v", err)
+	}
+	if finishExec.request.Method != "finish" {
+		t.Fatalf("finish request = %#v", finishExec.request)
+	}
+}
+
 func TestExecuteNodeVersionsDecodes(t *testing.T) {
 	// Response shape captured live from Drive 4.0.3 (WI-057).
 	executor := &capturingExecutor{response: json.RawMessage(`{

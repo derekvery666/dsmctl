@@ -95,6 +95,7 @@ high risk: it touches every user home). MCP: `plan_drive_team_folder_change`
 | Who may use Drive | `drive admin users` (+ account module to change) | `get_drive_users`, `plan_account_change` |
 | Audit activity | `drive admin log list --username … --team-folder …` | `get_drive_admin_logs` |
 | Hot files | `drive admin top-files --period-days 7` | `get_drive_top_files` |
+| Find & recover deleted files | `drive admin files` (incl. removed) → `drive admin restore plan/apply` | `get_drive_files`, `plan_drive_restore` / `apply_drive_restore_plan` |
 | Versioning changes | `drive admin team-folders plan/apply` | `plan_drive_team_folder_change` |
 | Database memory pinning | `drive config state/plan/apply` | `get_drive_config`, `plan_drive_config_change` |
 | Keep Drive updated | `package available --updates`, `package update` | `get_package_available`, `plan_package_update` |

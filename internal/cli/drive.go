@@ -143,7 +143,74 @@ func newDriveAdminCommand(opts *options) *cobra.Command {
 		newDriveAdminUsersCommand(opts),
 		newDriveAdminFilesCommand(opts),
 		newDriveAdminFileVersionsCommand(opts),
+		newDriveAdminRestoreCommand(opts),
 	)
+	return command
+}
+
+func newDriveAdminRestoreCommand(opts *options) *cobra.Command {
+	command := &cobra.Command{
+		Use:   "restore",
+		Short: "Restore removed Drive nodes through plan/apply",
+	}
+	command.AddCommand(newDriveAdminRestorePlanCommand(opts), newDriveAdminRestoreApplyCommand(opts))
+	return command
+}
+
+func newDriveAdminRestorePlanCommand(opts *options) *cobra.Command {
+	var inputPath, outputPath string
+	command := &cobra.Command{
+		Use:   "plan",
+		Short: "Validate a node restore (paths from drive admin files) and emit an approval plan",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var request application.NodeRestoreChange
+			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
+				return fmt.Errorf("read node restore request: %w", err)
+			}
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			plan, err := service.PlanDriveNodeRestore(cmd.Context(), opts.nas, request)
+			if err != nil {
+				return err
+			}
+			return encodeJSONOutput(cmd, outputPath, plan)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "node restore request JSON file, or - for stdin")
+	command.Flags().StringVarP(&outputPath, "output", "o", "-", "plan JSON file, or - for stdout")
+	return command
+}
+
+func newDriveAdminRestoreApplyCommand(opts *options) *cobra.Command {
+	var inputPath, approvalHash string
+	command := &cobra.Command{
+		Use:   "apply",
+		Short: "Apply a node restore plan (starts and polls the Drive restore task)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var plan application.DriveNodeRestorePlan
+			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
+				return fmt.Errorf("read node restore plan: %w", err)
+			}
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.ApplyDriveNodeRestorePlan(cmd.Context(), plan, approvalHash)
+			if err != nil {
+				return err
+			}
+			return encodeIndentedJSON(cmd.OutOrStdout(), result)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "node restore plan JSON file, or - for stdin")
+	command.Flags().StringVar(&approvalHash, "approve", "", "exact SHA-256 hash printed by the restore plan")
+	_ = command.MarkFlagRequired("approve")
 	return command
 }
 

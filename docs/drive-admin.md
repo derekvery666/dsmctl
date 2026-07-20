@@ -103,8 +103,8 @@ dsmctl drive admin activation --nas office
   with `--exclude-removed`), with per-node size, version count, and
   modification time. `file-versions --path <path>` lists a node's stored
   versions (time, size, content hash, storing client). Together they answer
-  "what got deleted and which version do I want back"; the restore write is a
-  planned follow-up (WI-057 defers `Node.Restore`).
+  "what got deleted and which version do I want back". Recover them with
+  `drive admin restore` (below).
 - `activation` reports whether the package completed its online activation
   (registration against the NAS serial). An unactivated Drive still serves
   clients — verified live — so this is informational; performing the
@@ -174,6 +174,29 @@ on the device, and dsmctl never sends Drive's remote data-wipe companion
 field. The delete request shape is verified against the Drive server source;
 the surrounding contract is live-verified (see WI-054 for the limits). MCP:
 `plan_drive_connection_kick` / `apply_drive_connection_kick_plan`.
+
+## Restore (guarded)
+
+Recover removed files and folders through plan/apply, using the paths from
+the files read:
+
+```console
+echo '{"team_folder":"team-data","paths":["/reports/q3.xlsx"]}' \
+  | dsmctl drive admin restore plan --nas office -o restore.plan.json
+dsmctl drive admin restore apply -f restore.plan.json --approve <hash>
+```
+
+The plan resolves each path against a fresh recursive view read (including
+removed entries) and binds the resolved nodes. Recovering removed nodes is
+additive (medium risk); an in-place restore that would overwrite a
+currently-present file is high risk. Set `copy_to` to a folder path to
+restore the content there instead of the original location. Apply starts
+Drive's asynchronous restore task (one runs at a time), polls it to
+completion, and confirms each node is no longer removed by re-reading the
+view (with bounded retries, since the view lags the task). MCP:
+`plan_drive_restore` / `apply_drive_restore_plan`. Per-node rollback of a
+present file to an earlier version, and restoring another user's My Drive,
+stay deferred (see WI-058).
 
 ## Deferred operations
 

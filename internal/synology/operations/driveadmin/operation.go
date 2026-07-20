@@ -32,8 +32,9 @@ const (
 	LogAPIName        = "SYNO.SynologyDrive.Log"
 	DBUsageAPIName    = "SYNO.SynologyDrive.DBUsage"
 	PrivilegeAPIName  = "SYNO.SynologyDrive.Privilege"
-	NodeAPIName       = "SYNO.SynologyDrive.Node"
-	DashboardAPIName  = "SYNO.SynologyDrive.Dashboard"
+	NodeAPIName        = "SYNO.SynologyDrive.Node"
+	NodeRestoreAPIName = "SYNO.SynologyDrive.Node.Restore"
+	DashboardAPIName   = "SYNO.SynologyDrive.Dashboard"
 	ActivationAPIName = "SYNO.SynologyDrive.Activation"
 
 	StatusCapabilityName            = "drive.admin.status.read"
@@ -49,12 +50,13 @@ const (
 	PrivilegeReadCapabilityName     = "drive.admin.privilege.read"
 	NodesReadCapabilityName         = "drive.admin.nodes.read"
 	NodeVersionsReadCapabilityName  = "drive.admin.nodeversions.read"
+	NodeRestoreCapabilityName       = "drive.admin.node.restore"
 )
 
-// nodeTarget maps the stable query model to Drive's target parameter:
+// NodeTarget maps the stable team-folder model to Drive's target parameter:
 // verified live on Drive 4.0.3, "user" is the calling account's My Drive and
 // "@<shared-folder-name>" is a team folder view.
-func nodeTarget(teamFolder string) string {
+func NodeTarget(teamFolder string) string {
 	if teamFolder == "" {
 		return "user"
 	}
@@ -382,7 +384,7 @@ var nodeListOperation = compatibility.Operation[driveadmin.NodeQuery, driveadmin
 			Match: compatibility.All(compatibility.APIVersion(NodeAPIName, 1), baselinePackage),
 			Execute: func(ctx context.Context, executor compatibility.Executor, query driveadmin.NodeQuery) (driveadmin.Nodes, error) {
 				parameters := map[string]any{
-					"target": nodeTarget(query.TeamFolder),
+					"target": NodeTarget(query.TeamFolder),
 					"offset": query.Offset, "limit": query.Limit,
 					"list_removed": !query.ExcludeRemoved,
 				}
@@ -414,7 +416,7 @@ var nodeVersionsOperation = compatibility.Operation[driveadmin.NodeVersionQuery,
 				data, err := executor.Execute(ctx, compatibility.Request{
 					API: NodeAPIName, Version: 1, Method: "list_version",
 					JSONParameters: map[string]any{
-						"target": nodeTarget(query.TeamFolder),
+						"target": NodeTarget(query.TeamFolder),
 						"path":   query.Path,
 					},
 				})
@@ -450,6 +452,110 @@ func ExecuteNodeVersions(ctx context.Context, target compatibility.Target, execu
 	return nodeVersionsOperation.Run(ctx, target, executor, query)
 }
 
+// NodeRestoreItem is one node descriptor for the restore task, built from the
+// files read (Node.list): the handler needs node_id, sync_id, file_type
+// (1 = folder), path, and name.
+type NodeRestoreItem struct {
+	NodeID   string
+	SyncID   string
+	FileType int
+	Path     string
+	Name     string
+}
+
+// NodeRestoreInput starts one restore task. Target is Drive's target form
+// (user or @share); IncludeRemoved recurses into removed folders and Override
+// replaces present content. Verified against handlers/node/restore/start.cpp.
+type NodeRestoreInput struct {
+	Target         string
+	CopyTo         string
+	Override       bool
+	IncludeRemoved bool
+	Nodes          []NodeRestoreItem
+}
+
+// nodeRestoreStartOperation gates the restore capability. status/finish reuse
+// the same backend selection and are driven by the facade's async loop.
+var nodeRestoreStartOperation = compatibility.Operation[NodeRestoreInput, string]{
+	Name: NodeRestoreCapabilityName,
+	Variants: []compatibility.Variant[NodeRestoreInput, string]{
+		{
+			Name: "drive-node-restore-v1", API: NodeRestoreAPIName, Version: 1, Priority: 10,
+			Match: compatibility.All(compatibility.APIVersion(NodeRestoreAPIName, 1), baselinePackage),
+			Execute: func(ctx context.Context, executor compatibility.Executor, input NodeRestoreInput) (string, error) {
+				nodes := make([]map[string]any, 0, len(input.Nodes))
+				for _, node := range input.Nodes {
+					entry := map[string]any{
+						"node_id":   node.NodeID,
+						"file_type": node.FileType,
+						"path":      node.Path,
+						"name":      node.Name,
+					}
+					// sync_id is stringified by the handler (std::stoull); send
+					// "0" when the read did not report one (removed nodes).
+					if node.SyncID != "" {
+						entry["sync_id"] = node.SyncID
+					} else {
+						entry["sync_id"] = "0"
+					}
+					nodes = append(nodes, entry)
+				}
+				parameters := map[string]any{
+					"target":          input.Target,
+					"nodes":           nodes,
+					"override":        input.Override,
+					"include_removed": input.IncludeRemoved,
+				}
+				if input.CopyTo != "" {
+					parameters["copy_to"] = input.CopyTo
+				}
+				data, err := executor.Execute(ctx, compatibility.Request{
+					API: NodeRestoreAPIName, Version: 1, Method: "start", JSONParameters: parameters,
+				})
+				if err != nil {
+					return "", fmt.Errorf("call %s.start v1: %w", NodeRestoreAPIName, err)
+				}
+				return decodeRestoreTaskID(data)
+			},
+		},
+	},
+}
+
+func SelectNodeRestore(target compatibility.Target) (compatibility.Selection, error) {
+	_, selection, err := nodeRestoreStartOperation.Select(target)
+	return selection, err
+}
+
+// ExecuteNodeRestoreStart begins the restore task and returns its task id and
+// the selected backend for evidence.
+func ExecuteNodeRestoreStart(ctx context.Context, target compatibility.Target, executor compatibility.Executor, input NodeRestoreInput) (string, compatibility.Selection, error) {
+	return nodeRestoreStartOperation.Run(ctx, target, executor, input)
+}
+
+// NodeRestoreProgress is one status poll of the singleton restore task.
+type NodeRestoreProgress struct {
+	Current int
+	Total   int
+}
+
+// ExecuteNodeRestoreStatus polls the singleton restore task. The task carries
+// no id in the status request (it is a per-admin singleton).
+func ExecuteNodeRestoreStatus(ctx context.Context, executor compatibility.Executor) (NodeRestoreProgress, error) {
+	data, err := executor.Execute(ctx, compatibility.Request{API: NodeRestoreAPIName, Version: 1, Method: "status"})
+	if err != nil {
+		return NodeRestoreProgress{}, fmt.Errorf("call %s.status v1: %w", NodeRestoreAPIName, err)
+	}
+	return decodeRestoreProgress(data)
+}
+
+// ExecuteNodeRestoreFinish clears the singleton restore task.
+func ExecuteNodeRestoreFinish(ctx context.Context, executor compatibility.Executor) error {
+	if _, err := executor.Execute(ctx, compatibility.Request{API: NodeRestoreAPIName, Version: 1, Method: "finish"}); err != nil {
+		return fmt.Errorf("call %s.finish v1: %w", NodeRestoreAPIName, err)
+	}
+	return nil
+}
+
 // Drive's own Privilege.set is deliberately not exposed. Live verification
 // on Drive 4.0.3 showed the DSM application privilege
 // (SYNO.SDS.Drive.Application, managed by the account module) is the real
@@ -477,7 +583,7 @@ var activationOperation = compatibility.Operation[Input, driveadmin.Activation]{
 // APINames lists every DSM API this module may use, so the facade can discover
 // them in one call before selecting variants.
 func APINames() []string {
-	return []string{StatusAPIName, ConnectionAPIName, ShareAPIName, LogAPIName, ConfigAPIName, DBUsageAPIName, DashboardAPIName, ActivationAPIName, PrivilegeAPIName, NodeAPIName}
+	return []string{StatusAPIName, ConnectionAPIName, ShareAPIName, LogAPIName, ConfigAPIName, DBUsageAPIName, DashboardAPIName, ActivationAPIName, PrivilegeAPIName, NodeAPIName, NodeRestoreAPIName}
 }
 
 func SelectStatus(target compatibility.Target) (compatibility.Selection, error) {

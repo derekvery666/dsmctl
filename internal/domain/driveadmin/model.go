@@ -100,6 +100,7 @@ type Node struct {
 	Name          string `json:"name" jsonschema:"Node name"`
 	Path          string `json:"path,omitempty" jsonschema:"Path inside the Drive view"`
 	NodeID        string `json:"node_id,omitempty" jsonschema:"Drive node identifier"`
+	SyncID        string `json:"sync_id,omitempty" jsonschema:"Drive sync identifier; the restore write uses it to identify the node"`
 	IsFolder      bool   `json:"is_folder" jsonschema:"Whether the node is a folder"`
 	IsRemoved     bool   `json:"is_removed" jsonschema:"Whether the node is deleted in the Drive view (restorable while versions remain)"`
 	IsEncrypted   bool   `json:"is_encrypted,omitempty" jsonschema:"Whether the node is encrypted"`
@@ -138,6 +139,29 @@ type NodeVersions struct {
 	RestoreBlocked bool          `json:"restore_blocked,omitempty" jsonschema:"Whether Drive reports restoring is disabled for this view"`
 	PermanentLink  string        `json:"permanent_link,omitempty" jsonschema:"Drive permanent link identifier"`
 	Versions       []NodeVersion `json:"versions" jsonschema:"Stored versions, as reported by Drive"`
+}
+
+// NodeRestore restores nodes in a Drive view to their latest stored version.
+// The primary use is recovering removed (deleted) files and folders — the
+// write half of the WI-057 rescue reads. Paths come from the files read;
+// planning resolves each to a node in the view.
+type NodeRestore struct {
+	TeamFolder string   `json:"team_folder,omitempty" jsonschema:"Team folder (shared-folder name) to restore in; empty targets the signed-in account's My Drive"`
+	Paths      []string `json:"paths" jsonschema:"Node paths to restore, exactly as listed by the files read"`
+	// CopyTo restores the content into this folder path instead of in place;
+	// empty restores each node at its original location.
+	CopyTo string `json:"copy_to,omitempty" jsonschema:"Restore into this folder path instead of the original location; the account must have write access there"`
+	// Overwrite replaces a currently-present node's content; it has no effect
+	// on removed nodes. Defaults to true.
+	Overwrite *bool `json:"overwrite,omitempty" jsonschema:"Overwrite a currently-present node when restoring in place; defaults to true, ignored for removed nodes"`
+}
+
+// NodeRestoreResult reports the outcome of a completed restore task.
+type NodeRestoreResult struct {
+	Backend  string `json:"backend" jsonschema:"Selected DSM compatibility backend"`
+	API      string `json:"api" jsonschema:"DSM WebAPI used for the change"`
+	Version  int    `json:"version" jsonschema:"DSM WebAPI version used for the change"`
+	Restored int    `json:"restored" jsonschema:"Nodes the restore task processed, as reported by Drive"`
 }
 
 // PrivilegedUser is one account row from the Admin Console user view: the
@@ -310,4 +334,5 @@ type Capabilities struct {
 	PrivilegeRead   bool            `json:"privilege_read" jsonschema:"Whether the per-user Drive privilege view can be listed; granting or revoking access goes through the account module's application privilege"`
 	NodesRead       bool            `json:"nodes_read" jsonschema:"Whether Drive views (team folders and My Drive, including removed entries) can be browsed"`
 	NodeVersionsRead bool           `json:"node_versions_read" jsonschema:"Whether a node's stored version history can be listed"`
+	NodeRestore     bool            `json:"node_restore" jsonschema:"Whether a guarded restore of removed nodes is available"`
 }

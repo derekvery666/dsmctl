@@ -59,6 +59,278 @@ type driveAdminClient interface {
 	DrivePrivileges(context.Context, synology.DrivePrivilegeQuery) (synology.DrivePrivilegeList, error)
 	DriveNodes(context.Context, synology.DriveNodeQuery) (synology.DriveNodes, error)
 	DriveNodeVersions(context.Context, synology.DriveNodeVersionQuery) (synology.DriveNodeVersions, error)
+	ApplyDriveNodeRestore(context.Context, synology.DriveNodeRestoreRequest) (synology.DriveNodeRestoreResult, error)
+}
+
+const driveNodeRestoreAPIVersion = "dsmctl.io/v1alpha1"
+
+// NodeRestoreChange is the user's restore intent: recover a set of node paths
+// in one Drive view. Overwrite and CopyTo mirror the DSM options.
+type NodeRestoreChange struct {
+	TeamFolder string   `json:"team_folder,omitempty" jsonschema:"Team folder (shared-folder name) to restore in; empty targets the signed-in account's My Drive"`
+	Paths      []string `json:"paths" jsonschema:"Node paths to restore, exactly as listed by the files read"`
+	CopyTo     string   `json:"copy_to,omitempty" jsonschema:"Restore the content into this folder path instead of the original location"`
+	Overwrite  *bool    `json:"overwrite,omitempty" jsonschema:"Overwrite a currently-present node when restoring in place; defaults to true, ignored for removed nodes"`
+}
+
+type DriveNodeRestorePlan struct {
+	APIVersion          string                        `json:"api_version" jsonschema:"Plan schema version"`
+	NAS                 string                        `json:"nas" jsonschema:"NAS profile selected during planning"`
+	ProfileRevision     uint64                        `json:"profile_revision,omitempty" jsonschema:"Persistent gateway profile revision selected during planning"`
+	Request             NodeRestoreChange             `json:"request" jsonschema:"Restore intent"`
+	Observed            []driveadmin.Node             `json:"observed" jsonschema:"Node entries resolved from the requested paths during planning"`
+	ObservedFingerprint string                        `json:"observed_fingerprint" jsonschema:"SHA-256 hash of the resolved node entries"`
+	Destructive         bool                          `json:"destructive" jsonschema:"Whether the plan overwrites currently-present content"`
+	Risk                string                        `json:"risk" jsonschema:"Plan risk level: medium or high"`
+	Warnings            []string                      `json:"warnings" jsonschema:"Overwrite and eligibility warnings"`
+	Summary             []string                      `json:"summary" jsonschema:"Human-readable operations the plan will perform"`
+	Hash                string                        `json:"hash" jsonschema:"SHA-256 approval hash covering intent and resolved nodes"`
+}
+
+type DriveNodeRestoreApplyResult struct {
+	NAS      string                            `json:"nas" jsonschema:"NAS profile used for apply"`
+	PlanHash string                            `json:"plan_hash" jsonschema:"Approved plan hash"`
+	Applied  bool                              `json:"applied" jsonschema:"Whether the restore completed and the postcondition passed"`
+	Result   synology.DriveNodeRestoreResult   `json:"result" jsonschema:"Selected DSM mutation backend and processed-node count"`
+	Restored []driveadmin.Node                 `json:"restored" jsonschema:"Requested nodes re-read after the restore"`
+}
+
+func (s *Service) PlanDriveNodeRestore(ctx context.Context, requestedNAS string, request NodeRestoreChange) (DriveNodeRestorePlan, error) {
+	if err := validateDriveNodeRestore(request); err != nil {
+		return DriveNodeRestorePlan{}, err
+	}
+	name, client, err := s.driveAdminClient(ctx, requestedNAS)
+	if err != nil {
+		return DriveNodeRestorePlan{}, err
+	}
+	plan, err := planDriveNodeRestoreWithClient(ctx, name, client, request)
+	if err != nil {
+		return DriveNodeRestorePlan{}, err
+	}
+	plan.ProfileRevision, err = s.profileRevision(ctx, name)
+	if err == nil {
+		plan.Hash, err = driveNodeRestorePlanHash(plan)
+	}
+	return plan, err
+}
+
+func (s *Service) ApplyDriveNodeRestorePlan(ctx context.Context, plan DriveNodeRestorePlan, approvalHash string) (DriveNodeRestoreApplyResult, error) {
+	if strings.TrimSpace(approvalHash) == "" || approvalHash != plan.Hash {
+		return DriveNodeRestoreApplyResult{}, fmt.Errorf("approval hash does not match the node restore plan")
+	}
+	if plan.APIVersion != driveNodeRestoreAPIVersion || strings.TrimSpace(plan.NAS) == "" {
+		return DriveNodeRestoreApplyResult{}, fmt.Errorf("invalid node restore plan metadata")
+	}
+	expectedHash, err := driveNodeRestorePlanHash(plan)
+	if err != nil {
+		return DriveNodeRestoreApplyResult{}, err
+	}
+	if expectedHash != plan.Hash {
+		return DriveNodeRestoreApplyResult{}, fmt.Errorf("node restore plan contents were modified after planning")
+	}
+	if err := s.authorizeRemoteApply(ctx, plan.NAS, plan.ProfileRevision, plan.Hash, plan.Risk); err != nil {
+		return DriveNodeRestoreApplyResult{}, err
+	}
+	if err := s.verifyProfileRevision(ctx, plan.NAS, plan.ProfileRevision); err != nil {
+		return DriveNodeRestoreApplyResult{}, err
+	}
+	name, client, err := s.driveAdminClient(ctx, plan.NAS)
+	if err != nil {
+		return DriveNodeRestoreApplyResult{}, err
+	}
+	if name != plan.NAS {
+		return DriveNodeRestoreApplyResult{}, fmt.Errorf("node restore plan NAS %q resolved to different profile %q", plan.NAS, name)
+	}
+	return applyDriveNodeRestorePlanWithClient(ctx, client, plan)
+}
+
+func applyDriveNodeRestorePlanWithClient(ctx context.Context, client driveAdminClient, plan DriveNodeRestorePlan) (DriveNodeRestoreApplyResult, error) {
+	current, err := planDriveNodeRestoreWithClient(ctx, plan.NAS, client, plan.Request)
+	if err != nil {
+		return DriveNodeRestoreApplyResult{}, fmt.Errorf("node restore plan precondition no longer holds: %w", err)
+	}
+	current.ProfileRevision = plan.ProfileRevision
+	current.Hash, err = driveNodeRestorePlanHash(current)
+	if err != nil {
+		return DriveNodeRestoreApplyResult{}, err
+	}
+	if current.ObservedFingerprint != plan.ObservedFingerprint || current.Hash != plan.Hash {
+		return DriveNodeRestoreApplyResult{}, fmt.Errorf("node restore plan is stale; create a new plan")
+	}
+	overwrite := true
+	if plan.Request.Overwrite != nil {
+		overwrite = *plan.Request.Overwrite
+	}
+	nodes := make([]synology.DriveNodeRestoreItem, 0, len(plan.Observed))
+	for _, node := range plan.Observed {
+		nodes = append(nodes, synology.DriveNodeRestoreItem{
+			NodeID: node.NodeID, SyncID: node.SyncID, Path: node.Path, Name: node.Name, IsFolder: node.IsFolder,
+		})
+	}
+	result, err := client.ApplyDriveNodeRestore(ctx, synology.DriveNodeRestoreRequest{
+		TeamFolder: plan.Request.TeamFolder, CopyTo: plan.Request.CopyTo,
+		Override: overwrite, IncludeRemoved: true, Nodes: nodes,
+	})
+	if err != nil {
+		return DriveNodeRestoreApplyResult{}, authenticationError(plan.NAS, err)
+	}
+	// Postcondition: for an in-place restore, re-read the view and confirm the
+	// requested nodes are no longer removed. A copy_to restore leaves the
+	// originals untouched, so the count from Drive is the evidence instead.
+	restored, err := verifyDriveNodeRestore(ctx, client, plan)
+	if err != nil {
+		return DriveNodeRestoreApplyResult{}, err
+	}
+	return DriveNodeRestoreApplyResult{NAS: plan.NAS, PlanHash: plan.Hash, Applied: true, Result: result, Restored: restored}, nil
+}
+
+func verifyDriveNodeRestore(ctx context.Context, client driveAdminClient, plan DriveNodeRestorePlan) ([]driveadmin.Node, error) {
+	// The restore task returns before the node view's is_removed flags catch
+	// up (observed live), so the postcondition re-read is bounded-retried.
+	var lastErr error
+	for attempt := 0; attempt < driveTeamFolderVerifyAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(driveTeamFolderVerifyDelay):
+			}
+		}
+		restored, err, retry := checkDriveNodeRestore(ctx, client, plan)
+		if err == nil {
+			return restored, nil
+		}
+		lastErr = err
+		if !retry {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
+// checkDriveNodeRestore re-reads the view once; retry reports whether the
+// failure is a not-yet-converged state worth polling again.
+func checkDriveNodeRestore(ctx context.Context, client driveAdminClient, plan DriveNodeRestorePlan) (nodes []driveadmin.Node, err error, retry bool) {
+	view, err := client.DriveNodes(ctx, synology.DriveNodeQuery{TeamFolder: plan.Request.TeamFolder, Limit: driveNodeMaxLimit})
+	if err != nil {
+		return nil, fmt.Errorf("verify node restore: %w", err), false
+	}
+	byPath := make(map[string]driveadmin.Node, len(view.Items))
+	for _, node := range view.Items {
+		byPath[node.Path] = node
+	}
+	restored := make([]driveadmin.Node, 0, len(plan.Request.Paths))
+	for _, path := range plan.Request.Paths {
+		node, found := byPath[path]
+		if !found {
+			// A copy_to restore may leave the removed original out of the view;
+			// that is not a failure for the copy workflow.
+			if plan.Request.CopyTo != "" {
+				continue
+			}
+			return nil, fmt.Errorf("Drive did not confirm the restore of %q (the node is not in the view); re-check with the files read", path), true
+		}
+		if plan.Request.CopyTo == "" && node.IsRemoved {
+			return nil, fmt.Errorf("Drive did not confirm the restore of %q (still removed); it may still be applying — re-check with the files read", path), true
+		}
+		restored = append(restored, node)
+	}
+	return restored, nil, false
+}
+
+func planDriveNodeRestoreWithClient(ctx context.Context, nas string, client driveAdminClient, request NodeRestoreChange) (DriveNodeRestorePlan, error) {
+	capabilities, _, err := client.DriveAdminCapabilities(ctx)
+	if err != nil {
+		return DriveNodeRestorePlan{}, authenticationError(nas, err)
+	}
+	if !capabilities.NodesRead {
+		return DriveNodeRestorePlan{}, fmt.Errorf("NAS %q does not expose a verified Drive files read backend", nas)
+	}
+	if !capabilities.NodeRestore {
+		return DriveNodeRestorePlan{}, fmt.Errorf("NAS %q does not expose a verified Drive node restore backend", nas)
+	}
+	// Re-read the whole view once and resolve every requested path against it,
+	// including removed entries (the rescue view).
+	nodes, err := client.DriveNodes(ctx, synology.DriveNodeQuery{TeamFolder: request.TeamFolder, Recursive: true, Limit: driveNodeMaxLimit})
+	if err != nil {
+		return DriveNodeRestorePlan{}, authenticationError(nas, err)
+	}
+	byPath := make(map[string]driveadmin.Node, len(nodes.Items))
+	for _, node := range nodes.Items {
+		byPath[node.Path] = node
+	}
+	plan := DriveNodeRestorePlan{APIVersion: driveNodeRestoreAPIVersion, NAS: nas, Request: request}
+	overwritePresent := false
+	for _, path := range request.Paths {
+		node, found := byPath[path]
+		if !found {
+			return DriveNodeRestorePlan{}, fmt.Errorf("path %q is not in the Drive view; list it with the files read first", path)
+		}
+		plan.Observed = append(plan.Observed, node)
+		if request.CopyTo == "" && !node.IsRemoved && !node.IsFolder {
+			overwritePresent = true
+		}
+	}
+	plan.ObservedFingerprint, err = hashJSON(plan.Observed)
+	if err != nil {
+		return DriveNodeRestorePlan{}, err
+	}
+	where := "in place"
+	if request.CopyTo != "" {
+		where = fmt.Sprintf("into %q", request.CopyTo)
+	}
+	plan.Summary = []string{fmt.Sprintf("restore %d node(s) %s in %s", len(plan.Observed), where, driveViewLabel(request.TeamFolder))}
+	plan.Warnings = []string{}
+	// Overwriting currently-present content is the only destructive case;
+	// recovering removed nodes is additive.
+	overwrite := true
+	if request.Overwrite != nil {
+		overwrite = *request.Overwrite
+	}
+	if request.CopyTo == "" && overwritePresent && overwrite {
+		plan.Destructive = true
+		plan.Risk = "high"
+		plan.Warnings = append(plan.Warnings, "one or more requested nodes are currently present; restoring in place overwrites their content with the stored version")
+	} else {
+		plan.Risk = "medium"
+	}
+	plan.Hash, err = driveNodeRestorePlanHash(plan)
+	if err != nil {
+		return DriveNodeRestorePlan{}, err
+	}
+	return plan, nil
+}
+
+func driveViewLabel(teamFolder string) string {
+	if teamFolder == "" {
+		return "My Drive"
+	}
+	return fmt.Sprintf("team folder %q", teamFolder)
+}
+
+func validateDriveNodeRestore(request NodeRestoreChange) error {
+	if len(request.Paths) == 0 {
+		return fmt.Errorf("node restore requires at least one path from the files read")
+	}
+	seen := make(map[string]bool, len(request.Paths))
+	for _, path := range request.Paths {
+		if strings.TrimSpace(path) == "" {
+			return fmt.Errorf("node restore paths must not be empty")
+		}
+		if seen[path] {
+			return fmt.Errorf("node restore path %q is listed more than once", path)
+		}
+		seen[path] = true
+	}
+	if request.CopyTo != "" && strings.TrimSpace(request.CopyTo) != request.CopyTo {
+		return fmt.Errorf("copy_to must not carry surrounding whitespace")
+	}
+	return nil
+}
+
+func driveNodeRestorePlanHash(plan DriveNodeRestorePlan) (string, error) {
+	plan.Hash = ""
+	return hashJSON(plan)
 }
 
 const (

@@ -17,6 +17,7 @@ type fakeDriveAdminClient struct {
 	folders     []driveadmin.TeamFolder
 	connections []driveadmin.Connection
 	privileges  []driveadmin.PrivilegedUser
+	nodes       []driveadmin.Node
 	mutations   int
 	// silentSkip mimics the Share.set handler ignoring an ineligible share:
 	// the call succeeds but nothing changes.
@@ -63,11 +64,25 @@ func (c *fakeDriveAdminClient) DriveAdminConnections(_ context.Context) (synolog
 }
 
 func (c *fakeDriveAdminClient) DriveNodes(context.Context, synology.DriveNodeQuery) (synology.DriveNodes, error) {
-	return synology.DriveNodes{}, nil
+	return synology.DriveNodes{Total: len(c.nodes), Items: append([]driveadmin.Node(nil), c.nodes...)}, nil
 }
 
 func (c *fakeDriveAdminClient) DriveNodeVersions(context.Context, synology.DriveNodeVersionQuery) (synology.DriveNodeVersions, error) {
 	return synology.DriveNodeVersions{}, nil
+}
+
+func (c *fakeDriveAdminClient) ApplyDriveNodeRestore(_ context.Context, request synology.DriveNodeRestoreRequest) (synology.DriveNodeRestoreResult, error) {
+	c.mutations++
+	if !c.silentSkip && request.CopyTo == "" {
+		for index := range c.nodes {
+			for _, node := range request.Nodes {
+				if c.nodes[index].Path == node.Path {
+					c.nodes[index].IsRemoved = false
+				}
+			}
+		}
+	}
+	return synology.DriveNodeRestoreResult{Backend: "fake", API: "fake", Version: 1, Restored: len(request.Nodes)}, nil
 }
 
 func (c *fakeDriveAdminClient) DrivePrivileges(context.Context, synology.DrivePrivilegeQuery) (synology.DrivePrivilegeList, error) {
@@ -418,6 +433,81 @@ func TestDriveConnectionKickPlanApply(t *testing.T) {
 	client.silentSkip = true
 	if _, err := applyDriveConnectionKickPlanWithClient(context.Background(), client, skipPlan); err == nil || !strings.Contains(err.Error(), "did not confirm") {
 		t.Fatalf("silent skip error = %v", err)
+	}
+}
+
+func TestDriveNodeRestorePlanApply(t *testing.T) {
+	client := driveTeamFolderTestClient()
+	client.caps.NodesRead = true
+	client.caps.NodeRestore = true
+	client.nodes = []driveadmin.Node{
+		{Name: "gone.txt", Path: "/gone.txt", NodeID: "5", SyncID: "10", IsRemoved: true},
+		{Name: "live.txt", Path: "/live.txt", NodeID: "6", SyncID: "11", IsRemoved: false},
+	}
+
+	// Restoring a removed node is additive → medium risk.
+	plan, err := planDriveNodeRestoreWithClient(context.Background(), "lab", client, NodeRestoreChange{Paths: []string{"/gone.txt"}})
+	if err != nil {
+		t.Fatalf("plan error = %v", err)
+	}
+	if plan.Risk != "medium" || plan.Destructive || len(plan.Observed) != 1 || plan.Observed[0].NodeID != "5" {
+		t.Fatalf("plan = %#v", plan)
+	}
+	result, err := applyDriveNodeRestorePlanWithClient(context.Background(), client, plan)
+	if err != nil {
+		t.Fatalf("apply error = %v", err)
+	}
+	if !result.Applied || result.Result.Restored != 1 || len(result.Restored) != 1 || result.Restored[0].IsRemoved {
+		t.Fatalf("result = %#v", result)
+	}
+
+	// Restoring in place over a present file → high risk.
+	over := driveTeamFolderTestClient()
+	over.caps.NodesRead = true
+	over.caps.NodeRestore = true
+	over.nodes = []driveadmin.Node{{Name: "live.txt", Path: "/live.txt", NodeID: "6", SyncID: "11", IsRemoved: false}}
+	overPlan, err := planDriveNodeRestoreWithClient(context.Background(), "lab", over, NodeRestoreChange{Paths: []string{"/live.txt"}})
+	if err != nil {
+		t.Fatalf("overwrite plan error = %v", err)
+	}
+	if overPlan.Risk != "high" || !overPlan.Destructive {
+		t.Fatalf("overwrite plan = %#v", overPlan)
+	}
+
+	// An unknown path is rejected during planning.
+	if _, err := planDriveNodeRestoreWithClient(context.Background(), "lab", client, NodeRestoreChange{Paths: []string{"/ghost"}}); err == nil || !strings.Contains(err.Error(), "not in the Drive view") {
+		t.Fatalf("unknown path error = %v", err)
+	}
+
+	// A restore Drive silently ignored surfaces as not confirmed.
+	skip := driveTeamFolderTestClient()
+	skip.caps.NodesRead = true
+	skip.caps.NodeRestore = true
+	skip.nodes = []driveadmin.Node{{Name: "gone.txt", Path: "/gone.txt", NodeID: "5", SyncID: "10", IsRemoved: true}}
+	skipPlan, err := planDriveNodeRestoreWithClient(context.Background(), "lab", skip, NodeRestoreChange{Paths: []string{"/gone.txt"}})
+	if err != nil {
+		t.Fatalf("skip plan error = %v", err)
+	}
+	skip.silentSkip = true
+	if _, err := applyDriveNodeRestorePlanWithClient(context.Background(), skip, skipPlan); err == nil || !strings.Contains(err.Error(), "still removed") {
+		t.Fatalf("silent skip error = %v", err)
+	}
+}
+
+func TestValidateDriveNodeRestoreRejectsBadIntents(t *testing.T) {
+	cases := []struct {
+		name    string
+		request NodeRestoreChange
+		want    string
+	}{
+		{"no paths", NodeRestoreChange{}, "at least one path"},
+		{"empty path", NodeRestoreChange{Paths: []string{" "}}, "must not be empty"},
+		{"duplicate path", NodeRestoreChange{Paths: []string{"/a", "/a"}}, "more than once"},
+	}
+	for _, test := range cases {
+		if err := validateDriveNodeRestore(test.request); err == nil || !strings.Contains(err.Error(), test.want) {
+			t.Fatalf("%s: error = %v, want %q", test.name, err, test.want)
+		}
 	}
 }
 

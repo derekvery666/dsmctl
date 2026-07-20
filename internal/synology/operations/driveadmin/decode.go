@@ -237,6 +237,7 @@ func decodeNodes(data json.RawMessage) (driveadmin.Nodes, error) {
 			Name:          name,
 			Path:          stringValue(item, "path"),
 			NodeID:        stringValue(item, "node_id"),
+			SyncID:        stringValue(item, "sync_id"),
 			IsFolder:      intValue(item, "file_type") == 1,
 			IsRemoved:     removed,
 			IsEncrypted:   encrypted,
@@ -284,6 +285,36 @@ func decodeNodeVersions(data json.RawMessage) (driveadmin.NodeVersions, error) {
 		})
 	}
 	return result, nil
+}
+
+// decodeRestoreTaskID reads Node.Restore.start, which answers {"task_id":N}.
+func decodeRestoreTaskID(data json.RawMessage) (string, error) {
+	root, err := decodeObject(data, "Drive restore task")
+	if err != nil {
+		return "", err
+	}
+	if _, ok := root["task_id"]; !ok {
+		return "", fmt.Errorf("decode Drive restore task: no task_id field among %s", availableKeys(root))
+	}
+	// The id is a random int; keep it as a string for logging/evidence only.
+	if id := stringValue(root, "task_id"); id != "" {
+		return id, nil
+	}
+	return fmt.Sprintf("%d", int64Value(root, "task_id")), nil
+}
+
+// decodeRestoreProgress reads Node.Restore.status, which answers
+// {"current":N,"total":M}. A failed task surfaces as an API error carrying
+// the handler's error code before this decoder runs.
+func decodeRestoreProgress(data json.RawMessage) (NodeRestoreProgress, error) {
+	root, err := decodeObject(data, "Drive restore status")
+	if err != nil {
+		return NodeRestoreProgress{}, err
+	}
+	if _, ok := root["total"]; !ok {
+		return NodeRestoreProgress{}, fmt.Errorf("decode Drive restore status: no total field among %s", availableKeys(root))
+	}
+	return NodeRestoreProgress{Current: intValue(root, "current"), Total: intValue(root, "total")}, nil
 }
 
 // decodePrivilegeList reads Privilege.list with the additional fields.

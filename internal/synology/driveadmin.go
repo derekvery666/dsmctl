@@ -3,6 +3,7 @@ package synology
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/ychiu1211/dsmctl/internal/domain/driveadmin"
 	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
@@ -33,8 +34,28 @@ type DrivePrivilegeList = driveadmin.PrivilegeList
 type DrivePrivilegeQuery = driveadmin.PrivilegeQuery
 type DriveNodeQuery = driveadmin.NodeQuery
 type DriveNodes = driveadmin.Nodes
+type DriveNode = driveadmin.Node
 type DriveNodeVersionQuery = driveadmin.NodeVersionQuery
 type DriveNodeVersions = driveadmin.NodeVersions
+type DriveNodeRestoreResult = driveadmin.NodeRestoreResult
+
+// DriveNodeRestoreItem is one resolved node to restore, from the files read.
+type DriveNodeRestoreItem struct {
+	NodeID   string
+	SyncID   string
+	Path     string
+	Name     string
+	IsFolder bool
+}
+
+// DriveNodeRestoreRequest is the resolved restore intent the facade executes.
+type DriveNodeRestoreRequest struct {
+	TeamFolder     string
+	CopyTo         string
+	Override       bool
+	IncludeRemoved bool
+	Nodes          []DriveNodeRestoreItem
+}
 
 // driveAdminEvidenceLocked reports the installed SynologyDrive package as
 // observed by the catalog refresh that ran in preparePackageScopedTargetLocked.
@@ -156,6 +177,76 @@ func (c *Client) DriveNodeVersions(ctx context.Context, query DriveNodeVersionQu
 	}
 	c.target.AddCapability(driveops.NodeVersionsReadCapabilityName)
 	return versions, nil
+}
+
+// nodeRestorePoll bounds the restore-task wait and its poll cadence. Restore
+// walks the requested nodes in a forked child; the task is a per-admin
+// singleton, so the facade holds the client lock for the whole choreography
+// (mirroring the package install poll).
+const (
+	nodeRestoreDeadline = 10 * time.Minute
+	nodeRestorePoll     = 2 * time.Second
+)
+
+// ApplyDriveNodeRestore starts the restore task, polls it to completion, and
+// clears it. The start/status/finish choreography and the singleton-task
+// contention match handlers/node/restore/*.cpp; the caller verifies the
+// outcome by re-reading the view.
+func (c *Client) ApplyDriveNodeRestore(ctx context.Context, request DriveNodeRestoreRequest) (DriveNodeRestoreResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, driveops.APINames()...); err != nil {
+		return DriveNodeRestoreResult{}, fmt.Errorf("prepare Drive Admin mutation target: %w", err)
+	}
+	nodes := make([]driveops.NodeRestoreItem, 0, len(request.Nodes))
+	for _, node := range request.Nodes {
+		fileType := 0
+		if node.IsFolder {
+			fileType = 1
+		}
+		nodes = append(nodes, driveops.NodeRestoreItem{
+			NodeID: node.NodeID, SyncID: node.SyncID, FileType: fileType, Path: node.Path, Name: node.Name,
+		})
+	}
+	input := driveops.NodeRestoreInput{
+		Target:         driveops.NodeTarget(request.TeamFolder),
+		CopyTo:         request.CopyTo,
+		Override:       request.Override,
+		IncludeRemoved: request.IncludeRemoved,
+		Nodes:          nodes,
+	}
+	executor := lockedExecutor{client: c}
+	_, selection, err := driveops.ExecuteNodeRestoreStart(ctx, c.target, executor, input)
+	if err != nil {
+		return DriveNodeRestoreResult{}, fmt.Errorf("start Drive node restore: %w", err)
+	}
+	c.target.AddCapability(driveops.NodeRestoreCapabilityName)
+
+	result := DriveNodeRestoreResult{Backend: selection.Backend, API: selection.API, Version: selection.Version}
+	deadline := time.Now().Add(nodeRestoreDeadline)
+	for {
+		progress, statusErr := driveops.ExecuteNodeRestoreStatus(ctx, executor)
+		if statusErr != nil {
+			// A failed task surfaces as an error code here; finish and report it.
+			_ = driveops.ExecuteNodeRestoreFinish(ctx, executor)
+			return DriveNodeRestoreResult{}, fmt.Errorf("Drive node restore failed: %w", statusErr)
+		}
+		if progress.Total > 0 && progress.Current >= progress.Total {
+			result.Restored = progress.Current
+			if err := driveops.ExecuteNodeRestoreFinish(ctx, executor); err != nil {
+				return DriveNodeRestoreResult{}, err
+			}
+			return result, nil
+		}
+		if time.Now().After(deadline) {
+			_ = driveops.ExecuteNodeRestoreFinish(ctx, executor)
+			return DriveNodeRestoreResult{}, fmt.Errorf("Drive node restore did not finish within the timeout")
+		}
+		if err := sleepContext(ctx, nodeRestorePoll); err != nil {
+			return DriveNodeRestoreResult{}, err
+		}
+	}
 }
 
 // DrivePrivileges lists accounts with their Drive privilege state.
@@ -397,6 +488,7 @@ func (c *Client) DriveAdminCapabilities(ctx context.Context) (DriveAdminCapabili
 		{driveops.SelectPrivilegeList, driveops.PrivilegeReadCapabilityName, &capabilities.PrivilegeRead},
 		{driveops.SelectNodes, driveops.NodesReadCapabilityName, &capabilities.NodesRead},
 		{driveops.SelectNodeVersions, driveops.NodeVersionsReadCapabilityName, &capabilities.NodeVersionsRead},
+		{driveops.SelectNodeRestore, driveops.NodeRestoreCapabilityName, &capabilities.NodeRestore},
 	}
 	for _, extended := range extendedSelectors {
 		selection, err := extended.selectOperation(c.target)
