@@ -81,6 +81,34 @@ func (s *SecureStore) Password(ctx context.Context, profileName string, profile 
 	return "", fmt.Errorf("password for NAS %q is unavailable; run 'dsmctl auth login --nas %s' or set %s", profileName, profileName, name)
 }
 
+// ErrNoStoredPassword indicates the OS credential store holds no password for
+// the profile. It is distinct from a backend failure so a reveal command can
+// print a friendly "nothing stored" hint instead of a keychain error.
+var ErrNoStoredPassword = errors.New("no password stored for this NAS in the OS credential store")
+
+// RevealPassword returns the stored plaintext password for a profile from the
+// OS credential store ONLY — never the environment-variable fallback. It is the
+// single method that yields a plaintext password to a human-facing sink and
+// MUST NOT be called from the MCP server, the application service, or any log
+// path; callers gate it behind an interactive-terminal check. A missing entry
+// returns ErrNoStoredPassword.
+func (s *SecureStore) RevealPassword(ctx context.Context, profileName string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	password, err := s.keyring.Get(keyringService, passwordKey(profileName))
+	if errors.Is(err, keyring.ErrNotFound) {
+		return "", ErrNoStoredPassword
+	}
+	if err != nil {
+		return "", fmt.Errorf("read password for NAS %q from OS credential store: %w", profileName, err)
+	}
+	if password == "" {
+		return "", ErrNoStoredPassword
+	}
+	return password, nil
+}
+
 func (s *SecureStore) SavePassword(ctx context.Context, profileName, password string) error {
 	if err := ctx.Err(); err != nil {
 		return err

@@ -62,8 +62,8 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools() error = %v", err)
 	}
-	if len(tools.Tools) != 161 {
-		t.Fatalf("ListTools() returned %d tools, want 161", len(tools.Tools))
+	if len(tools.Tools) != 172 {
+		t.Fatalf("ListTools() returned %d tools, want 172", len(tools.Tools))
 	}
 	for _, tool := range tools.Tools {
 		if scope, ok := ToolScope(tool.Name); !ok || scope == "" {
@@ -143,6 +143,12 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"get_surveillance_cameras":            false,
 		"get_surveillance_home_mode":          false,
 		"plan_surveillance_home_mode_change":  false,
+		"get_terminal_snmp_capabilities":      false,
+		"get_terminal_state":                  false,
+		"get_snmp_state":                      false,
+		"get_security_advisor_capabilities":   false,
+		"get_security_advisor_status":         false,
+		"get_security_advisor_schedule":       false,
 	}
 	mutationTools := map[string]bool{
 		"apply_account_plan":                false,

@@ -1155,6 +1155,26 @@ type getCertificateCapabilitiesOutput struct {
 	Report       synology.CompatibilityReport     `json:"report" jsonschema:"Discovered APIs and selected certificate backend"`
 }
 
+type getTerminalSNMPInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getTerminalStateOutput struct {
+	NAS      string                 `json:"nas" jsonschema:"NAS profile used for the request"`
+	Terminal synology.TerminalState `json:"terminal" jsonschema:"Normalized Terminal (SSH/Telnet) state"`
+}
+
+type getSNMPStateOutput struct {
+	NAS  string             `json:"nas" jsonschema:"NAS profile used for the request"`
+	SNMP synology.SNMPState `json:"snmp" jsonschema:"Normalized SNMP state; carries no community string or SNMPv3 passwords"`
+}
+
+type getTerminalSNMPCapabilitiesOutput struct {
+	NAS          string                            `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.TerminalSNMPCapabilities `json:"capabilities" jsonschema:"Terminal and SNMP reads currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport      `json:"report" jsonschema:"Discovered APIs and selected Terminal/SNMP backends"`
+}
+
 type planCertificateChangeInput struct {
 	NAS     string                    `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 	Request certificate.ChangeRequest `json:"request" jsonschema:"Certificate import, set_default, bind_service, or delete intent. The private key is referenced by env:NAME and resolved only at apply time"`
@@ -1181,6 +1201,56 @@ type exportCertificateInput struct {
 
 type exportCertificateOutput struct {
 	Result application.ExportCertificateResult `json:"result" jsonschema:"Local file the archive was written to and its size; no key bytes are returned"`
+}
+
+type getSecurityAdvisorInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getSecurityAdvisorStatusOutput struct {
+	NAS    string                         `json:"nas" jsonschema:"NAS profile used for the request"`
+	Status synology.SecurityAdvisorStatus `json:"status" jsonschema:"Normalized last-scan status and per-category findings"`
+}
+
+type getSecurityAdvisorScheduleOutput struct {
+	NAS           string                                `json:"nas" jsonschema:"NAS profile used for the request"`
+	Configuration synology.SecurityAdvisorConfiguration `json:"configuration" jsonschema:"Current scan schedule and security baseline"`
+}
+
+type getSecurityAdvisorCapabilitiesOutput struct {
+	NAS          string                               `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.SecurityAdvisorCapabilities `json:"capabilities" jsonschema:"Security Advisor operations currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport         `json:"report" jsonschema:"Discovered APIs and selected Security Advisor backends"`
+}
+
+type accountProtectionInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getAutoBlockSettingsOutput struct {
+	NAS      string                     `json:"nas" jsonschema:"NAS profile used for the request"`
+	Settings synology.AutoBlockSettings `json:"settings" jsonschema:"Auto Block configuration"`
+}
+
+type getAutoBlockListsOutput struct {
+	NAS   string                  `json:"nas" jsonschema:"NAS profile used for the request"`
+	Lists synology.AutoBlockLists `json:"lists" jsonschema:"Auto Block allow and block IP lists"`
+}
+
+type getAccountProtectionOutput struct {
+	NAS        string                     `json:"nas" jsonschema:"NAS profile used for the request"`
+	Protection synology.AccountProtection `json:"protection" jsonschema:"Account Protection thresholds"`
+}
+
+type getEnforceTwoFactorOutput struct {
+	NAS    string                    `json:"nas" jsonschema:"NAS profile used for the request"`
+	Policy synology.EnforceTwoFactor `json:"policy" jsonschema:"Enforced-2FA policy scope"`
+}
+
+type getAccountProtectionCapabilitiesOutput struct {
+	NAS          string                                 `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.AccountProtectionCapabilities `json:"capabilities" jsonschema:"Account-protection reads currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport           `json:"report" jsonschema:"Discovered APIs and selected account-protection backends"`
 }
 
 type getDriveAdminCapabilitiesOutput struct {
@@ -3196,6 +3266,45 @@ func New(service *application.Service, version string) *mcp.Server {
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_terminal_snmp_capabilities",
+		Title:       "Get Terminal and SNMP capabilities",
+		Description: "Report whether the Terminal (SSH/Telnet) and SNMP reads are supported on the selected NAS and the DSM backend for each. Terminal and SNMP are independent: one may be unsupported without disabling the other. This slice is read-only; guarded Terminal/SNMP writes are deferred.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getTerminalSNMPInput) (*mcp.CallToolResult, getTerminalSNMPCapabilitiesOutput, error) {
+		result, err := service.GetTerminalSNMPCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getTerminalSNMPCapabilitiesOutput{}, err
+		}
+		return nil, getTerminalSNMPCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_terminal_state",
+		Title:       "Get Terminal (SSH/Telnet) state",
+		Description: "Read the Control Panel > Terminal & SNMP > Terminal tab: whether SSH and Telnet are enabled, on which TCP port SSH listens, and whether local console access is forbidden. Telnet is unauthenticated cleartext and deprecated. This tool never changes the NAS.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getTerminalSNMPInput) (*mcp.CallToolResult, getTerminalStateOutput, error) {
+		result, err := service.GetTerminalState(ctx, input.NAS)
+		if err != nil {
+			return nil, getTerminalStateOutput{}, err
+		}
+		return nil, getTerminalStateOutput{NAS: result.NAS, Terminal: result.Terminal}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_snmp_state",
+		Title:       "Get SNMP state",
+		Description: "Read the Control Panel > Terminal & SNMP > SNMP tab: whether the SNMP service is enabled, which protocol versions (v1/v2c, v3) are on, the device location and contact, the SNMPv3 username, and whether a read community and a trap target are configured. Returns non-secret configuration only — the community string, the SNMPv3 auth/privacy passwords, and any trap community are never read or returned. This tool never changes the NAS.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getTerminalSNMPInput) (*mcp.CallToolResult, getSNMPStateOutput, error) {
+		result, err := service.GetSNMPState(ctx, input.NAS)
+		if err != nil {
+			return nil, getSNMPStateOutput{}, err
+		}
+		return nil, getSNMPStateOutput{NAS: result.NAS, SNMP: result.SNMP}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "plan_certificate_change",
 		Title:       "Plan a certificate change",
 		Description: "Validate a high-risk certificate change (import a bring-your-own bundle, set the default certificate, bind a service, or delete a certificate), read the current certificate store, and return a hash-bound approval plan. The private key is supplied by a credential reference (env:NAME) and resolved to bytes only at apply time; it never enters the plan, the hash, the result, or any log. Import parses the leaf locally and rejects an expired leaf, a broken chain, or (for a DSM-service binding) a leaf that does not cover the connection host. This tool never mutates DSM.",
@@ -3232,6 +3341,110 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, exportCertificateOutput{}, err
 		}
 		return nil, exportCertificateOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_security_advisor_capabilities",
+		Title:       "Get Security Advisor capabilities",
+		Description: "Report which Security Advisor operations dsmctl supports on the selected NAS and the backend for each. Each SYNO.Core.SecurityScan.* API is an independent boundary, so status/findings and schedule/baseline reads are reported separately and a NAS without Security Advisor reports them unsupported without erroring. run_scan and schedule/baseline writes are reported from the advertised APIs but are deferred and never executed by this read slice.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getSecurityAdvisorInput) (*mcp.CallToolResult, getSecurityAdvisorCapabilitiesOutput, error) {
+		result, err := service.GetSecurityAdvisorCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getSecurityAdvisorCapabilitiesOutput{}, err
+		}
+		return nil, getSecurityAdvisorCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_security_advisor_status",
+		Title:       "Get Security Advisor scan status and findings",
+		Description: "Read the Security Advisor last-scan status and findings (Control Panel > Security > Security Advisor): whether a scan is running, overall progress and severity, the last scan time, and per-category results with a per-severity breakdown (danger, risk, warning, out-of-date, info) and pass/fail counts. Severity is normalized to a stable enum and an unrecognized value errors rather than being coerced. Descriptive audit output only — no session identity or credential is ever returned. This tool never triggers a scan and never changes the NAS.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getSecurityAdvisorInput) (*mcp.CallToolResult, getSecurityAdvisorStatusOutput, error) {
+		result, err := service.GetSecurityAdvisorStatus(ctx, input.NAS)
+		if err != nil {
+			return nil, getSecurityAdvisorStatusOutput{}, err
+		}
+		return nil, getSecurityAdvisorStatusOutput{NAS: result.NAS, Status: result.Status}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_security_advisor_schedule",
+		Title:       "Get Security Advisor schedule and baseline",
+		Description: "Read the Security Advisor scan schedule and the active security baseline (for example home or company): whether a scheduled scan is enabled, its time and weekday, and the baseline group. This tool never changes the NAS; changing the schedule or baseline is a deferred, guarded write.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getSecurityAdvisorInput) (*mcp.CallToolResult, getSecurityAdvisorScheduleOutput, error) {
+		result, err := service.GetSecurityAdvisorSchedule(ctx, input.NAS)
+		if err != nil {
+			return nil, getSecurityAdvisorScheduleOutput{}, err
+		}
+		return nil, getSecurityAdvisorScheduleOutput{NAS: result.NAS, Configuration: result.Configuration}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_account_protection_capabilities",
+		Title:       "Get account-protection capabilities",
+		Description: "Report which Control Panel > Security > Account reads dsmctl supports on the selected NAS (Auto Block settings, the Auto Block allow/block IP lists, Account Protection thresholds, and the enforced-2FA policy) and the backend for each. Each area is an independent boundary: one being absent leaves the others usable. Also reports whether the DoS-protection API is advertised (its read is a deferred follow-on). This slice is read-only; guarded writes are deferred.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input accountProtectionInput) (*mcp.CallToolResult, getAccountProtectionCapabilitiesOutput, error) {
+		result, err := service.GetAccountProtectionCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getAccountProtectionCapabilitiesOutput{}, err
+		}
+		return nil, getAccountProtectionCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_account_protection_autoblock",
+		Title:       "Get Auto Block settings",
+		Description: "Read the DSM Auto Block configuration (Control Panel > Security > Account > Auto Block): whether it is enabled, how many failed sign-in attempts within how many minutes trigger a block, and whether/after how many days a block expires. This tool never changes settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input accountProtectionInput) (*mcp.CallToolResult, getAutoBlockSettingsOutput, error) {
+		result, err := service.GetAutoBlockSettings(ctx, input.NAS)
+		if err != nil {
+			return nil, getAutoBlockSettingsOutput{}, err
+		}
+		return nil, getAutoBlockSettingsOutput{NAS: result.NAS, Settings: result.Settings}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_account_protection_autoblock_list",
+		Title:       "Get Auto Block allow/block lists",
+		Description: "Read the DSM Auto Block allow and block IP lists (the addresses always permitted and always blocked). Returns each list's entries (IP or subnet, recorded time, and DSM-reported reason) and totals. This tool never changes the lists.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input accountProtectionInput) (*mcp.CallToolResult, getAutoBlockListsOutput, error) {
+		result, err := service.GetAutoBlockLists(ctx, input.NAS)
+		if err != nil {
+			return nil, getAutoBlockListsOutput{}, err
+		}
+		return nil, getAutoBlockListsOutput{NAS: result.NAS, Lists: result.Lists}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_account_protection",
+		Title:       "Get Account Protection thresholds",
+		Description: "Read the DSM Account Protection policy (protect accounts by blocking untrusted clients after repeated failed sign-ins): whether it is enabled and the attempt/window/block-duration thresholds for untrusted and trusted clients. This tool never changes settings and never reads any user's OTP secret.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input accountProtectionInput) (*mcp.CallToolResult, getAccountProtectionOutput, error) {
+		result, err := service.GetAccountProtection(ctx, input.NAS)
+		if err != nil {
+			return nil, getAccountProtectionOutput{}, err
+		}
+		return nil, getAccountProtectionOutput{NAS: result.NAS, Protection: result.Protection}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_account_protection_enforce_2fa",
+		Title:       "Get enforced-2FA policy",
+		Description: "Read the domain-wide enforced-2FA/MFA policy scope (Control Panel > Security > Account). Surfaces the enforcement scope only; it never reads any user's OTP secret, seed, or recovery codes. This tool never changes the policy.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input accountProtectionInput) (*mcp.CallToolResult, getEnforceTwoFactorOutput, error) {
+		result, err := service.GetEnforceTwoFactor(ctx, input.NAS)
+		if err != nil {
+			return nil, getEnforceTwoFactorOutput{}, err
+		}
+		return nil, getEnforceTwoFactorOutput{NAS: result.NAS, Policy: result.Policy}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
