@@ -31,6 +31,7 @@ const (
 	ShareAPIName      = "SYNO.SynologyDrive.Share"
 	LogAPIName        = "SYNO.SynologyDrive.Log"
 	DBUsageAPIName    = "SYNO.SynologyDrive.DBUsage"
+	PrivilegeAPIName  = "SYNO.SynologyDrive.Privilege"
 	DashboardAPIName  = "SYNO.SynologyDrive.Dashboard"
 	ActivationAPIName = "SYNO.SynologyDrive.Activation"
 
@@ -44,6 +45,7 @@ const (
 	DBUsageCapabilityName           = "drive.admin.dbusage.read"
 	DashboardCapabilityName         = "drive.admin.dashboard.read"
 	ActivationCapabilityName        = "drive.admin.activation.read"
+	PrivilegeReadCapabilityName     = "drive.admin.privilege.read"
 )
 
 // baselinePackage gates every variant on the verified Drive 3+/4 Admin Console
@@ -330,6 +332,42 @@ var dashboardOperation = compatibility.Operation[driveadmin.TopAccessQuery, driv
 	},
 }
 
+var privilegeListOperation = compatibility.Operation[driveadmin.PrivilegeQuery, driveadmin.PrivilegeList]{
+	Name: PrivilegeReadCapabilityName,
+	Variants: []compatibility.Variant[driveadmin.PrivilegeQuery, driveadmin.PrivilegeList]{
+		{
+			Name: "drive-privilege-v1", API: PrivilegeAPIName, Version: 1, Priority: 10,
+			Match: compatibility.All(compatibility.APIVersion(PrivilegeAPIName, 1), baselinePackage),
+			Execute: func(ctx context.Context, executor compatibility.Executor, query driveadmin.PrivilegeQuery) (driveadmin.PrivilegeList, error) {
+				// Verified live on Drive 4.0.3: additional must be an array
+				// (a bare boolean is rejected with 120) and unlocks the
+				// enabled/status fields; limit -1 returns every account.
+				parameters := map[string]any{
+					"type": query.Type, "offset": 0, "limit": -1,
+					"additional": []string{"enabled", "status"},
+				}
+				if query.DomainName != "" {
+					parameters["domain_name"] = query.DomainName
+				}
+				data, err := executor.Execute(ctx, compatibility.Request{
+					API: PrivilegeAPIName, Version: 1, Method: "list", JSONParameters: parameters,
+				})
+				if err != nil {
+					return driveadmin.PrivilegeList{}, fmt.Errorf("call %s.list v1: %w", PrivilegeAPIName, err)
+				}
+				return decodePrivilegeList(data)
+			},
+		},
+	},
+}
+
+// Drive's own Privilege.set is deliberately not exposed. Live verification
+// on Drive 4.0.3 showed the DSM application privilege
+// (SYNO.SDS.Drive.Application, managed by the account module) is the real
+// access control: the privilege view lists exactly the accounts the app
+// privilege allows, and a Drive-side disable does not stick while the app
+// privilege still allows the account (Drive re-materializes the user row).
+
 var activationOperation = compatibility.Operation[Input, driveadmin.Activation]{
 	Name: ActivationCapabilityName,
 	Variants: []compatibility.Variant[Input, driveadmin.Activation]{
@@ -350,7 +388,7 @@ var activationOperation = compatibility.Operation[Input, driveadmin.Activation]{
 // APINames lists every DSM API this module may use, so the facade can discover
 // them in one call before selecting variants.
 func APINames() []string {
-	return []string{StatusAPIName, ConnectionAPIName, ShareAPIName, LogAPIName, ConfigAPIName, DBUsageAPIName, DashboardAPIName, ActivationAPIName}
+	return []string{StatusAPIName, ConnectionAPIName, ShareAPIName, LogAPIName, ConfigAPIName, DBUsageAPIName, DashboardAPIName, ActivationAPIName, PrivilegeAPIName}
 }
 
 func SelectStatus(target compatibility.Target) (compatibility.Selection, error) {
@@ -450,6 +488,15 @@ func SelectDashboard(target compatibility.Target) (compatibility.Selection, erro
 func SelectActivation(target compatibility.Target) (compatibility.Selection, error) {
 	_, selection, err := activationOperation.Select(target)
 	return selection, err
+}
+
+func SelectPrivilegeList(target compatibility.Target) (compatibility.Selection, error) {
+	_, selection, err := privilegeListOperation.Select(target)
+	return selection, err
+}
+
+func ExecutePrivilegeList(ctx context.Context, target compatibility.Target, executor compatibility.Executor, query driveadmin.PrivilegeQuery) (driveadmin.PrivilegeList, compatibility.Selection, error) {
+	return privilegeListOperation.Run(ctx, target, executor, query)
 }
 
 func ExecuteConnectionSummary(ctx context.Context, target compatibility.Target, executor compatibility.Executor) (driveadmin.ConnectionSummary, compatibility.Selection, error) {

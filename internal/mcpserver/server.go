@@ -1071,6 +1071,17 @@ type getDriveActivationOutput struct {
 	Activation synology.DriveActivation `json:"activation" jsonschema:"Drive package activation state"`
 }
 
+type getDriveUsersInput struct {
+	NAS        string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Type       string `json:"type,omitempty" jsonschema:"Account realm: local (default), domain, or ldap"`
+	DomainName string `json:"domain_name,omitempty" jsonschema:"Domain to query when type is domain or ldap"`
+}
+
+type getDriveUsersOutput struct {
+	NAS        string                      `json:"nas" jsonschema:"NAS profile used for the request"`
+	Privileges synology.DrivePrivilegeList `json:"privileges" jsonschema:"Accounts with their Drive privilege state"`
+}
+
 type planDriveConnectionKickInput struct {
 	NAS       string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 	SessionID string `json:"session_id" jsonschema:"Drive client session identifier exactly as listed by get_drive_admin_connections"`
@@ -2857,6 +2868,19 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getDriveActivationOutput{}, err
 		}
 		return nil, getDriveActivationOutput{NAS: result.NAS, Activation: result.Activation}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_drive_users",
+		Title:       "List accounts with their Drive privilege",
+		Description: "List accounts in one realm (local by default, or a directory domain) with whether each may use Synology Drive, plus DSM account context (deactivated accounts and disabled home service). This tool never changes privileges.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDriveUsersInput) (*mcp.CallToolResult, getDriveUsersOutput, error) {
+		result, err := service.GetDrivePrivileges(ctx, input.NAS, synology.DrivePrivilegeQuery{Type: input.Type, DomainName: input.DomainName})
+		if err != nil {
+			return nil, getDriveUsersOutput{}, err
+		}
+		return nil, getDriveUsersOutput{NAS: result.NAS, Privileges: result.Privileges}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

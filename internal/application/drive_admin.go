@@ -56,6 +56,49 @@ type driveAdminClient interface {
 	DriveTopAccessFiles(context.Context, synology.DriveTopAccessQuery) (synology.DriveTopAccessFiles, error)
 	DriveActivation(context.Context) (synology.DriveActivation, error)
 	ApplyDriveConnectionKick(context.Context, driveadmin.ConnectionKick) (synology.DriveConnectionMutationResult, error)
+	DrivePrivileges(context.Context, synology.DrivePrivilegeQuery) (synology.DrivePrivilegeList, error)
+}
+
+type DrivePrivilegesResult struct {
+	NAS        string                      `json:"nas" jsonschema:"NAS profile used for the request"`
+	Privileges synology.DrivePrivilegeList `json:"privileges" jsonschema:"Accounts allowed to use Drive, with whether Drive has materialized each"`
+}
+
+// GetDrivePrivileges lists the accounts the DSM application privilege allows
+// to use Drive. Live-verified on Drive 4.0.3: the view lists exactly the
+// allowed accounts (denying SYNO.SDS.Drive.Application through the account
+// module removes the account from it), and `enabled` reports whether Drive
+// has materialized the account's user row. Granting or revoking access is
+// therefore an account-module application-privilege change, not a Drive
+// write; Drive's own Privilege.set does not stick while the application
+// privilege still allows the account, so it is deliberately not exposed.
+func (s *Service) GetDrivePrivileges(ctx context.Context, requestedNAS string, query synology.DrivePrivilegeQuery) (DrivePrivilegesResult, error) {
+	if err := validateDrivePrivilegeRealm(&query.Type, query.DomainName); err != nil {
+		return DrivePrivilegesResult{}, err
+	}
+	name, client, err := s.driveAdminClient(ctx, requestedNAS)
+	if err != nil {
+		return DrivePrivilegesResult{}, err
+	}
+	privileges, err := client.DrivePrivileges(ctx, query)
+	if err != nil {
+		return DrivePrivilegesResult{}, authenticationError(name, err)
+	}
+	return DrivePrivilegesResult{NAS: name, Privileges: privileges}, nil
+}
+
+func validateDrivePrivilegeRealm(realm *string, domainName string) error {
+	switch *realm {
+	case "":
+		*realm = "local"
+	case "local", "domain", "ldap":
+	default:
+		return fmt.Errorf("account realm must be local, domain, or ldap")
+	}
+	if *realm == "local" && domainName != "" {
+		return fmt.Errorf("domain_name applies only to the domain or ldap realm")
+	}
+	return nil
 }
 
 const driveConnectionKickAPIVersion = "dsmctl.io/v1alpha1"

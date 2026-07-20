@@ -140,7 +140,48 @@ func newDriveAdminCommand(opts *options) *cobra.Command {
 		newDriveAdminDBUsageCommand(opts),
 		newDriveAdminTopFilesCommand(opts),
 		newDriveAdminActivationCommand(opts),
+		newDriveAdminUsersCommand(opts),
 	)
+	return command
+}
+
+func newDriveAdminUsersCommand(opts *options) *cobra.Command {
+	var jsonOutput bool
+	var realm, domainName string
+	command := &cobra.Command{
+		Use:   "users",
+		Short: "List accounts allowed to use Drive (grant or revoke via the account module's application privilege)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.GetDrivePrivileges(cmd.Context(), opts.nas, synology.DrivePrivilegeQuery{Type: realm, DomainName: domainName})
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return encodeIndentedJSON(cmd.OutOrStdout(), result)
+			}
+			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+			fmt.Fprintf(writer, "NAS:\t%s\n", result.NAS)
+			fmt.Fprintf(writer, "Total:\t%d\n", result.Privileges.Total)
+			fmt.Fprintln(writer, "\nNAME\tDRIVE\tACCOUNT")
+			for _, user := range result.Privileges.Users {
+				access := "disabled"
+				if user.Enabled {
+					access = "enabled"
+				}
+				fmt.Fprintf(writer, "%s\t%s\t%s\n", user.Name, access, valueOrDash(user.Status))
+			}
+			return writer.Flush()
+		},
+	}
+	command.Flags().BoolVar(&jsonOutput, "json", false, "output structured JSON")
+	command.Flags().StringVar(&realm, "type", "local", "account realm: local, domain, or ldap")
+	command.Flags().StringVar(&domainName, "domain-name", "", "domain to query when type is domain or ldap")
 	return command
 }
 

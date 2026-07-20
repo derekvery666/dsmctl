@@ -29,6 +29,8 @@ type DriveDBUsage = driveadmin.DBUsage
 type DriveTopAccessQuery = driveadmin.TopAccessQuery
 type DriveTopAccessFiles = driveadmin.TopAccessFiles
 type DriveActivation = driveadmin.Activation
+type DrivePrivilegeList = driveadmin.PrivilegeList
+type DrivePrivilegeQuery = driveadmin.PrivilegeQuery
 
 // driveAdminEvidenceLocked reports the installed SynologyDrive package as
 // observed by the catalog refresh that ran in preparePackageScopedTargetLocked.
@@ -117,6 +119,22 @@ func (c *Client) DriveAdminLog(ctx context.Context, query DriveAdminLogQuery) (D
 	}
 	c.target.AddCapability(driveops.LogCapabilityName)
 	return log, nil
+}
+
+// DrivePrivileges lists accounts with their Drive privilege state.
+func (c *Client) DrivePrivileges(ctx context.Context, query DrivePrivilegeQuery) (DrivePrivilegeList, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, driveops.APINames()...); err != nil {
+		return DrivePrivilegeList{}, fmt.Errorf("prepare Drive Admin target: %w", err)
+	}
+	list, _, err := driveops.ExecutePrivilegeList(ctx, c.target, lockedExecutor{client: c}, query)
+	if err != nil {
+		return DrivePrivilegeList{}, driveAdminReadError("privileges", c.driveAdminEvidenceLocked(), err)
+	}
+	c.target.AddCapability(driveops.PrivilegeReadCapabilityName)
+	return list, nil
 }
 
 // ApplyDriveConnectionKick disconnects one client session by its session id.
@@ -339,6 +357,7 @@ func (c *Client) DriveAdminCapabilities(ctx context.Context) (DriveAdminCapabili
 		{driveops.SelectDBUsage, driveops.DBUsageCapabilityName, &capabilities.DBUsageRead},
 		{driveops.SelectDashboard, driveops.DashboardCapabilityName, &capabilities.DashboardRead},
 		{driveops.SelectActivation, driveops.ActivationCapabilityName, &capabilities.ActivationRead},
+		{driveops.SelectPrivilegeList, driveops.PrivilegeReadCapabilityName, &capabilities.PrivilegeRead},
 	}
 	for _, extended := range extendedSelectors {
 		selection, err := extended.selectOperation(c.target)

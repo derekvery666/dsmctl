@@ -212,6 +212,41 @@ func decodeTopAccessFiles(data json.RawMessage) (driveadmin.TopAccessFiles, erro
 	return result, nil
 }
 
+// decodePrivilegeList reads Privilege.list with the additional fields.
+// Verified live on Drive 4.0.3: users carry name, enabled, and status
+// (normal, disabled, or home_disabled).
+func decodePrivilegeList(data json.RawMessage) (driveadmin.PrivilegeList, error) {
+	root, err := decodeObject(data, "Drive privilege list")
+	if err != nil {
+		return driveadmin.PrivilegeList{}, err
+	}
+	items, ok := objectList(root, "users", "items", "data")
+	if !ok {
+		return driveadmin.PrivilegeList{}, fmt.Errorf("decode Drive privilege list: no user array among %s", availableKeys(root))
+	}
+	result := driveadmin.PrivilegeList{Users: make([]driveadmin.PrivilegedUser, 0, len(items))}
+	for index, item := range items {
+		name := stringValue(item, "name")
+		if name == "" {
+			return driveadmin.PrivilegeList{}, fmt.Errorf("decode Drive privilege user %d: no name field among %s", index, availableKeys(item))
+		}
+		enabled, ok := boolValue(item, "enabled")
+		if !ok {
+			return driveadmin.PrivilegeList{}, fmt.Errorf("decode Drive privilege user %q: no enabled field among %s (additional fields missing)", name, availableKeys(item))
+		}
+		result.Users = append(result.Users, driveadmin.PrivilegedUser{
+			Name:    name,
+			Enabled: enabled,
+			Status:  strings.ToLower(stringValue(item, "status")),
+		})
+	}
+	result.Total = intValue(root, "total")
+	if result.Total == 0 {
+		result.Total = len(result.Users)
+	}
+	return result, nil
+}
+
 // decodeActivation reads Activation.get. Verified live on Drive 4.0.3:
 // {"activated":false,"activation_time":0,"serial_number":"…"}.
 func decodeActivation(data json.RawMessage) (driveadmin.Activation, error) {

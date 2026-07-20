@@ -16,6 +16,7 @@ type fakeDriveAdminClient struct {
 	caps        synology.DriveAdminCapabilities
 	folders     []driveadmin.TeamFolder
 	connections []driveadmin.Connection
+	privileges  []driveadmin.PrivilegedUser
 	mutations   int
 	// silentSkip mimics the Share.set handler ignoring an ineligible share:
 	// the call succeeds but nothing changes.
@@ -59,6 +60,10 @@ func (c *fakeDriveAdminClient) DriveActivation(context.Context) (synology.DriveA
 
 func (c *fakeDriveAdminClient) DriveAdminConnections(_ context.Context) (synology.DriveAdminConnections, error) {
 	return synology.DriveAdminConnections{Total: len(c.connections), Connections: append([]driveadmin.Connection(nil), c.connections...)}, nil
+}
+
+func (c *fakeDriveAdminClient) DrivePrivileges(context.Context, synology.DrivePrivilegeQuery) (synology.DrivePrivilegeList, error) {
+	return synology.DrivePrivilegeList{Total: len(c.privileges), Users: append([]driveadmin.PrivilegedUser(nil), c.privileges...)}, nil
 }
 
 func (c *fakeDriveAdminClient) ApplyDriveConnectionKick(_ context.Context, kick driveadmin.ConnectionKick) (synology.DriveConnectionMutationResult, error) {

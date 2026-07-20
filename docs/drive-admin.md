@@ -86,6 +86,14 @@ dsmctl drive admin activation --nas office
 - `top-files` ranks the most accessed files from Drive's access log
   (`SYNO.SynologyDrive.Dashboard` `top_access_files`), optionally by preview
   or download activity only.
+- `users` lists the accounts allowed to use Drive (`--type local|domain|ldap`)
+  with whether Drive has materialized each account and DSM account context.
+  **Who may use Drive is the DSM application privilege**
+  (`SYNO.SDS.Drive.Application`) — grant or revoke it through the account
+  module's guarded `application_privilege` change; denying it removes the
+  account from this view immediately (live-verified). Drive's own
+  `Privilege.set` is deliberately not exposed: a Drive-side disable does not
+  stick while the application privilege still allows the account.
 - `activation` reports whether the package completed its online activation
   (registration against the NAS serial). An unactivated Drive still serves
   clients — verified live — so this is informational; performing the
@@ -95,7 +103,7 @@ dsmctl drive admin activation --nas office
 MCP tools: `get_drive_admin_status`, `get_drive_admin_connections`,
 `get_drive_admin_team_folders`, `get_drive_admin_logs`,
 `get_drive_connection_summary`, `get_drive_db_usage`, `get_drive_top_files`,
-`get_drive_activation`.
+`get_drive_activation`, `get_drive_users`.
 
 ## Team folders (guarded write)
 

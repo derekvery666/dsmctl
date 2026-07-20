@@ -375,6 +375,43 @@ func TestExecuteObservabilityReads(t *testing.T) {
 	}
 }
 
+func TestExecutePrivilegeListRequestShapeAndDecode(t *testing.T) {
+	// Response shape captured live from Drive 4.0.3 (WI-054).
+	executor := &capturingExecutor{response: json.RawMessage(`{
+		"offset": 0, "total": 3,
+		"users": [
+			{"enabled": false, "name": "admin", "status": "disabled"},
+			{"enabled": true, "name": "deryck", "status": "normal"},
+			{"enabled": false, "name": "sunny", "status": "normal"}
+		]
+	}`)}
+	list, _, err := ExecutePrivilegeList(context.Background(), driveTarget("4.0.3-27892", true), executor, driveadmin.PrivilegeQuery{Type: "local"})
+	if err != nil {
+		t.Fatalf("ExecutePrivilegeList() error = %v", err)
+	}
+	if executor.request.API != PrivilegeAPIName || executor.request.Method != "list" || executor.request.Version != 1 {
+		t.Fatalf("request = %#v", executor.request)
+	}
+	parameters := executor.request.JSONParameters
+	// Verified live: additional must be an array (a bare boolean is 120).
+	additional, ok := parameters["additional"].([]string)
+	if !ok || len(additional) != 2 || parameters["type"] != "local" || parameters["limit"] != -1 {
+		t.Fatalf("parameters = %#v", parameters)
+	}
+	if _, present := parameters["domain_name"]; present {
+		t.Fatalf("domain_name should be omitted for the local realm: %#v", parameters)
+	}
+	if list.Total != 3 || len(list.Users) != 3 || !list.Users[1].Enabled || list.Users[0].Status != "disabled" {
+		t.Fatalf("list = %#v", list)
+	}
+
+	// Without the additional fields the decoder refuses to guess.
+	executor = &capturingExecutor{response: json.RawMessage(`{"users":[{"name":"alice"}],"total":1}`)}
+	if _, _, err := ExecutePrivilegeList(context.Background(), driveTarget("4.0.3-27892", true), executor, driveadmin.PrivilegeQuery{Type: "local"}); err == nil || !strings.Contains(err.Error(), "no enabled field") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestObservabilityDecodersRejectUnknownShapes(t *testing.T) {
 	target := driveTarget("4.0.3-27892", true)
 	if _, _, err := ExecuteConnectionSummary(context.Background(), target, &capturingExecutor{response: json.RawMessage(`{"counts":{}}`)}); err == nil || !strings.Contains(err.Error(), "no summary object") {

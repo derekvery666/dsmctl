@@ -82,6 +82,28 @@ type TeamFolders struct {
 	TeamFolders []TeamFolder `json:"team_folders" jsonschema:"Team folders reported by the Drive Admin Console"`
 }
 
+// PrivilegedUser is one account row from the Admin Console user view: the
+// Drive privilege flag plus DSM account context. Status reflects the DSM
+// account and home service (normal, disabled, or home_disabled), not the
+// Drive privilege itself.
+type PrivilegedUser struct {
+	Name    string `json:"name" jsonschema:"Account name"`
+	Enabled bool   `json:"enabled" jsonschema:"Whether the account may use Synology Drive"`
+	Status  string `json:"status,omitempty" jsonschema:"DSM account context: normal, disabled (account deactivated or expired), or home_disabled"`
+}
+
+// PrivilegeList is one page of the Drive user-privilege view.
+type PrivilegeList struct {
+	Total int              `json:"total" jsonschema:"Total accounts in the queried realm"`
+	Users []PrivilegedUser `json:"users" jsonschema:"Accounts with their Drive privilege state"`
+}
+
+// PrivilegeQuery selects the account realm to list.
+type PrivilegeQuery struct {
+	Type       string `json:"type,omitempty" jsonschema:"Account realm: local (default), domain, or ldap"`
+	DomainName string `json:"domain_name,omitempty" jsonschema:"Domain to query when type is domain or ldap"`
+}
+
 // ConnectionSummary counts active Drive client connections by family, as
 // shown on the Admin Console overview.
 type ConnectionSummary struct {
@@ -227,4 +249,5 @@ type Capabilities struct {
 	DBUsageRead     bool            `json:"db_usage_read" jsonschema:"Whether the cached database usage can be read"`
 	DashboardRead   bool            `json:"dashboard_read" jsonschema:"Whether the top-accessed-files ranking can be read"`
 	ActivationRead  bool            `json:"activation_read" jsonschema:"Whether the package activation state can be read"`
+	PrivilegeRead   bool            `json:"privilege_read" jsonschema:"Whether the per-user Drive privilege view can be listed; granting or revoking access goes through the account module's application privilege"`
 }
