@@ -43,6 +43,7 @@ flowchart LR
   WI048 --> WI081["WI-081 Automatic TLS trust enrollment"]
   WI081 --> WI017
   WI019 --> WI082["WI-082 Local (offline) .spk install"]
+  WI022 --> WI087["WI-087 Hyper Backup"]
   WI037 --> WI039["WI-039 Web-login page design tokens"]
   WI039 --> WI040["WI-040 dsmctl favicon"]
   WI006 --> WI041["WI-041 External Access module"]
@@ -177,6 +178,7 @@ flowchart LR
 | [WI-080](work-items/WI-080-universalsearch.md) | P3 | `proposed` | C | WI-019, WI-022 | Universal Search index management (package-gated): read indexed folders+status; guarded add/remove/reindex. |
 | [WI-081](work-items/WI-081-automatic-tls-trust-enrollment.md) | P2 | `in_progress` | G | WI-032, WI-048 | Automatic TLS trust enrollment: shared `internal/tlstrust` package + CLI `auth` and Gateway-admin trust-on-first-use enrollment, replacing manual fingerprint paste without weakening pin-on-first-use (a changed pin is never silently re-trusted). Committed on `claude/tls-trust-enrollment-wi081`; resolves the mis-filed-as-WI-051 number collision (that file is removed). |
 | [WI-082](work-items/WI-082-local-package-install.md) | P2 | `done` | C | WI-019, WI-029 | Local (offline) `.spk` install via `Installation.upload` → `install` (task_id/path), reusing WI-029 status machinery; CLI + MCP; read-only gateway strips the plan/apply tools. Live-verified on the DSM 7.3 lab (Text Editor `.spk` install → confirm → uninstall, wire shape needed no correction). |
+| [WI-087](work-items/WI-087-hyper-backup.md) | P2 | `in_progress` | C | WI-019, WI-022 | Hyper Backup module (package-gated on HyperBackup 4.x, vault view gated on HyperBackupVault): reads tasks + task detail (status/progress/target-online), versions, logs, and the Vault service view; guarded plan/apply run-backup-now and cancel. Task create/edit/delete, restores, and Vault writes deferred. Pulls data protection forward from the gap-inventory "later" list. |
 | [WI-083](work-items/WI-083-nas-provision.md) | P2 | `in_progress` | G | WI-081 | Provision a fresh Synology from its DSM setup window: sessionless first-admin creation (`SYNO.Entry.Request` compound: `User.create` + `Group.Member add administrators`), password generated locally and stored in the OS keyring, retrievable only by a human via the TTY-gated `dsmctl auth reveal-password` (isatty + typed confirmation; never a model, never MCP), plus wizard completion (`hide_welcome`, update policy, analytics-off) and flexible NAS identity/endpoint config. Live-verified on a DS918+ (DSM 7.3.1); merged to main. Runtime failover, `auth open`, and the MCP no-password guard test are deferred. Companion skill `.claude/skills/nas-provision`. |
 
 Parallel groups indicate likely file overlap. Items in different groups may run

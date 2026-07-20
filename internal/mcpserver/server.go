@@ -438,6 +438,77 @@ type applyDownloadStationSettingsPlanOutput struct {
 	Result application.DownloadStationSettingsApplyResult `json:"result" jsonschema:"Apply outcome including the selected DSM mutation backend"`
 }
 
+type getHyperBackupInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit for the default"`
+}
+
+type getHyperBackupCapabilitiesOutput struct {
+	NAS          string                           `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.HyperBackupCapabilities `json:"capabilities" jsonschema:"Hyper Backup reads and actions currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport     `json:"report" jsonschema:"Discovered APIs and selected Hyper Backup backends"`
+}
+
+type getHyperBackupTasksOutput struct {
+	NAS   string                    `json:"nas" jsonschema:"NAS profile used for the request"`
+	Tasks synology.HyperBackupTasks `json:"tasks" jsonschema:"Backup task list"`
+}
+
+type getHyperBackupTaskInput struct {
+	NAS    string `json:"nas,omitempty" jsonschema:"NAS profile name; omit for the default"`
+	TaskID int    `json:"task_id" jsonschema:"Backup task identifier from get_hyper_backup_tasks"`
+}
+
+type getHyperBackupTaskOutput struct {
+	NAS  string                         `json:"nas" jsonschema:"NAS profile used for the request"`
+	Task synology.HyperBackupTaskDetail `json:"task" jsonschema:"Full task view: repository, transfer options, live status, destination reachability"`
+}
+
+type getHyperBackupVersionsInput struct {
+	NAS    string `json:"nas,omitempty" jsonschema:"NAS profile name; omit for the default"`
+	TaskID int    `json:"task_id" jsonschema:"Backup task identifier from get_hyper_backup_tasks"`
+	Offset int    `json:"offset,omitempty" jsonschema:"Number of versions to skip"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"Maximum versions to return; default 50"`
+}
+
+type getHyperBackupVersionsOutput struct {
+	NAS      string                       `json:"nas" jsonschema:"NAS profile used for the request"`
+	Versions synology.HyperBackupVersions `json:"versions" jsonschema:"Backup versions of the task"`
+}
+
+type getHyperBackupLogsInput struct {
+	NAS    string `json:"nas,omitempty" jsonschema:"NAS profile name; omit for the default"`
+	Offset int    `json:"offset,omitempty" jsonschema:"Number of log entries to skip"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"Maximum log entries to return; default 50"`
+}
+
+type getHyperBackupLogsOutput struct {
+	NAS  string                   `json:"nas" jsonschema:"NAS profile used for the request"`
+	Logs synology.HyperBackupLogs `json:"logs" jsonschema:"Hyper Backup log feed page"`
+}
+
+type getHyperBackupVaultOutput struct {
+	NAS   string                    `json:"nas" jsonschema:"NAS profile used for the request"`
+	Vault synology.HyperBackupVault `json:"vault" jsonschema:"Hyper Backup Vault view of this NAS as a backup destination"`
+}
+
+type planHyperBackupTaskChangeInput struct {
+	NAS     string                        `json:"nas,omitempty" jsonschema:"NAS profile name; omit for the default"`
+	Request synology.HyperBackupTaskChange `json:"request" jsonschema:"Task action intent: backup (run now) or cancel, plus the task_id"`
+}
+
+type planHyperBackupTaskChangeOutput struct {
+	Plan application.HyperBackupTaskPlan `json:"plan" jsonschema:"Validated plan bound to the observed task state and approval hash"`
+}
+
+type applyHyperBackupTaskPlanInput struct {
+	Plan         application.HyperBackupTaskPlan `json:"plan" jsonschema:"Approved task plan from plan_hyper_backup_task_change"`
+	ApprovalHash string                          `json:"approval_hash" jsonschema:"Exact SHA-256 approval hash from the plan"`
+}
+
+type applyHyperBackupTaskPlanOutput struct {
+	Result application.HyperBackupTaskApplyResult `json:"result" jsonschema:"Apply outcome including the DSM mutation backend used"`
+}
+
 type planControlPanelTimeChangeInput struct {
 	NAS     string                  `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 	Request controlpanel.TimeChange `json:"request" jsonschema:"Patch-only time zone, display format, or NTP intent"`
@@ -2185,6 +2256,110 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, applyDownloadStationSettingsPlanOutput{}, err
 		}
 		return nil, applyDownloadStationSettingsPlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hyper_backup_capabilities",
+		Title:       "Get Hyper Backup capabilities",
+		Description: "Report which Hyper Backup reads and guarded actions are available for a NAS, the installed HyperBackup and HyperBackupVault package evidence, and the DSM backend selected for each. Fails closed when a package is not installed.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHyperBackupInput) (*mcp.CallToolResult, getHyperBackupCapabilitiesOutput, error) {
+		result, err := service.GetHyperBackupCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getHyperBackupCapabilitiesOutput{}, err
+		}
+		return nil, getHyperBackupCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hyper_backup_tasks",
+		Title:       "List Hyper Backup tasks",
+		Description: "List the Hyper Backup tasks with state, live activity, last backup time and result, next scheduled run, and backed-up source folders. Requires the HyperBackup package.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHyperBackupInput) (*mcp.CallToolResult, getHyperBackupTasksOutput, error) {
+		result, err := service.GetHyperBackupTasks(ctx, input.NAS)
+		if err != nil {
+			return nil, getHyperBackupTasksOutput{}, err
+		}
+		return nil, getHyperBackupTasksOutput{NAS: result.NAS, Tasks: result.Tasks}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hyper_backup_task",
+		Title:       "Get one Hyper Backup task",
+		Description: "Read one backup task's destination repository, transfer options, live status with progress while a run is active, and destination reachability.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHyperBackupTaskInput) (*mcp.CallToolResult, getHyperBackupTaskOutput, error) {
+		result, err := service.GetHyperBackupTaskDetail(ctx, input.NAS, input.TaskID)
+		if err != nil {
+			return nil, getHyperBackupTaskOutput{}, err
+		}
+		return nil, getHyperBackupTaskOutput{NAS: result.NAS, Task: result.Task}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hyper_backup_versions",
+		Title:       "List Hyper Backup versions",
+		Description: "List the backup versions one task has produced, newest first, with completion status and rotation-lock state.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHyperBackupVersionsInput) (*mcp.CallToolResult, getHyperBackupVersionsOutput, error) {
+		result, err := service.GetHyperBackupVersions(ctx, input.NAS, input.TaskID, input.Offset, input.Limit)
+		if err != nil {
+			return nil, getHyperBackupVersionsOutput{}, err
+		}
+		return nil, getHyperBackupVersionsOutput{NAS: result.NAS, Versions: result.Versions}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hyper_backup_logs",
+		Title:       "Get Hyper Backup logs",
+		Description: "Read a page of the Hyper Backup log feed (task runs, results, and configuration events) plus the feed-wide error/warning/info counts.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHyperBackupLogsInput) (*mcp.CallToolResult, getHyperBackupLogsOutput, error) {
+		result, err := service.GetHyperBackupLogs(ctx, input.NAS, input.Offset, input.Limit)
+		if err != nil {
+			return nil, getHyperBackupLogsOutput{}, err
+		}
+		return nil, getHyperBackupLogsOutput{NAS: result.NAS, Logs: result.Logs}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hyper_backup_vault",
+		Title:       "Get the Hyper Backup Vault view",
+		Description: "Read the Hyper Backup Vault view of this NAS as a backup destination: the inbound targets stored here and the parallel-session limit. Requires the HyperBackupVault package.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHyperBackupInput) (*mcp.CallToolResult, getHyperBackupVaultOutput, error) {
+		result, err := service.GetHyperBackupVault(ctx, input.NAS)
+		if err != nil {
+			return nil, getHyperBackupVaultOutput{}, err
+		}
+		return nil, getHyperBackupVaultOutput{NAS: result.NAS, Vault: result.Vault}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_hyper_backup_task_change",
+		Title:       "Plan a Hyper Backup task action",
+		Description: "Validate a run-backup-now or cancel request for one backup task and return an approval plan bound to the observed task state (an apply fails if the task has since started, finished, or changed). This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planHyperBackupTaskChangeInput) (*mcp.CallToolResult, planHyperBackupTaskChangeOutput, error) {
+		plan, err := service.PlanHyperBackupTaskChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planHyperBackupTaskChangeOutput{}, err
+		}
+		return nil, planHyperBackupTaskChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_hyper_backup_task_plan",
+		Title:       "Apply an approved Hyper Backup task plan",
+		Description: "Apply an unmodified task plan only while its approval hash and the observed task state still match, then verify the postcondition (the run started, or the running backup stopped). Running a backup writes a new version to the destination; canceling records the interrupted run with result cancel.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyHyperBackupTaskPlanInput) (*mcp.CallToolResult, applyHyperBackupTaskPlanOutput, error) {
+		result, err := service.ApplyHyperBackupTaskPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyHyperBackupTaskPlanOutput{}, err
+		}
+		return nil, applyHyperBackupTaskPlanOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
