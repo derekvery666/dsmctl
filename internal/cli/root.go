@@ -48,6 +48,7 @@ func New(version string) *cobra.Command {
 		newOfficeCommand(opts),
 		newPackageCommand(opts),
 		newPhotoCommand(opts),
+		newProvisionCommand(opts),
 		newResourceMonitorCommand(opts),
 		newSANCommand(opts),
 		newShareCommand(opts),

@@ -26,6 +26,7 @@ func newAuthCommand(opts *options) *cobra.Command {
 		newAuthLoginCommand(opts),
 		newAuthStatusCommand(opts),
 		newAuthLogoutCommand(opts),
+		newAuthRevealPasswordCommand(opts),
 	)
 	return command
 }
