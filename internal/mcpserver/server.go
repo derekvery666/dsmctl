@@ -1065,6 +1065,122 @@ type applyDriveConfigPlanOutput struct {
 	Result application.DriveConfigApplyResult `json:"result" jsonschema:"Drive config mutation result after stale-state and postcondition checks"`
 }
 
+type getDriveTopFilesInput struct {
+	NAS        string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	RankingBy  string `json:"ranking_by,omitempty" jsonschema:"Ranking source: both (default), preview, or download"`
+	PeriodDays int    `json:"period_days,omitempty" jsonschema:"Days of history to rank; defaults to 1"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"Maximum files to return; defaults to 50, maximum 1000"`
+	Offset     int    `json:"offset,omitempty" jsonschema:"Entries to skip for pagination"`
+}
+
+type getDriveConnectionSummaryOutput struct {
+	NAS     string                          `json:"nas" jsonschema:"NAS profile used for the request"`
+	Summary synology.DriveConnectionSummary `json:"summary" jsonschema:"Active Drive connection counts by client family"`
+}
+
+type getDriveDBUsageOutput struct {
+	NAS   string                `json:"nas" jsonschema:"NAS profile used for the request"`
+	Usage synology.DriveDBUsage `json:"usage" jsonschema:"Cached Drive database usage in bytes"`
+}
+
+type getDriveTopFilesOutput struct {
+	NAS   string                       `json:"nas" jsonschema:"NAS profile used for the request"`
+	Files synology.DriveTopAccessFiles `json:"files" jsonschema:"Top accessed files, most accessed first"`
+}
+
+type getDriveActivationOutput struct {
+	NAS        string                   `json:"nas" jsonschema:"NAS profile used for the request"`
+	Activation synology.DriveActivation `json:"activation" jsonschema:"Drive package activation state"`
+}
+
+type getDriveUsersInput struct {
+	NAS        string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Type       string `json:"type,omitempty" jsonschema:"Account realm: local (default), domain, or ldap"`
+	DomainName string `json:"domain_name,omitempty" jsonschema:"Domain to query when type is domain or ldap"`
+}
+
+type getDriveUsersOutput struct {
+	NAS        string                      `json:"nas" jsonschema:"NAS profile used for the request"`
+	Privileges synology.DrivePrivilegeList `json:"privileges" jsonschema:"Accounts with their Drive privilege state"`
+}
+
+type getDriveFilesInput struct {
+	NAS            string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	TeamFolder     string `json:"team_folder,omitempty" jsonschema:"Team folder (shared-folder name) to browse; empty browses the signed-in account's My Drive"`
+	Pattern        string `json:"pattern,omitempty" jsonschema:"Substring filter on the node name"`
+	Recursive      bool   `json:"recursive,omitempty" jsonschema:"Search the whole view instead of one directory level"`
+	ExcludeRemoved bool   `json:"exclude_removed,omitempty" jsonschema:"Hide removed entries (included by default — this is the rescue view)"`
+	Limit          int    `json:"limit,omitempty" jsonschema:"Maximum nodes to return; defaults to 100, maximum 1000"`
+	Offset         int    `json:"offset,omitempty" jsonschema:"Nodes to skip for pagination"`
+}
+
+type getDriveFilesOutput struct {
+	NAS   string              `json:"nas" jsonschema:"NAS profile used for the request"`
+	Nodes synology.DriveNodes `json:"nodes" jsonschema:"Drive view contents, including removed entries unless excluded"`
+}
+
+type getDriveFileVersionsInput struct {
+	NAS        string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	TeamFolder string `json:"team_folder,omitempty" jsonschema:"Team folder (shared-folder name); empty targets the signed-in account's My Drive"`
+	Path       string `json:"path" jsonschema:"Node path inside the Drive view, as returned by get_drive_files"`
+}
+
+type getDriveFileVersionsOutput struct {
+	NAS      string                     `json:"nas" jsonschema:"NAS profile used for the request"`
+	Versions synology.DriveNodeVersions `json:"versions" jsonschema:"Stored version history for the node"`
+}
+
+type getDriveLogExportInput struct {
+	NAS        string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	TeamFolder string `json:"team_folder,omitempty" jsonschema:"Filter to one Drive team folder by shared-folder name"`
+	Keyword    string `json:"keyword,omitempty" jsonschema:"Substring filter applied by Drive"`
+	Username   string `json:"username,omitempty" jsonschema:"Filter to one account name"`
+	From       int64  `json:"from,omitempty" jsonschema:"Inclusive lower bound as a Unix time in seconds"`
+	To         int64  `json:"to,omitempty" jsonschema:"Inclusive upper bound as a Unix time in seconds"`
+}
+
+type getDriveLogExportOutput struct {
+	NAS   string `json:"nas" jsonschema:"NAS profile used for the request"`
+	CSV   string `json:"csv" jsonschema:"Exported Drive server log as CSV text"`
+	Bytes int    `json:"bytes" jsonschema:"Size of the exported CSV in bytes"`
+}
+
+type planDriveRestoreInput struct {
+	NAS     string                        `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request application.NodeRestoreChange `json:"request" jsonschema:"Node restore intent: team folder, node paths from get_drive_files, and options"`
+}
+
+type planDriveRestoreOutput struct {
+	Plan application.DriveNodeRestorePlan `json:"plan" jsonschema:"Validated plan bound to the resolved node entries and approval hash"`
+}
+
+type applyDriveRestorePlanInput struct {
+	Plan         application.DriveNodeRestorePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_drive_restore"`
+	ApprovalHash string                          `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved restore plan"`
+}
+
+type applyDriveRestorePlanOutput struct {
+	Result application.DriveNodeRestoreApplyResult `json:"result" jsonschema:"Restore result after the task completes and the view is re-read"`
+}
+
+type planDriveConnectionKickInput struct {
+	NAS       string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	SessionID string `json:"session_id" jsonschema:"Drive client session identifier exactly as listed by get_drive_admin_connections"`
+}
+
+type planDriveConnectionKickOutput struct {
+	Plan application.DriveConnectionKickPlan `json:"plan" jsonschema:"Validated plan bound to the observed connection entry and approval hash"`
+}
+
+type applyDriveConnectionKickPlanInput struct {
+	Plan         application.DriveConnectionKickPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_drive_connection_kick"`
+	ApprovalHash string                              `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved kick plan"`
+}
+
+type applyDriveConnectionKickPlanOutput struct {
+	Result application.DriveConnectionKickApplyResult `json:"result" jsonschema:"Disconnect result after stale-state and postcondition checks"`
+}
+
 type planDriveTeamFolderChangeInput struct {
 	NAS     string                      `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 	Request driveadmin.TeamFolderChange `json:"request" jsonschema:"Team-folder intent: enable, disable, or set_versioning for one shared folder"`
@@ -2713,6 +2829,21 @@ func New(service *application.Service, version string) *mcp.Server {
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_drive_log_export",
+		Title:       "Export Drive server logs as CSV",
+		Description: "Export the Synology Drive server log as CSV text, with the same optional keyword, username, team-folder, and Unix-seconds time-range filters as the log list. Returns the whole matching log as one document (for compliance or handover); this tool never clears logs.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDriveLogExportInput) (*mcp.CallToolResult, getDriveLogExportOutput, error) {
+		result, err := service.ExportDriveLog(ctx, input.NAS, synology.DriveLogExportQuery{
+			TeamFolder: input.TeamFolder, Keyword: input.Keyword, Username: input.Username, From: input.From, To: input.To,
+		})
+		if err != nil {
+			return nil, getDriveLogExportOutput{}, err
+		}
+		return nil, getDriveLogExportOutput{NAS: result.NAS, CSV: string(result.CSV), Bytes: result.Bytes}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_surveillance_capabilities",
 		Title:       "Get Surveillance Station capabilities",
 		Description: "Report whether Surveillance Station system info and the camera list can be read on the selected NAS, plus the installed package evidence.",
@@ -2827,6 +2958,154 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, applyDriveConfigPlanOutput{}, err
 		}
 		return nil, applyDriveConfigPlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_drive_connection_summary",
+		Title:       "Get Drive connection summary",
+		Description: "Read the Synology Drive Admin Console overview counters: active desktop sync clients, mobile clients, ShareSync server connections, and the total. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDriveAdminInput) (*mcp.CallToolResult, getDriveConnectionSummaryOutput, error) {
+		result, err := service.GetDriveConnectionSummary(ctx, input.NAS)
+		if err != nil {
+			return nil, getDriveConnectionSummaryOutput{}, err
+		}
+		return nil, getDriveConnectionSummaryOutput{NAS: result.NAS, Summary: result.Summary}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_drive_db_usage",
+		Title:       "Get Drive database usage",
+		Description: "Read Synology Drive's cached storage breakdown: version repository size, database size, Synology Office document size (bytes), and when the cache was calculated. This tool never recalculates or changes anything.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDriveAdminInput) (*mcp.CallToolResult, getDriveDBUsageOutput, error) {
+		result, err := service.GetDriveDBUsage(ctx, input.NAS)
+		if err != nil {
+			return nil, getDriveDBUsageOutput{}, err
+		}
+		return nil, getDriveDBUsageOutput{NAS: result.NAS, Usage: result.Usage}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_drive_top_files",
+		Title:       "Get Drive top accessed files",
+		Description: "Read the Synology Drive Admin Console ranking of most accessed files over a recent period, optionally ranked by preview or download activity only. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDriveTopFilesInput) (*mcp.CallToolResult, getDriveTopFilesOutput, error) {
+		result, err := service.GetDriveTopAccessFiles(ctx, input.NAS, synology.DriveTopAccessQuery{
+			RankingBy: input.RankingBy, PeriodDays: input.PeriodDays, Limit: input.Limit, Offset: input.Offset,
+		})
+		if err != nil {
+			return nil, getDriveTopFilesOutput{}, err
+		}
+		return nil, getDriveTopFilesOutput{NAS: result.NAS, Files: result.Files}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_drive_activation",
+		Title:       "Get Drive activation state",
+		Description: "Read whether the Synology Drive package has completed its online activation (registration against the NAS serial number), and when. An unactivated Drive still serves clients; activating requires the Admin Console's online activation-code exchange, which dsmctl does not perform. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDriveAdminInput) (*mcp.CallToolResult, getDriveActivationOutput, error) {
+		result, err := service.GetDriveActivation(ctx, input.NAS)
+		if err != nil {
+			return nil, getDriveActivationOutput{}, err
+		}
+		return nil, getDriveActivationOutput{NAS: result.NAS, Activation: result.Activation}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_drive_users",
+		Title:       "List accounts with their Drive privilege",
+		Description: "List accounts in one realm (local by default, or a directory domain) with whether each may use Synology Drive, plus DSM account context (deactivated accounts and disabled home service). This tool never changes privileges.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDriveUsersInput) (*mcp.CallToolResult, getDriveUsersOutput, error) {
+		result, err := service.GetDrivePrivileges(ctx, input.NAS, synology.DrivePrivilegeQuery{Type: input.Type, DomainName: input.DomainName})
+		if err != nil {
+			return nil, getDriveUsersOutput{}, err
+		}
+		return nil, getDriveUsersOutput{NAS: result.NAS, Privileges: result.Privileges}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_drive_files",
+		Title:       "Browse a Drive view (rescue perspective)",
+		Description: "Browse one Synology Drive view — a team folder or the signed-in account's My Drive — including removed entries by default, with each node's path, size, version count, and modification time. This is the admin rescue perspective for finding deleted files; it never changes anything.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDriveFilesInput) (*mcp.CallToolResult, getDriveFilesOutput, error) {
+		result, err := service.GetDriveNodes(ctx, input.NAS, synology.DriveNodeQuery{
+			TeamFolder: input.TeamFolder, Pattern: input.Pattern, Recursive: input.Recursive,
+			ExcludeRemoved: input.ExcludeRemoved, Limit: input.Limit, Offset: input.Offset,
+		})
+		if err != nil {
+			return nil, getDriveFilesOutput{}, err
+		}
+		return nil, getDriveFilesOutput{NAS: result.NAS, Nodes: result.Nodes}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_drive_file_versions",
+		Title:       "List a Drive node's version history",
+		Description: "List the stored versions of one file in a Synology Drive view (team folder or My Drive): when each version was stored and modified, its size, content hash, and which client stored it. This tool never restores or changes anything.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDriveFileVersionsInput) (*mcp.CallToolResult, getDriveFileVersionsOutput, error) {
+		result, err := service.GetDriveNodeVersions(ctx, input.NAS, synology.DriveNodeVersionQuery{TeamFolder: input.TeamFolder, Path: input.Path})
+		if err != nil {
+			return nil, getDriveFileVersionsOutput{}, err
+		}
+		return nil, getDriveFileVersionsOutput{NAS: result.NAS, Versions: result.Versions}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_drive_restore",
+		Title:       "Plan a Drive node restore",
+		Description: "Validate restoring a set of node paths (from get_drive_files, including removed entries) in one Synology Drive view and return an approval plan bound to the resolved nodes. Recovering removed nodes is additive (medium risk); restoring in place over a currently-present file overwrites its content (high risk). Set copy_to to restore into another folder instead. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planDriveRestoreInput) (*mcp.CallToolResult, planDriveRestoreOutput, error) {
+		plan, err := service.PlanDriveNodeRestore(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planDriveRestoreOutput{}, err
+		}
+		return nil, planDriveRestoreOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_drive_restore_plan",
+		Title:       "Apply an approved Drive node restore",
+		Description: "Restore the nodes in an unmodified plan only while its approval hash and the resolved node entries still match. Drive runs the restore as an asynchronous task (one at a time); dsmctl polls it to completion and verifies the requested nodes are no longer removed by re-reading the view.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyDriveRestorePlanInput) (*mcp.CallToolResult, applyDriveRestorePlanOutput, error) {
+		result, err := service.ApplyDriveNodeRestorePlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyDriveRestorePlanOutput{}, err
+		}
+		return nil, applyDriveRestorePlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_drive_connection_kick",
+		Title:       "Plan a Drive client disconnect",
+		Description: "Validate a disconnect of one Synology Drive client session (by the session_id listed in get_drive_admin_connections) and return an approval plan bound to the observed connection. The client must authenticate again to resume syncing; synced files stay on the device. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planDriveConnectionKickInput) (*mcp.CallToolResult, planDriveConnectionKickOutput, error) {
+		plan, err := service.PlanDriveConnectionKick(ctx, input.NAS, driveadmin.ConnectionKick{SessionID: input.SessionID})
+		if err != nil {
+			return nil, planDriveConnectionKickOutput{}, err
+		}
+		return nil, planDriveConnectionKickOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_drive_connection_kick_plan",
+		Title:       "Apply an approved Drive client disconnect",
+		Description: "Disconnect the client session in an unmodified kick plan only while its approval hash and the observed connection still match, then verify the session left the connection list with bounded retries.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyDriveConnectionKickPlanInput) (*mcp.CallToolResult, applyDriveConnectionKickPlanOutput, error) {
+		result, err := service.ApplyDriveConnectionKickPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyDriveConnectionKickPlanOutput{}, err
+		}
+		return nil, applyDriveConnectionKickPlanOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

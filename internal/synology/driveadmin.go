@@ -3,6 +3,9 @@ package synology
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strconv"
+	"time"
 
 	"github.com/ychiu1211/dsmctl/internal/domain/driveadmin"
 	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
@@ -21,6 +24,40 @@ type DriveServerConfigChange = driveadmin.ServerConfigChange
 type DriveConfigMutationResult = driveops.ConfigMutationResult
 type DriveTeamFolderChange = driveadmin.TeamFolderChange
 type DriveTeamFolderMutationResult = driveops.TeamFolderMutationResult
+type DriveConnectionSummary = driveadmin.ConnectionSummary
+type DriveConnection = driveadmin.Connection
+type DriveConnectionKick = driveadmin.ConnectionKick
+type DriveConnectionMutationResult = driveops.ConnectionMutationResult
+type DriveDBUsage = driveadmin.DBUsage
+type DriveTopAccessQuery = driveadmin.TopAccessQuery
+type DriveTopAccessFiles = driveadmin.TopAccessFiles
+type DriveActivation = driveadmin.Activation
+type DrivePrivilegeList = driveadmin.PrivilegeList
+type DrivePrivilegeQuery = driveadmin.PrivilegeQuery
+type DriveNodeQuery = driveadmin.NodeQuery
+type DriveNodes = driveadmin.Nodes
+type DriveNode = driveadmin.Node
+type DriveNodeVersionQuery = driveadmin.NodeVersionQuery
+type DriveNodeVersions = driveadmin.NodeVersions
+type DriveNodeRestoreResult = driveadmin.NodeRestoreResult
+
+// DriveNodeRestoreItem is one resolved node to restore, from the files read.
+type DriveNodeRestoreItem struct {
+	NodeID   string
+	SyncID   string
+	Path     string
+	Name     string
+	IsFolder bool
+}
+
+// DriveNodeRestoreRequest is the resolved restore intent the facade executes.
+type DriveNodeRestoreRequest struct {
+	TeamFolder     string
+	CopyTo         string
+	Override       bool
+	IncludeRemoved bool
+	Nodes          []DriveNodeRestoreItem
+}
 
 // driveAdminEvidenceLocked reports the installed SynologyDrive package as
 // observed by the catalog refresh that ran in preparePackageScopedTargetLocked.
@@ -109,6 +146,267 @@ func (c *Client) DriveAdminLog(ctx context.Context, query DriveAdminLogQuery) (D
 	}
 	c.target.AddCapability(driveops.LogCapabilityName)
 	return log, nil
+}
+
+// DriveLogExportQuery selects and filters the Drive server log for export.
+// The filters mirror the log list read; the export always produces CSV (the
+// only format the Drive log writer supports, per handlers/log/export.cpp).
+type DriveLogExportQuery struct {
+	TeamFolder string
+	Keyword    string
+	Username   string
+	From       int64
+	To         int64
+}
+
+// DriveLogExport downloads the Drive server log as CSV bytes. The export API
+// answers a file (DSM RESPONSE_FILE), so it uses the raw file transport rather
+// than the JSON executor. Verified against handlers/log/export.cpp: the
+// handler prepends "@" to the target, so the bare team-folder name is sent.
+func (c *Client) DriveLogExport(ctx context.Context, query DriveLogExportQuery) ([]byte, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, driveops.APINames()...); err != nil {
+		return nil, fmt.Errorf("prepare Drive Admin target: %w", err)
+	}
+	info, ok := c.target.API(driveops.LogAPIName)
+	if !ok {
+		return nil, driveAdminReadError("log export", c.driveAdminEvidenceLocked(), fmt.Errorf("API %s is not advertised", driveops.LogAPIName))
+	}
+	if err := c.loginLocked(ctx); err != nil {
+		return nil, err
+	}
+	params := url.Values{}
+	params.Set("api", driveops.LogAPIName)
+	params.Set("version", "1")
+	params.Set("method", "export")
+	params.Set("type", "csv")
+	params.Set("_sid", c.sid)
+	if c.synoToken != "" {
+		params.Set("SynoToken", c.synoToken)
+	}
+	if query.TeamFolder != "" {
+		params.Set("target", query.TeamFolder)
+	}
+	if query.Keyword != "" {
+		params.Set("keyword", query.Keyword)
+	}
+	if query.Username != "" {
+		params.Set("username", query.Username)
+	}
+	if query.From > 0 {
+		params.Set("datefrom", strconv.FormatInt(query.From, 10))
+	}
+	if query.To > 0 {
+		params.Set("dateto", strconv.FormatInt(query.To, 10))
+	}
+	body, err := c.requestFileLocked(ctx, info.Path, params, driveops.LogAPIName, "export")
+	if err != nil {
+		return nil, driveAdminReadError("log export", c.driveAdminEvidenceLocked(), err)
+	}
+	c.target.AddCapability(driveops.LogExportCapabilityName)
+	return body, nil
+}
+
+// DriveNodes browses one Drive view (My Drive or a team folder), including
+// removed entries — the Admin Console's rescue perspective.
+func (c *Client) DriveNodes(ctx context.Context, query DriveNodeQuery) (DriveNodes, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, driveops.APINames()...); err != nil {
+		return DriveNodes{}, fmt.Errorf("prepare Drive Admin target: %w", err)
+	}
+	nodes, _, err := driveops.ExecuteNodes(ctx, c.target, lockedExecutor{client: c}, query)
+	if err != nil {
+		return DriveNodes{}, driveAdminReadError("nodes", c.driveAdminEvidenceLocked(), err)
+	}
+	c.target.AddCapability(driveops.NodesReadCapabilityName)
+	return nodes, nil
+}
+
+// DriveNodeVersions lists one node's stored version history.
+func (c *Client) DriveNodeVersions(ctx context.Context, query DriveNodeVersionQuery) (DriveNodeVersions, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, driveops.APINames()...); err != nil {
+		return DriveNodeVersions{}, fmt.Errorf("prepare Drive Admin target: %w", err)
+	}
+	versions, _, err := driveops.ExecuteNodeVersions(ctx, c.target, lockedExecutor{client: c}, query)
+	if err != nil {
+		return DriveNodeVersions{}, driveAdminReadError("node versions", c.driveAdminEvidenceLocked(), err)
+	}
+	c.target.AddCapability(driveops.NodeVersionsReadCapabilityName)
+	return versions, nil
+}
+
+// nodeRestorePoll bounds the restore-task wait and its poll cadence. Restore
+// walks the requested nodes in a forked child; the task is a per-admin
+// singleton, so the facade holds the client lock for the whole choreography
+// (mirroring the package install poll).
+const (
+	nodeRestoreDeadline = 10 * time.Minute
+	nodeRestorePoll     = 2 * time.Second
+)
+
+// ApplyDriveNodeRestore starts the restore task, polls it to completion, and
+// clears it. The start/status/finish choreography and the singleton-task
+// contention match handlers/node/restore/*.cpp; the caller verifies the
+// outcome by re-reading the view.
+func (c *Client) ApplyDriveNodeRestore(ctx context.Context, request DriveNodeRestoreRequest) (DriveNodeRestoreResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, driveops.APINames()...); err != nil {
+		return DriveNodeRestoreResult{}, fmt.Errorf("prepare Drive Admin mutation target: %w", err)
+	}
+	nodes := make([]driveops.NodeRestoreItem, 0, len(request.Nodes))
+	for _, node := range request.Nodes {
+		fileType := 0
+		if node.IsFolder {
+			fileType = 1
+		}
+		nodes = append(nodes, driveops.NodeRestoreItem{
+			NodeID: node.NodeID, SyncID: node.SyncID, FileType: fileType, Path: node.Path, Name: node.Name,
+		})
+	}
+	input := driveops.NodeRestoreInput{
+		Target:         driveops.NodeTarget(request.TeamFolder),
+		CopyTo:         request.CopyTo,
+		Override:       request.Override,
+		IncludeRemoved: request.IncludeRemoved,
+		Nodes:          nodes,
+	}
+	executor := lockedExecutor{client: c}
+	_, selection, err := driveops.ExecuteNodeRestoreStart(ctx, c.target, executor, input)
+	if err != nil {
+		return DriveNodeRestoreResult{}, fmt.Errorf("start Drive node restore: %w", err)
+	}
+	c.target.AddCapability(driveops.NodeRestoreCapabilityName)
+
+	result := DriveNodeRestoreResult{Backend: selection.Backend, API: selection.API, Version: selection.Version}
+	deadline := time.Now().Add(nodeRestoreDeadline)
+	for {
+		progress, statusErr := driveops.ExecuteNodeRestoreStatus(ctx, executor)
+		if statusErr != nil {
+			// A failed task surfaces as an error code here; finish and report it.
+			_ = driveops.ExecuteNodeRestoreFinish(ctx, executor)
+			return DriveNodeRestoreResult{}, fmt.Errorf("Drive node restore failed: %w", statusErr)
+		}
+		if progress.Total > 0 && progress.Current >= progress.Total {
+			result.Restored = progress.Current
+			if err := driveops.ExecuteNodeRestoreFinish(ctx, executor); err != nil {
+				return DriveNodeRestoreResult{}, err
+			}
+			return result, nil
+		}
+		if time.Now().After(deadline) {
+			_ = driveops.ExecuteNodeRestoreFinish(ctx, executor)
+			return DriveNodeRestoreResult{}, fmt.Errorf("Drive node restore did not finish within the timeout")
+		}
+		if err := sleepContext(ctx, nodeRestorePoll); err != nil {
+			return DriveNodeRestoreResult{}, err
+		}
+	}
+}
+
+// DrivePrivileges lists accounts with their Drive privilege state.
+func (c *Client) DrivePrivileges(ctx context.Context, query DrivePrivilegeQuery) (DrivePrivilegeList, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, driveops.APINames()...); err != nil {
+		return DrivePrivilegeList{}, fmt.Errorf("prepare Drive Admin target: %w", err)
+	}
+	list, _, err := driveops.ExecutePrivilegeList(ctx, c.target, lockedExecutor{client: c}, query)
+	if err != nil {
+		return DrivePrivilegeList{}, driveAdminReadError("privileges", c.driveAdminEvidenceLocked(), err)
+	}
+	c.target.AddCapability(driveops.PrivilegeReadCapabilityName)
+	return list, nil
+}
+
+// ApplyDriveConnectionKick disconnects one client session by its session id.
+// The delete call answers an empty success, so the caller verifies the
+// postcondition by re-reading the connection list.
+func (c *Client) ApplyDriveConnectionKick(ctx context.Context, kick DriveConnectionKick) (DriveConnectionMutationResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, driveops.APINames()...); err != nil {
+		return DriveConnectionMutationResult{}, fmt.Errorf("prepare Drive Admin mutation target: %w", err)
+	}
+	result, _, err := driveops.ExecuteConnectionKick(ctx, c.target, lockedExecutor{client: c}, driveops.ConnectionKickInput{SessionID: kick.SessionID})
+	if err != nil {
+		return DriveConnectionMutationResult{}, fmt.Errorf("apply Drive connection kick: %w", err)
+	}
+	return result, nil
+}
+
+// DriveConnectionSummary reads the Admin Console overview connection counters.
+func (c *Client) DriveConnectionSummary(ctx context.Context) (DriveConnectionSummary, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, driveops.APINames()...); err != nil {
+		return DriveConnectionSummary{}, fmt.Errorf("prepare Drive Admin target: %w", err)
+	}
+	summary, _, err := driveops.ExecuteConnectionSummary(ctx, c.target, lockedExecutor{client: c})
+	if err != nil {
+		return DriveConnectionSummary{}, driveAdminReadError("connection summary", c.driveAdminEvidenceLocked(), err)
+	}
+	c.target.AddCapability(driveops.ConnectionSummaryCapabilityName)
+	return summary, nil
+}
+
+// DriveDBUsage reads Drive's cached database usage breakdown.
+func (c *Client) DriveDBUsage(ctx context.Context) (DriveDBUsage, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, driveops.APINames()...); err != nil {
+		return DriveDBUsage{}, fmt.Errorf("prepare Drive Admin target: %w", err)
+	}
+	usage, _, err := driveops.ExecuteDBUsage(ctx, c.target, lockedExecutor{client: c})
+	if err != nil {
+		return DriveDBUsage{}, driveAdminReadError("database usage", c.driveAdminEvidenceLocked(), err)
+	}
+	c.target.AddCapability(driveops.DBUsageCapabilityName)
+	return usage, nil
+}
+
+// DriveTopAccessFiles reads the Admin Console top-accessed-files ranking.
+func (c *Client) DriveTopAccessFiles(ctx context.Context, query DriveTopAccessQuery) (DriveTopAccessFiles, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, driveops.APINames()...); err != nil {
+		return DriveTopAccessFiles{}, fmt.Errorf("prepare Drive Admin target: %w", err)
+	}
+	files, _, err := driveops.ExecuteDashboard(ctx, c.target, lockedExecutor{client: c}, query)
+	if err != nil {
+		return DriveTopAccessFiles{}, driveAdminReadError("top access files", c.driveAdminEvidenceLocked(), err)
+	}
+	c.target.AddCapability(driveops.DashboardCapabilityName)
+	return files, nil
+}
+
+// DriveActivation reads the Drive package activation state.
+func (c *Client) DriveActivation(ctx context.Context) (DriveActivation, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, driveops.APINames()...); err != nil {
+		return DriveActivation{}, fmt.Errorf("prepare Drive Admin target: %w", err)
+	}
+	activation, _, err := driveops.ExecuteActivation(ctx, c.target, lockedExecutor{client: c})
+	if err != nil {
+		return DriveActivation{}, driveAdminReadError("activation", c.driveAdminEvidenceLocked(), err)
+	}
+	c.target.AddCapability(driveops.ActivationCapabilityName)
+	return activation, nil
 }
 
 // DriveServerConfig reads the Drive server database configuration.
@@ -237,6 +535,36 @@ func (c *Client) DriveAdminCapabilities(ctx context.Context) (DriveAdminCapabili
 		c.target.AddCapability(driveops.ConfigSetCapabilityName)
 	}
 	selections = append(selections, configRead, configSet)
+
+	// Observability reads (WI-053) are likewise selected after the stable
+	// Admin Console order.
+	extendedSelectors := []struct {
+		selectOperation func(compatibility.Target) (compatibility.Selection, error)
+		capability      string
+		supported       *bool
+	}{
+		{driveops.SelectConnectionSummary, driveops.ConnectionSummaryCapabilityName, &capabilities.ConnectionSummaryRead},
+		{driveops.SelectConnectionKick, driveops.ConnectionKickCapabilityName, &capabilities.ConnectionsKick},
+		{driveops.SelectDBUsage, driveops.DBUsageCapabilityName, &capabilities.DBUsageRead},
+		{driveops.SelectDashboard, driveops.DashboardCapabilityName, &capabilities.DashboardRead},
+		{driveops.SelectActivation, driveops.ActivationCapabilityName, &capabilities.ActivationRead},
+		{driveops.SelectPrivilegeList, driveops.PrivilegeReadCapabilityName, &capabilities.PrivilegeRead},
+		{driveops.SelectNodes, driveops.NodesReadCapabilityName, &capabilities.NodesRead},
+		{driveops.SelectNodeVersions, driveops.NodeVersionsReadCapabilityName, &capabilities.NodeVersionsRead},
+		{driveops.SelectNodeRestore, driveops.NodeRestoreCapabilityName, &capabilities.NodeRestore},
+		{driveops.SelectLogExport, driveops.LogExportCapabilityName, &capabilities.LogExport},
+	}
+	for _, extended := range extendedSelectors {
+		selection, err := extended.selectOperation(c.target)
+		if err != nil && !compatibility.IsUnsupported(err) {
+			return DriveAdminCapabilities{}, CompatibilityReport{}, fmt.Errorf("select %s backend: %w", extended.capability, err)
+		}
+		*extended.supported = selection.Supported
+		if selection.Supported {
+			c.target.AddCapability(extended.capability)
+		}
+		selections = append(selections, selection)
+	}
 	return capabilities, c.target.Report(selections...), nil
 }
 

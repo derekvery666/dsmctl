@@ -1,5 +1,9 @@
 # Drive Admin
 
+Setting up Drive from scratch? Follow the end-to-end
+[Drive setup playbook](drive-playbook.md); this page documents the module
+itself.
+
 The Drive Admin module manages functionality provided by the **Synology Drive
 Server package** (`SynologyDrive`), not by DSM itself. It is the first consumer
 of dsmctl's package-scoped operation selection: Drive's WebAPI behavior follows
@@ -50,14 +54,24 @@ dsmctl drive admin log list --nas office --username alice --keyword report --fro
 - `status` returns the Drive service status as reported by the package
   (lowercased, for example `enabled`) plus the package evidence observed with
   this exact call.
-- `connections` lists active Drive client sessions with the user, device,
-  client type, and address fields Drive reports.
+- `connections` lists active Drive client sessions with the fields the Drive
+  server actually reports (WI-054): the session id (the target for a guarded
+  kick), device name, client type, address, status, client version, location,
+  device UUID, relay flag, and login/last-auth times. Sessions are not
+  attributed to an account name by the API.
 - `team-folders` lists shared folders from the admin team-folder view: the
   name, whether each is enabled as a Drive team folder, Drive's share status,
   the share type, and — for enabled team folders — the versioning settings
   (kept versions, rotation policy `fifo`/`smart`, retention days). Drive
   reports versioning fields as `"-"` on disabled folders; they surface as
   absent. Drive's home entry appears as `homes/mydrive_home`.
+- `log export` writes the Drive server log to a **CSV file** (`-o <file>`, or
+  stdout) with the same keyword/username/team-folder/time-range filters as
+  `log list`. Unlike the read, the export is rendered human-readable (headers
+  `Date Time, Operator, Action, Related Path, …`), so it is the format for
+  compliance and handover. MCP: `get_drive_log_export` (returns CSV text;
+  excluded from the read-only gateway as a bulk content transfer). Clearing
+  the log (`Log.delete`) stays out of scope.
 - `log list` reads Drive server logs. Keyword, username, team-folder scope,
   offset, and the Unix-seconds/`"2006-01-02 15:04:05"` time range are applied
   by Drive; the page size is bounded (default 100, maximum 1000). Drive stores
@@ -65,8 +79,49 @@ dsmctl drive admin log list --nas office --username alice --keyword report --fro
   rendered message, so entries surface the structured fields: time, username,
   client type, IP address, event code, path, and team folder.
 
+Observability reads round out the overview page (WI-053):
+
+```console
+dsmctl drive admin summary --nas office
+dsmctl drive admin db-usage --nas office
+dsmctl drive admin top-files --nas office --ranking-by download --period-days 7 --limit 20
+dsmctl drive admin activation --nas office
+```
+
+- `summary` counts active connections by client family (desktop, mobile,
+  ShareSync) via `SYNO.SynologyDrive.Connection` `summary` v2.
+- `db-usage` reports Drive's cached storage breakdown (version repository,
+  database, Synology Office documents, all bytes) and when the cache was
+  calculated (`SYNO.SynologyDrive.DBUsage` `get`); triggering a recalculation
+  is deferred.
+- `top-files` ranks the most accessed files from Drive's access log
+  (`SYNO.SynologyDrive.Dashboard` `top_access_files`), optionally by preview
+  or download activity only.
+- `users` lists the accounts allowed to use Drive (`--type local|domain|ldap`)
+  with whether Drive has materialized each account and DSM account context.
+  **Who may use Drive is the DSM application privilege**
+  (`SYNO.SDS.Drive.Application`) — grant or revoke it through the account
+  module's guarded `application_privilege` change; denying it removes the
+  account from this view immediately (live-verified). Drive's own
+  `Privilege.set` is deliberately not exposed: a Drive-side disable does not
+  stick while the application privilege still allows the account.
+- `files` browses one Drive view — a team folder (`--team-folder`) or your My
+  Drive — **including removed entries** (the rescue perspective; hide them
+  with `--exclude-removed`), with per-node size, version count, and
+  modification time. `file-versions --path <path>` lists a node's stored
+  versions (time, size, content hash, storing client). Together they answer
+  "what got deleted and which version do I want back". Recover them with
+  `drive admin restore` (below).
+- `activation` reports whether the package completed its online activation
+  (registration against the NAS serial). An unactivated Drive still serves
+  clients — verified live — so this is informational; performing the
+  activation requires the Admin Console's online activation-code exchange and
+  stays deferred.
+
 MCP tools: `get_drive_admin_status`, `get_drive_admin_connections`,
-`get_drive_admin_team_folders`, `get_drive_admin_logs`.
+`get_drive_admin_team_folders`, `get_drive_admin_logs`,
+`get_drive_connection_summary`, `get_drive_db_usage`, `get_drive_top_files`,
+`get_drive_activation`, `get_drive_users`.
 
 ## Team folders (guarded write)
 
@@ -97,9 +152,11 @@ dsmctl drive admin team-folders apply -f enable.plan.json --approve <hash>
   turning versioning off, or tightening retention prunes stored versions and
   is high risk.
 
-The Drive home entry (`homes/mydrive*`) and the `surveillance` share are
-rejected: the former is managed by the DSM home service, and Drive silently
-ignores the latter. Drive answers `Share.set` with an empty success even when
+The Drive home entry (`homes/mydrive*`) accepts only `set_versioning`: it
+patches the global My Drive versioning DSM fans out to **every user home**,
+so those plans are always high risk. Enabling or disabling the home entry is
+rejected (My Drive follows the DSM home service), and the `surveillance`
+share is rejected because Drive silently ignores it. Drive answers `Share.set` with an empty success even when
 it skips an ineligible share, so apply verifies the postcondition by
 re-reading the team-folder list (with bounded retries while Drive converges)
 and returns an explicit not-yet-confirmed error instead of a false success.
@@ -107,9 +164,50 @@ and returns an explicit not-yet-confirmed error instead of a false success.
 MCP: `plan_drive_team_folder_change` and `apply_drive_team_folder_plan`; the
 read-only gateway strips both.
 
+## Connections (guarded kick)
+
+Disconnect one client session through plan/apply, targeted by the session id
+from the connections read:
+
+```console
+dsmctl drive admin connections kick --session <session_id> --nas office -o kick.plan.json
+dsmctl drive admin connections apply -f kick.plan.json --approve <hash>
+```
+
+The plan binds to the observed connection entry (a session that reconnected
+invalidates it), and apply verifies the session left the list. The kicked
+client must authenticate again to resume syncing; files already synced stay
+on the device, and dsmctl never sends Drive's remote data-wipe companion
+field. The delete request shape is verified against the Drive server source;
+the surrounding contract is live-verified (see WI-054 for the limits). MCP:
+`plan_drive_connection_kick` / `apply_drive_connection_kick_plan`.
+
+## Restore (guarded)
+
+Recover removed files and folders through plan/apply, using the paths from
+the files read:
+
+```console
+echo '{"team_folder":"team-data","paths":["/reports/q3.xlsx"]}' \
+  | dsmctl drive admin restore plan --nas office -o restore.plan.json
+dsmctl drive admin restore apply -f restore.plan.json --approve <hash>
+```
+
+The plan resolves each path against a fresh recursive view read (including
+removed entries) and binds the resolved nodes. Recovering removed nodes is
+additive (medium risk); an in-place restore that would overwrite a
+currently-present file is high risk. Set `copy_to` to a folder path to
+restore the content there instead of the original location. Apply starts
+Drive's asynchronous restore task (one runs at a time), polls it to
+completion, and confirms each node is no longer removed by re-reading the
+view (with bounded retries, since the view lags the task). MCP:
+`plan_drive_restore` / `apply_drive_restore_plan`. Per-node rollback of a
+present file to an earlier version, and restoring another user's My Drive,
+stay deferred (see WI-058).
+
 ## Deferred operations
 
-Connection disconnection, index management, the end-user file API
+Index management, the end-user file API
 (`SYNO.SynologyDrive.Files`), sharing links, labels, watermark/download
 restrictions (Advanced Features), node locking, and ShareSync are out of
 scope for this slice.

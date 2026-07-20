@@ -198,11 +198,17 @@ func TestExecuteStatusRejectsUnknownShape(t *testing.T) {
 }
 
 func TestExecuteConnectionsDecodesItems(t *testing.T) {
+	// Item shape from the Drive server source (handlers/connection/list.cpp):
+	// client_* field names, login_time stringified; legacy aliases stay as
+	// fallbacks for older payloads.
 	executor := &capturingExecutor{response: json.RawMessage(`{
 		"total": 2,
 		"items": [
-			{"username": "alice", "device_name": "ALICE-NB", "client_type": "Desktop", "address": "10.0.0.5"},
-			{"user": "bob", "ip": "10.0.0.9"}
+			{"client_id": "cid-1", "client_session_id": "sess-1", "client_ip": "10.0.0.5", "client_name": "ALICE-NB",
+			 "login_time": "1784000000", "client_status": "Online", "client_type": "Synology Drive Client",
+			 "client_is_relay": false, "client_version": "3.5.1", "client_can_wipe": true,
+			 "client_location": "TW", "device_uuid": "uuid-1", "last_auth_time": 1784000100},
+			{"user": "bob", "ip": "10.0.0.9", "device_name": "BOB-NB"}
 		]
 	}`)}
 	connections, _, err := ExecuteConnections(context.Background(), driveTarget("4.0.3-27892", true), executor)
@@ -216,11 +222,37 @@ func TestExecuteConnectionsDecodesItems(t *testing.T) {
 		t.Fatalf("connections = %#v", connections)
 	}
 	first, second := connections.Connections[0], connections.Connections[1]
-	if first.User != "alice" || first.DeviceName != "ALICE-NB" || first.ClientType != "desktop" || first.Address != "10.0.0.5" {
+	if first.SessionID != "sess-1" || first.ClientID != "cid-1" || first.DeviceName != "ALICE-NB" ||
+		first.ClientType != "synology drive client" || first.Address != "10.0.0.5" ||
+		first.LoginUnix != 1784000000 || first.LastAuthUnix != 1784000100 ||
+		first.Status != "online" || first.Version != "3.5.1" || !first.CanWipe || first.IsRelay {
 		t.Fatalf("first = %#v", first)
 	}
-	if second.User != "bob" || second.Address != "10.0.0.9" {
+	if second.User != "bob" || second.Address != "10.0.0.9" || second.DeviceName != "BOB-NB" || second.SessionID != "" {
 		t.Fatalf("second = %#v", second)
+	}
+}
+
+func TestExecuteConnectionKickRequestShape(t *testing.T) {
+	executor := &capturingExecutor{response: json.RawMessage(`{}`)}
+	result, _, err := ExecuteConnectionKick(context.Background(), driveTarget("4.0.3-27892", true), executor, ConnectionKickInput{SessionID: "sess-9"})
+	if err != nil {
+		t.Fatalf("ExecuteConnectionKick() error = %v", err)
+	}
+	if executor.request.API != ConnectionAPIName || executor.request.Version != 2 || executor.request.Method != "delete" {
+		t.Fatalf("request = %#v", executor.request)
+	}
+	// Source-verified (handlers/connection/delete.cpp): client_sess_id is an
+	// array; exactly one id is sent, and data_wipe is never sent.
+	ids, ok := executor.request.JSONParameters["client_sess_id"].([]string)
+	if !ok || len(ids) != 1 || ids[0] != "sess-9" {
+		t.Fatalf("client_sess_id = %#v", executor.request.JSONParameters["client_sess_id"])
+	}
+	if _, present := executor.request.JSONParameters["data_wipe"]; present {
+		t.Fatalf("data_wipe must not be sent: %#v", executor.request.JSONParameters)
+	}
+	if result.Method != "delete" || result.Version != 2 {
+		t.Fatalf("result = %#v", result)
 	}
 }
 
@@ -286,6 +318,257 @@ func TestExecuteTeamFoldersRequiresName(t *testing.T) {
 	_, _, err := ExecuteTeamFolders(context.Background(), driveTarget("4.0.3-27892", true), executor)
 	if err == nil || !strings.Contains(err.Error(), "no name field") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestExecuteObservabilityReads(t *testing.T) {
+	// Response shapes captured live from Drive 4.0.3 (WI-053).
+	executor := &capturingExecutor{response: json.RawMessage(`{"summary":{"desktop":2,"mobile":1,"sharesync":0,"total":3}}`)}
+	summary, selection, err := ExecuteConnectionSummary(context.Background(), driveTarget("4.0.3-27892", true), executor)
+	if err != nil {
+		t.Fatalf("ExecuteConnectionSummary() error = %v", err)
+	}
+	// The summary method exists only at Connection v2 (v1 answers 103).
+	if executor.request.API != ConnectionAPIName || executor.request.Version != 2 || executor.request.Method != "summary" {
+		t.Fatalf("request = %#v", executor.request)
+	}
+	if summary.Desktop != 2 || summary.Mobile != 1 || summary.Total != 3 || selection.Backend != "drive-connection-v2" {
+		t.Fatalf("summary = %#v selection = %#v", summary, selection)
+	}
+
+	executor = &capturingExecutor{response: json.RawMessage(`{"database_size":2243510,"office_size":26701800,"repo_size":857164,"update_time":1784495605}`)}
+	usage, _, err := ExecuteDBUsage(context.Background(), driveTarget("4.0.3-27892", true), executor)
+	if err != nil {
+		t.Fatalf("ExecuteDBUsage() error = %v", err)
+	}
+	if executor.request.API != DBUsageAPIName || executor.request.Method != "get" {
+		t.Fatalf("request = %#v", executor.request)
+	}
+	if usage.RepositorySize != 857164 || usage.DatabaseSize != 2243510 || usage.OfficeSize != 26701800 || usage.UpdatedUnix != 1784495605 {
+		t.Fatalf("usage = %#v", usage)
+	}
+
+	executor = &capturingExecutor{response: json.RawMessage(`{"files":[{"path":"/projects/spec.md","name":"spec.md","access_count":12}]}`)}
+	files, _, err := ExecuteDashboard(context.Background(), driveTarget("4.0.3-27892", true), executor,
+		driveadmin.TopAccessQuery{RankingBy: "both", PeriodDays: 7, Limit: 5})
+	if err != nil {
+		t.Fatalf("ExecuteDashboard() error = %v", err)
+	}
+	parameters := executor.request.JSONParameters
+	if executor.request.Method != "top_access_files" || parameters["ranking_by"] != "both" || parameters["period_days"] != 7 || parameters["limit"] != 5 {
+		t.Fatalf("request = %#v", executor.request)
+	}
+	if len(files.Files) != 1 || files.Files[0].Path != "/projects/spec.md" || files.Files[0].AccessCount != 12 {
+		t.Fatalf("files = %#v", files)
+	}
+
+	executor = &capturingExecutor{response: json.RawMessage(`{"activated":false,"activation_time":0,"serial_number":"1790PXN037200"}`)}
+	activation, _, err := ExecuteActivation(context.Background(), driveTarget("4.0.3-27892", true), executor)
+	if err != nil {
+		t.Fatalf("ExecuteActivation() error = %v", err)
+	}
+	if executor.request.API != ActivationAPIName || executor.request.Method != "get" {
+		t.Fatalf("request = %#v", executor.request)
+	}
+	if activation.Activated || activation.SerialNumber != "1790PXN037200" || activation.ActivationUnix != 0 {
+		t.Fatalf("activation = %#v", activation)
+	}
+}
+
+func TestExecutePrivilegeListRequestShapeAndDecode(t *testing.T) {
+	// Response shape captured live from Drive 4.0.3 (WI-055).
+	executor := &capturingExecutor{response: json.RawMessage(`{
+		"offset": 0, "total": 3,
+		"users": [
+			{"enabled": false, "name": "admin", "status": "disabled"},
+			{"enabled": true, "name": "deryck", "status": "normal"},
+			{"enabled": false, "name": "sunny", "status": "normal"}
+		]
+	}`)}
+	list, _, err := ExecutePrivilegeList(context.Background(), driveTarget("4.0.3-27892", true), executor, driveadmin.PrivilegeQuery{Type: "local"})
+	if err != nil {
+		t.Fatalf("ExecutePrivilegeList() error = %v", err)
+	}
+	if executor.request.API != PrivilegeAPIName || executor.request.Method != "list" || executor.request.Version != 1 {
+		t.Fatalf("request = %#v", executor.request)
+	}
+	parameters := executor.request.JSONParameters
+	// Verified live: additional must be an array (a bare boolean is 120).
+	additional, ok := parameters["additional"].([]string)
+	if !ok || len(additional) != 2 || parameters["type"] != "local" || parameters["limit"] != -1 {
+		t.Fatalf("parameters = %#v", parameters)
+	}
+	if _, present := parameters["domain_name"]; present {
+		t.Fatalf("domain_name should be omitted for the local realm: %#v", parameters)
+	}
+	if list.Total != 3 || len(list.Users) != 3 || !list.Users[1].Enabled || list.Users[0].Status != "disabled" {
+		t.Fatalf("list = %#v", list)
+	}
+
+	// Without the additional fields the decoder refuses to guess.
+	executor = &capturingExecutor{response: json.RawMessage(`{"users":[{"name":"alice"}],"total":1}`)}
+	if _, _, err := ExecutePrivilegeList(context.Background(), driveTarget("4.0.3-27892", true), executor, driveadmin.PrivilegeQuery{Type: "local"}); err == nil || !strings.Contains(err.Error(), "no enabled field") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestExecuteNodesRequestShapeAndDecode(t *testing.T) {
+	// Response shape captured live from Drive 4.0.3 (WI-057): node_id is a
+	// string, file_type 1 is a folder, and removed entries stay listed.
+	executor := &capturingExecutor{response: json.RawMessage(`{
+		"total": 2,
+		"items": [
+			{"absolute_path":"/Drive/.viminfo","file_type":0,"is_removed":false,"mtime":1776070434,"name":".viminfo",
+			 "node_id":"5","path":"/.viminfo","permanent_link":"17ouRPut2VIV","v_file_size":802,"ver_cnt":1},
+			{"absolute_path":"/Drive/old","file_type":1,"is_removed":true,"mtime":1784477561,"name":"old",
+			 "node_id":"21","path":"/old","permanent_link":"197exHvuLt","v_file_size":0,"ver_cnt":1}
+		]
+	}`)}
+	nodes, _, err := ExecuteNodes(context.Background(), driveTarget("4.0.3-27892", true), executor,
+		driveadmin.NodeQuery{TeamFolder: "projects", Pattern: "o", Recursive: true, Limit: 100})
+	if err != nil {
+		t.Fatalf("ExecuteNodes() error = %v", err)
+	}
+	parameters := executor.request.JSONParameters
+	// Verified live: a team folder is targeted as @<shared-folder-name>, and
+	// list_removed defaults on (this is the rescue view).
+	if executor.request.Method != "list" || parameters["target"] != "@projects" || parameters["list_removed"] != true ||
+		parameters["pattern"] != "o" || parameters["recursive"] != true {
+		t.Fatalf("request = %#v", executor.request)
+	}
+	if nodes.Total != 2 || len(nodes.Items) != 2 {
+		t.Fatalf("nodes = %#v", nodes)
+	}
+	if nodes.Items[0].IsFolder || nodes.Items[0].SizeBytes != 802 || nodes.Items[0].NodeID != "5" {
+		t.Fatalf("first = %#v", nodes.Items[0])
+	}
+	if !nodes.Items[1].IsFolder || !nodes.Items[1].IsRemoved {
+		t.Fatalf("second = %#v", nodes.Items[1])
+	}
+
+	// The My Drive view is target "user", and excluded removals flip the flag.
+	executor = &capturingExecutor{response: json.RawMessage(`{"items":[],"total":0}`)}
+	if _, _, err := ExecuteNodes(context.Background(), driveTarget("4.0.3-27892", true), executor,
+		driveadmin.NodeQuery{ExcludeRemoved: true, Limit: 100}); err != nil {
+		t.Fatalf("ExecuteNodes(user) error = %v", err)
+	}
+	parameters = executor.request.JSONParameters
+	if parameters["target"] != "user" || parameters["list_removed"] != false {
+		t.Fatalf("user view request = %#v", parameters)
+	}
+}
+
+func TestExecuteNodeRestoreStartRequestShape(t *testing.T) {
+	// start answers {"task_id":N}.
+	executor := &capturingExecutor{response: json.RawMessage(`{"task_id":12345}`)}
+	input := NodeRestoreInput{
+		Target: "@projects", Override: true, IncludeRemoved: true,
+		Nodes: []NodeRestoreItem{{NodeID: "21", SyncID: "37", FileType: 1, Path: "/old", Name: "old"}},
+	}
+	taskID, _, err := ExecuteNodeRestoreStart(context.Background(), driveTarget("4.0.3-27892", true), executor, input)
+	if err != nil {
+		t.Fatalf("ExecuteNodeRestoreStart() error = %v", err)
+	}
+	if executor.request.API != NodeRestoreAPIName || executor.request.Version != 1 || executor.request.Method != "start" {
+		t.Fatalf("request = %#v", executor.request)
+	}
+	parameters := executor.request.JSONParameters
+	if parameters["target"] != "@projects" || parameters["override"] != true || parameters["include_removed"] != true {
+		t.Fatalf("parameters = %#v", parameters)
+	}
+	// Source-verified (handlers/node/restore/start.cpp): nodes is an array of
+	// {node_id, sync_id, file_type, path, name}.
+	entries, ok := parameters["nodes"].([]map[string]any)
+	if !ok || len(entries) != 1 {
+		t.Fatalf("nodes = %#v", parameters["nodes"])
+	}
+	entry := entries[0]
+	if entry["node_id"] != "21" || entry["sync_id"] != "37" || entry["file_type"] != 1 || entry["path"] != "/old" || entry["name"] != "old" {
+		t.Fatalf("entry = %#v", entry)
+	}
+	if _, present := parameters["copy_to"]; present {
+		t.Fatalf("copy_to should be omitted when empty: %#v", parameters)
+	}
+	if taskID != "12345" {
+		t.Fatalf("task id = %q", taskID)
+	}
+
+	// A missing sync_id defaults to "0"; copy_to is forwarded when set.
+	executor = &capturingExecutor{response: json.RawMessage(`{"task_id":1}`)}
+	input = NodeRestoreInput{Target: "user", CopyTo: "/recovered", Nodes: []NodeRestoreItem{{NodeID: "5", Path: "/x", Name: "x"}}}
+	if _, _, err := ExecuteNodeRestoreStart(context.Background(), driveTarget("4.0.3-27892", true), executor, input); err != nil {
+		t.Fatalf("ExecuteNodeRestoreStart() error = %v", err)
+	}
+	entry = executor.request.JSONParameters["nodes"].([]map[string]any)[0]
+	if entry["sync_id"] != "0" {
+		t.Fatalf("missing sync_id should default to 0: %#v", entry)
+	}
+	if executor.request.JSONParameters["copy_to"] != "/recovered" {
+		t.Fatalf("copy_to = %#v", executor.request.JSONParameters["copy_to"])
+	}
+}
+
+func TestExecuteNodeRestoreStatusAndFinish(t *testing.T) {
+	executor := &capturingExecutor{response: json.RawMessage(`{"current":3,"total":3}`)}
+	progress, err := ExecuteNodeRestoreStatus(context.Background(), executor)
+	if err != nil {
+		t.Fatalf("ExecuteNodeRestoreStatus() error = %v", err)
+	}
+	if executor.request.Method != "status" || progress.Current != 3 || progress.Total != 3 {
+		t.Fatalf("progress = %#v request = %#v", progress, executor.request)
+	}
+	finishExec := &capturingExecutor{response: json.RawMessage(`{}`)}
+	if err := ExecuteNodeRestoreFinish(context.Background(), finishExec); err != nil {
+		t.Fatalf("ExecuteNodeRestoreFinish() error = %v", err)
+	}
+	if finishExec.request.Method != "finish" {
+		t.Fatalf("finish request = %#v", finishExec.request)
+	}
+}
+
+func TestExecuteNodeVersionsDecodes(t *testing.T) {
+	// Response shape captured live from Drive 4.0.3 (WI-057).
+	executor := &capturingExecutor{response: json.RawMessage(`{
+		"disable_download": false, "disable_restore": false, "is_locked": false, "is_removed": false,
+		"items": [{"create_time":1776070439,"hash":"6e49df46c155b48fc3929f580c457f26","modify_time":1776070434,
+		           "node_id":5,"path":"/.viminfo","size":802,"sync_id":10,"version_updater":"localhost"}],
+		"permanent_id": "945174744739651589", "permanent_link": "17ouRPut2VIV"
+	}`)}
+	versions, _, err := ExecuteNodeVersions(context.Background(), driveTarget("4.0.3-27892", true), executor,
+		driveadmin.NodeVersionQuery{Path: "/.viminfo"})
+	if err != nil {
+		t.Fatalf("ExecuteNodeVersions() error = %v", err)
+	}
+	if executor.request.Method != "list_version" || executor.request.JSONParameters["target"] != "user" || executor.request.JSONParameters["path"] != "/.viminfo" {
+		t.Fatalf("request = %#v", executor.request)
+	}
+	if versions.Path != "/.viminfo" || versions.IsRemoved || versions.RestoreBlocked || len(versions.Versions) != 1 {
+		t.Fatalf("versions = %#v", versions)
+	}
+	entry := versions.Versions[0]
+	if entry.CreatedUnix != 1776070439 || entry.SizeBytes != 802 || entry.Hash == "" || entry.VersionUpdater != "localhost" {
+		t.Fatalf("entry = %#v", entry)
+	}
+
+	if _, _, err := ExecuteNodeVersions(context.Background(), driveTarget("4.0.3-27892", true),
+		&capturingExecutor{response: json.RawMessage(`{"history": 1}`)}, driveadmin.NodeVersionQuery{Path: "/x"}); err == nil || !strings.Contains(err.Error(), "no version array") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestObservabilityDecodersRejectUnknownShapes(t *testing.T) {
+	target := driveTarget("4.0.3-27892", true)
+	if _, _, err := ExecuteConnectionSummary(context.Background(), target, &capturingExecutor{response: json.RawMessage(`{"counts":{}}`)}); err == nil || !strings.Contains(err.Error(), "no summary object") {
+		t.Fatalf("summary error = %v", err)
+	}
+	if _, _, err := ExecuteDBUsage(context.Background(), target, &capturingExecutor{response: json.RawMessage(`{"sizes":{}}`)}); err == nil || !strings.Contains(err.Error(), "no repo_size field") {
+		t.Fatalf("db usage error = %v", err)
+	}
+	if _, _, err := ExecuteDashboard(context.Background(), target, &capturingExecutor{response: json.RawMessage(`{"ranking":1}`)}, driveadmin.TopAccessQuery{RankingBy: "both", PeriodDays: 1, Limit: 5}); err == nil || !strings.Contains(err.Error(), "no file array") {
+		t.Fatalf("dashboard error = %v", err)
+	}
+	if _, _, err := ExecuteActivation(context.Background(), target, &capturingExecutor{response: json.RawMessage(`{"enabled":true}`)}); err == nil || !strings.Contains(err.Error(), "activated") {
+		t.Fatalf("activation error = %v", err)
 	}
 }
 

@@ -47,10 +47,642 @@ type driveAdminClient interface {
 	DriveAdminConnections(context.Context) (synology.DriveAdminConnections, error)
 	DriveAdminTeamFolders(context.Context) (synology.DriveAdminTeamFolders, error)
 	DriveAdminLog(context.Context, synology.DriveAdminLogQuery) (synology.DriveAdminLog, error)
+	DriveLogExport(context.Context, synology.DriveLogExportQuery) ([]byte, error)
 	DriveAdminCapabilities(context.Context) (synology.DriveAdminCapabilities, synology.CompatibilityReport, error)
 	DriveServerConfig(context.Context) (synology.DriveServerConfig, error)
 	ApplyDriveServerConfigChange(context.Context, driveadmin.ServerConfigChange) (synology.DriveConfigMutationResult, error)
 	ApplyDriveTeamFolderChange(context.Context, driveadmin.TeamFolderChange) (synology.DriveTeamFolderMutationResult, error)
+	DriveConnectionSummary(context.Context) (synology.DriveConnectionSummary, error)
+	DriveDBUsage(context.Context) (synology.DriveDBUsage, error)
+	DriveTopAccessFiles(context.Context, synology.DriveTopAccessQuery) (synology.DriveTopAccessFiles, error)
+	DriveActivation(context.Context) (synology.DriveActivation, error)
+	ApplyDriveConnectionKick(context.Context, driveadmin.ConnectionKick) (synology.DriveConnectionMutationResult, error)
+	DrivePrivileges(context.Context, synology.DrivePrivilegeQuery) (synology.DrivePrivilegeList, error)
+	DriveNodes(context.Context, synology.DriveNodeQuery) (synology.DriveNodes, error)
+	DriveNodeVersions(context.Context, synology.DriveNodeVersionQuery) (synology.DriveNodeVersions, error)
+	ApplyDriveNodeRestore(context.Context, synology.DriveNodeRestoreRequest) (synology.DriveNodeRestoreResult, error)
+}
+
+const driveNodeRestoreAPIVersion = "dsmctl.io/v1alpha1"
+
+// NodeRestoreChange is the user's restore intent: recover a set of node paths
+// in one Drive view. Overwrite and CopyTo mirror the DSM options.
+type NodeRestoreChange struct {
+	TeamFolder string   `json:"team_folder,omitempty" jsonschema:"Team folder (shared-folder name) to restore in; empty targets the signed-in account's My Drive"`
+	Paths      []string `json:"paths" jsonschema:"Node paths to restore, exactly as listed by the files read"`
+	CopyTo     string   `json:"copy_to,omitempty" jsonschema:"Restore the content into this folder path instead of the original location"`
+	Overwrite  *bool    `json:"overwrite,omitempty" jsonschema:"Overwrite a currently-present node when restoring in place; defaults to true, ignored for removed nodes"`
+}
+
+type DriveNodeRestorePlan struct {
+	APIVersion          string                        `json:"api_version" jsonschema:"Plan schema version"`
+	NAS                 string                        `json:"nas" jsonschema:"NAS profile selected during planning"`
+	ProfileRevision     uint64                        `json:"profile_revision,omitempty" jsonschema:"Persistent gateway profile revision selected during planning"`
+	Request             NodeRestoreChange             `json:"request" jsonschema:"Restore intent"`
+	Observed            []driveadmin.Node             `json:"observed" jsonschema:"Node entries resolved from the requested paths during planning"`
+	ObservedFingerprint string                        `json:"observed_fingerprint" jsonschema:"SHA-256 hash of the resolved node entries"`
+	Destructive         bool                          `json:"destructive" jsonschema:"Whether the plan overwrites currently-present content"`
+	Risk                string                        `json:"risk" jsonschema:"Plan risk level: medium or high"`
+	Warnings            []string                      `json:"warnings" jsonschema:"Overwrite and eligibility warnings"`
+	Summary             []string                      `json:"summary" jsonschema:"Human-readable operations the plan will perform"`
+	Hash                string                        `json:"hash" jsonschema:"SHA-256 approval hash covering intent and resolved nodes"`
+}
+
+type DriveNodeRestoreApplyResult struct {
+	NAS      string                            `json:"nas" jsonschema:"NAS profile used for apply"`
+	PlanHash string                            `json:"plan_hash" jsonschema:"Approved plan hash"`
+	Applied  bool                              `json:"applied" jsonschema:"Whether the restore completed and the postcondition passed"`
+	Result   synology.DriveNodeRestoreResult   `json:"result" jsonschema:"Selected DSM mutation backend and processed-node count"`
+	Restored []driveadmin.Node                 `json:"restored" jsonschema:"Requested nodes re-read after the restore"`
+}
+
+func (s *Service) PlanDriveNodeRestore(ctx context.Context, requestedNAS string, request NodeRestoreChange) (DriveNodeRestorePlan, error) {
+	if err := validateDriveNodeRestore(request); err != nil {
+		return DriveNodeRestorePlan{}, err
+	}
+	name, client, err := s.driveAdminClient(ctx, requestedNAS)
+	if err != nil {
+		return DriveNodeRestorePlan{}, err
+	}
+	plan, err := planDriveNodeRestoreWithClient(ctx, name, client, request)
+	if err != nil {
+		return DriveNodeRestorePlan{}, err
+	}
+	plan.ProfileRevision, err = s.profileRevision(ctx, name)
+	if err == nil {
+		plan.Hash, err = driveNodeRestorePlanHash(plan)
+	}
+	return plan, err
+}
+
+func (s *Service) ApplyDriveNodeRestorePlan(ctx context.Context, plan DriveNodeRestorePlan, approvalHash string) (DriveNodeRestoreApplyResult, error) {
+	if strings.TrimSpace(approvalHash) == "" || approvalHash != plan.Hash {
+		return DriveNodeRestoreApplyResult{}, fmt.Errorf("approval hash does not match the node restore plan")
+	}
+	if plan.APIVersion != driveNodeRestoreAPIVersion || strings.TrimSpace(plan.NAS) == "" {
+		return DriveNodeRestoreApplyResult{}, fmt.Errorf("invalid node restore plan metadata")
+	}
+	expectedHash, err := driveNodeRestorePlanHash(plan)
+	if err != nil {
+		return DriveNodeRestoreApplyResult{}, err
+	}
+	if expectedHash != plan.Hash {
+		return DriveNodeRestoreApplyResult{}, fmt.Errorf("node restore plan contents were modified after planning")
+	}
+	if err := s.authorizeRemoteApply(ctx, plan.NAS, plan.ProfileRevision, plan.Hash, plan.Risk); err != nil {
+		return DriveNodeRestoreApplyResult{}, err
+	}
+	if err := s.verifyProfileRevision(ctx, plan.NAS, plan.ProfileRevision); err != nil {
+		return DriveNodeRestoreApplyResult{}, err
+	}
+	name, client, err := s.driveAdminClient(ctx, plan.NAS)
+	if err != nil {
+		return DriveNodeRestoreApplyResult{}, err
+	}
+	if name != plan.NAS {
+		return DriveNodeRestoreApplyResult{}, fmt.Errorf("node restore plan NAS %q resolved to different profile %q", plan.NAS, name)
+	}
+	return applyDriveNodeRestorePlanWithClient(ctx, client, plan)
+}
+
+func applyDriveNodeRestorePlanWithClient(ctx context.Context, client driveAdminClient, plan DriveNodeRestorePlan) (DriveNodeRestoreApplyResult, error) {
+	current, err := planDriveNodeRestoreWithClient(ctx, plan.NAS, client, plan.Request)
+	if err != nil {
+		return DriveNodeRestoreApplyResult{}, fmt.Errorf("node restore plan precondition no longer holds: %w", err)
+	}
+	current.ProfileRevision = plan.ProfileRevision
+	current.Hash, err = driveNodeRestorePlanHash(current)
+	if err != nil {
+		return DriveNodeRestoreApplyResult{}, err
+	}
+	if current.ObservedFingerprint != plan.ObservedFingerprint || current.Hash != plan.Hash {
+		return DriveNodeRestoreApplyResult{}, fmt.Errorf("node restore plan is stale; create a new plan")
+	}
+	overwrite := true
+	if plan.Request.Overwrite != nil {
+		overwrite = *plan.Request.Overwrite
+	}
+	nodes := make([]synology.DriveNodeRestoreItem, 0, len(plan.Observed))
+	for _, node := range plan.Observed {
+		nodes = append(nodes, synology.DriveNodeRestoreItem{
+			NodeID: node.NodeID, SyncID: node.SyncID, Path: node.Path, Name: node.Name, IsFolder: node.IsFolder,
+		})
+	}
+	result, err := client.ApplyDriveNodeRestore(ctx, synology.DriveNodeRestoreRequest{
+		TeamFolder: plan.Request.TeamFolder, CopyTo: plan.Request.CopyTo,
+		Override: overwrite, IncludeRemoved: true, Nodes: nodes,
+	})
+	if err != nil {
+		return DriveNodeRestoreApplyResult{}, authenticationError(plan.NAS, err)
+	}
+	// Postcondition: for an in-place restore, re-read the view and confirm the
+	// requested nodes are no longer removed. A copy_to restore leaves the
+	// originals untouched, so the count from Drive is the evidence instead.
+	restored, err := verifyDriveNodeRestore(ctx, client, plan)
+	if err != nil {
+		return DriveNodeRestoreApplyResult{}, err
+	}
+	return DriveNodeRestoreApplyResult{NAS: plan.NAS, PlanHash: plan.Hash, Applied: true, Result: result, Restored: restored}, nil
+}
+
+func verifyDriveNodeRestore(ctx context.Context, client driveAdminClient, plan DriveNodeRestorePlan) ([]driveadmin.Node, error) {
+	// The restore task returns before the node view's is_removed flags catch
+	// up (observed live), so the postcondition re-read is bounded-retried.
+	var lastErr error
+	for attempt := 0; attempt < driveTeamFolderVerifyAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(driveTeamFolderVerifyDelay):
+			}
+		}
+		restored, err, retry := checkDriveNodeRestore(ctx, client, plan)
+		if err == nil {
+			return restored, nil
+		}
+		lastErr = err
+		if !retry {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
+// checkDriveNodeRestore re-reads the view once; retry reports whether the
+// failure is a not-yet-converged state worth polling again.
+func checkDriveNodeRestore(ctx context.Context, client driveAdminClient, plan DriveNodeRestorePlan) (nodes []driveadmin.Node, err error, retry bool) {
+	view, err := client.DriveNodes(ctx, synology.DriveNodeQuery{TeamFolder: plan.Request.TeamFolder, Limit: driveNodeMaxLimit})
+	if err != nil {
+		return nil, fmt.Errorf("verify node restore: %w", err), false
+	}
+	byPath := make(map[string]driveadmin.Node, len(view.Items))
+	for _, node := range view.Items {
+		byPath[node.Path] = node
+	}
+	restored := make([]driveadmin.Node, 0, len(plan.Request.Paths))
+	for _, path := range plan.Request.Paths {
+		node, found := byPath[path]
+		if !found {
+			// A copy_to restore may leave the removed original out of the view;
+			// that is not a failure for the copy workflow.
+			if plan.Request.CopyTo != "" {
+				continue
+			}
+			return nil, fmt.Errorf("Drive did not confirm the restore of %q (the node is not in the view); re-check with the files read", path), true
+		}
+		if plan.Request.CopyTo == "" && node.IsRemoved {
+			return nil, fmt.Errorf("Drive did not confirm the restore of %q (still removed); it may still be applying — re-check with the files read", path), true
+		}
+		restored = append(restored, node)
+	}
+	return restored, nil, false
+}
+
+func planDriveNodeRestoreWithClient(ctx context.Context, nas string, client driveAdminClient, request NodeRestoreChange) (DriveNodeRestorePlan, error) {
+	capabilities, _, err := client.DriveAdminCapabilities(ctx)
+	if err != nil {
+		return DriveNodeRestorePlan{}, authenticationError(nas, err)
+	}
+	if !capabilities.NodesRead {
+		return DriveNodeRestorePlan{}, fmt.Errorf("NAS %q does not expose a verified Drive files read backend", nas)
+	}
+	if !capabilities.NodeRestore {
+		return DriveNodeRestorePlan{}, fmt.Errorf("NAS %q does not expose a verified Drive node restore backend", nas)
+	}
+	// Re-read the whole view once and resolve every requested path against it,
+	// including removed entries (the rescue view).
+	nodes, err := client.DriveNodes(ctx, synology.DriveNodeQuery{TeamFolder: request.TeamFolder, Recursive: true, Limit: driveNodeMaxLimit})
+	if err != nil {
+		return DriveNodeRestorePlan{}, authenticationError(nas, err)
+	}
+	byPath := make(map[string]driveadmin.Node, len(nodes.Items))
+	for _, node := range nodes.Items {
+		byPath[node.Path] = node
+	}
+	plan := DriveNodeRestorePlan{APIVersion: driveNodeRestoreAPIVersion, NAS: nas, Request: request}
+	overwritePresent := false
+	for _, path := range request.Paths {
+		node, found := byPath[path]
+		if !found {
+			return DriveNodeRestorePlan{}, fmt.Errorf("path %q is not in the Drive view; list it with the files read first", path)
+		}
+		plan.Observed = append(plan.Observed, node)
+		if request.CopyTo == "" && !node.IsRemoved && !node.IsFolder {
+			overwritePresent = true
+		}
+	}
+	plan.ObservedFingerprint, err = hashJSON(plan.Observed)
+	if err != nil {
+		return DriveNodeRestorePlan{}, err
+	}
+	where := "in place"
+	if request.CopyTo != "" {
+		where = fmt.Sprintf("into %q", request.CopyTo)
+	}
+	plan.Summary = []string{fmt.Sprintf("restore %d node(s) %s in %s", len(plan.Observed), where, driveViewLabel(request.TeamFolder))}
+	plan.Warnings = []string{}
+	// Overwriting currently-present content is the only destructive case;
+	// recovering removed nodes is additive.
+	overwrite := true
+	if request.Overwrite != nil {
+		overwrite = *request.Overwrite
+	}
+	if request.CopyTo == "" && overwritePresent && overwrite {
+		plan.Destructive = true
+		plan.Risk = "high"
+		plan.Warnings = append(plan.Warnings, "one or more requested nodes are currently present; restoring in place overwrites their content with the stored version")
+	} else {
+		plan.Risk = "medium"
+	}
+	plan.Hash, err = driveNodeRestorePlanHash(plan)
+	if err != nil {
+		return DriveNodeRestorePlan{}, err
+	}
+	return plan, nil
+}
+
+func driveViewLabel(teamFolder string) string {
+	if teamFolder == "" {
+		return "My Drive"
+	}
+	return fmt.Sprintf("team folder %q", teamFolder)
+}
+
+func validateDriveNodeRestore(request NodeRestoreChange) error {
+	if len(request.Paths) == 0 {
+		return fmt.Errorf("node restore requires at least one path from the files read")
+	}
+	seen := make(map[string]bool, len(request.Paths))
+	for _, path := range request.Paths {
+		if strings.TrimSpace(path) == "" {
+			return fmt.Errorf("node restore paths must not be empty")
+		}
+		if seen[path] {
+			return fmt.Errorf("node restore path %q is listed more than once", path)
+		}
+		seen[path] = true
+	}
+	if request.CopyTo != "" && strings.TrimSpace(request.CopyTo) != request.CopyTo {
+		return fmt.Errorf("copy_to must not carry surrounding whitespace")
+	}
+	return nil
+}
+
+func driveNodeRestorePlanHash(plan DriveNodeRestorePlan) (string, error) {
+	plan.Hash = ""
+	return hashJSON(plan)
+}
+
+const (
+	driveNodeDefaultLimit = 100
+	driveNodeMaxLimit     = 1000
+)
+
+type DriveNodesResult struct {
+	NAS   string             `json:"nas" jsonschema:"NAS profile used for the request"`
+	Nodes synology.DriveNodes `json:"nodes" jsonschema:"Drive view contents, including removed entries unless excluded"`
+}
+
+type DriveNodeVersionsResult struct {
+	NAS      string                     `json:"nas" jsonschema:"NAS profile used for the request"`
+	Versions synology.DriveNodeVersions `json:"versions" jsonschema:"Stored version history for the node"`
+}
+
+func (s *Service) GetDriveNodes(ctx context.Context, requestedNAS string, query synology.DriveNodeQuery) (DriveNodesResult, error) {
+	if query.Limit < 0 || query.Offset < 0 {
+		return DriveNodesResult{}, fmt.Errorf("node paging values cannot be negative")
+	}
+	if query.Limit == 0 {
+		query.Limit = driveNodeDefaultLimit
+	}
+	if query.Limit > driveNodeMaxLimit {
+		return DriveNodesResult{}, fmt.Errorf("node limit %d exceeds the maximum %d", query.Limit, driveNodeMaxLimit)
+	}
+	name, client, err := s.driveAdminClient(ctx, requestedNAS)
+	if err != nil {
+		return DriveNodesResult{}, err
+	}
+	nodes, err := client.DriveNodes(ctx, query)
+	if err != nil {
+		return DriveNodesResult{}, authenticationError(name, err)
+	}
+	return DriveNodesResult{NAS: name, Nodes: nodes}, nil
+}
+
+func (s *Service) GetDriveNodeVersions(ctx context.Context, requestedNAS string, query synology.DriveNodeVersionQuery) (DriveNodeVersionsResult, error) {
+	if strings.TrimSpace(query.Path) == "" {
+		return DriveNodeVersionsResult{}, fmt.Errorf("node versions require the path listed by the files read")
+	}
+	name, client, err := s.driveAdminClient(ctx, requestedNAS)
+	if err != nil {
+		return DriveNodeVersionsResult{}, err
+	}
+	versions, err := client.DriveNodeVersions(ctx, query)
+	if err != nil {
+		return DriveNodeVersionsResult{}, authenticationError(name, err)
+	}
+	return DriveNodeVersionsResult{NAS: name, Versions: versions}, nil
+}
+
+type DrivePrivilegesResult struct {
+	NAS        string                      `json:"nas" jsonschema:"NAS profile used for the request"`
+	Privileges synology.DrivePrivilegeList `json:"privileges" jsonschema:"Accounts allowed to use Drive, with whether Drive has materialized each"`
+}
+
+// GetDrivePrivileges lists the accounts the DSM application privilege allows
+// to use Drive. Live-verified on Drive 4.0.3: the view lists exactly the
+// allowed accounts (denying SYNO.SDS.Drive.Application through the account
+// module removes the account from it), and `enabled` reports whether Drive
+// has materialized the account's user row. Granting or revoking access is
+// therefore an account-module application-privilege change, not a Drive
+// write; Drive's own Privilege.set does not stick while the application
+// privilege still allows the account, so it is deliberately not exposed.
+func (s *Service) GetDrivePrivileges(ctx context.Context, requestedNAS string, query synology.DrivePrivilegeQuery) (DrivePrivilegesResult, error) {
+	if err := validateDrivePrivilegeRealm(&query.Type, query.DomainName); err != nil {
+		return DrivePrivilegesResult{}, err
+	}
+	name, client, err := s.driveAdminClient(ctx, requestedNAS)
+	if err != nil {
+		return DrivePrivilegesResult{}, err
+	}
+	privileges, err := client.DrivePrivileges(ctx, query)
+	if err != nil {
+		return DrivePrivilegesResult{}, authenticationError(name, err)
+	}
+	return DrivePrivilegesResult{NAS: name, Privileges: privileges}, nil
+}
+
+func validateDrivePrivilegeRealm(realm *string, domainName string) error {
+	switch *realm {
+	case "":
+		*realm = "local"
+	case "local", "domain", "ldap":
+	default:
+		return fmt.Errorf("account realm must be local, domain, or ldap")
+	}
+	if *realm == "local" && domainName != "" {
+		return fmt.Errorf("domain_name applies only to the domain or ldap realm")
+	}
+	return nil
+}
+
+const driveConnectionKickAPIVersion = "dsmctl.io/v1alpha1"
+
+type DriveConnectionKickPlan struct {
+	APIVersion          string                      `json:"api_version" jsonschema:"Plan schema version"`
+	NAS                 string                      `json:"nas" jsonschema:"NAS profile selected during planning"`
+	ProfileRevision     uint64                      `json:"profile_revision,omitempty" jsonschema:"Persistent gateway profile revision selected during planning"`
+	Request             driveadmin.ConnectionKick   `json:"request" jsonschema:"Session disconnect intent"`
+	Observed            driveadmin.Connection       `json:"observed" jsonschema:"Connection entry observed during planning"`
+	ObservedFingerprint string                      `json:"observed_fingerprint" jsonschema:"SHA-256 hash of the observed connection entry"`
+	Risk                string                      `json:"risk" jsonschema:"Plan risk level: medium"`
+	Warnings            []string                    `json:"warnings" jsonschema:"Disconnect-impact warnings"`
+	Summary             []string                    `json:"summary" jsonschema:"Human-readable operations the plan will perform"`
+	Hash                string                      `json:"hash" jsonschema:"SHA-256 approval hash covering intent and observed entry"`
+}
+
+type DriveConnectionKickApplyResult struct {
+	NAS      string                                 `json:"nas" jsonschema:"NAS profile used for apply"`
+	PlanHash string                                 `json:"plan_hash" jsonschema:"Approved plan hash"`
+	Applied  bool                                   `json:"applied" jsonschema:"Whether DSM accepted the disconnect and the session left the list"`
+	Result   synology.DriveConnectionMutationResult `json:"result" jsonschema:"Selected DSM mutation backend"`
+}
+
+func (s *Service) PlanDriveConnectionKick(ctx context.Context, requestedNAS string, request driveadmin.ConnectionKick) (DriveConnectionKickPlan, error) {
+	if strings.TrimSpace(request.SessionID) == "" {
+		return DriveConnectionKickPlan{}, fmt.Errorf("connection kick requires the session_id listed by the connections read")
+	}
+	name, client, err := s.driveAdminClient(ctx, requestedNAS)
+	if err != nil {
+		return DriveConnectionKickPlan{}, err
+	}
+	plan, err := planDriveConnectionKickWithClient(ctx, name, client, request)
+	if err != nil {
+		return DriveConnectionKickPlan{}, err
+	}
+	plan.ProfileRevision, err = s.profileRevision(ctx, name)
+	if err == nil {
+		plan.Hash, err = driveConnectionKickPlanHash(plan)
+	}
+	return plan, err
+}
+
+func (s *Service) ApplyDriveConnectionKickPlan(ctx context.Context, plan DriveConnectionKickPlan, approvalHash string) (DriveConnectionKickApplyResult, error) {
+	if strings.TrimSpace(approvalHash) == "" || approvalHash != plan.Hash {
+		return DriveConnectionKickApplyResult{}, fmt.Errorf("approval hash does not match the connection kick plan")
+	}
+	if plan.APIVersion != driveConnectionKickAPIVersion || strings.TrimSpace(plan.NAS) == "" {
+		return DriveConnectionKickApplyResult{}, fmt.Errorf("invalid connection kick plan metadata")
+	}
+	expectedHash, err := driveConnectionKickPlanHash(plan)
+	if err != nil {
+		return DriveConnectionKickApplyResult{}, err
+	}
+	if expectedHash != plan.Hash {
+		return DriveConnectionKickApplyResult{}, fmt.Errorf("connection kick plan contents were modified after planning")
+	}
+	if err := s.authorizeRemoteApply(ctx, plan.NAS, plan.ProfileRevision, plan.Hash, plan.Risk); err != nil {
+		return DriveConnectionKickApplyResult{}, err
+	}
+	if err := s.verifyProfileRevision(ctx, plan.NAS, plan.ProfileRevision); err != nil {
+		return DriveConnectionKickApplyResult{}, err
+	}
+	name, client, err := s.driveAdminClient(ctx, plan.NAS)
+	if err != nil {
+		return DriveConnectionKickApplyResult{}, err
+	}
+	if name != plan.NAS {
+		return DriveConnectionKickApplyResult{}, fmt.Errorf("connection kick plan NAS %q resolved to different profile %q", plan.NAS, name)
+	}
+	return applyDriveConnectionKickPlanWithClient(ctx, client, plan)
+}
+
+func applyDriveConnectionKickPlanWithClient(ctx context.Context, client driveAdminClient, plan DriveConnectionKickPlan) (DriveConnectionKickApplyResult, error) {
+	current, err := planDriveConnectionKickWithClient(ctx, plan.NAS, client, plan.Request)
+	if err != nil {
+		return DriveConnectionKickApplyResult{}, fmt.Errorf("connection kick plan precondition no longer holds: %w", err)
+	}
+	current.ProfileRevision = plan.ProfileRevision
+	current.Hash, err = driveConnectionKickPlanHash(current)
+	if err != nil {
+		return DriveConnectionKickApplyResult{}, err
+	}
+	if current.ObservedFingerprint != plan.ObservedFingerprint || current.Hash != plan.Hash {
+		return DriveConnectionKickApplyResult{}, fmt.Errorf("connection kick plan is stale; create a new plan")
+	}
+	result, err := client.ApplyDriveConnectionKick(ctx, plan.Request)
+	if err != nil {
+		return DriveConnectionKickApplyResult{}, authenticationError(plan.NAS, err)
+	}
+	// The delete answers an empty success, so the re-read is the authority.
+	for attempt := 0; attempt < driveTeamFolderVerifyAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return DriveConnectionKickApplyResult{}, ctx.Err()
+			case <-time.After(driveTeamFolderVerifyDelay):
+			}
+		}
+		connections, err := client.DriveAdminConnections(ctx)
+		if err != nil {
+			return DriveConnectionKickApplyResult{}, fmt.Errorf("verify connection kick: %w", err)
+		}
+		if _, found := findDriveConnection(connections, plan.Request.SessionID); !found {
+			return DriveConnectionKickApplyResult{NAS: plan.NAS, PlanHash: plan.Hash, Applied: true, Result: result}, nil
+		}
+	}
+	return DriveConnectionKickApplyResult{}, fmt.Errorf("Drive did not confirm the disconnect (the session is still listed); re-check with the connections read")
+}
+
+func planDriveConnectionKickWithClient(ctx context.Context, nas string, client driveAdminClient, request driveadmin.ConnectionKick) (DriveConnectionKickPlan, error) {
+	capabilities, _, err := client.DriveAdminCapabilities(ctx)
+	if err != nil {
+		return DriveConnectionKickPlan{}, authenticationError(nas, err)
+	}
+	if !capabilities.ConnectionsRead {
+		return DriveConnectionKickPlan{}, fmt.Errorf("NAS %q does not expose a verified Drive connection read backend", nas)
+	}
+	if !capabilities.ConnectionsKick {
+		return DriveConnectionKickPlan{}, fmt.Errorf("NAS %q does not expose a verified Drive connection kick backend", nas)
+	}
+	connections, err := client.DriveAdminConnections(ctx)
+	if err != nil {
+		return DriveConnectionKickPlan{}, authenticationError(nas, err)
+	}
+	observed, found := findDriveConnection(connections, request.SessionID)
+	if !found {
+		return DriveConnectionKickPlan{}, fmt.Errorf("session %q is not in the Drive connection list; list sessions with the connections read first", request.SessionID)
+	}
+	plan := DriveConnectionKickPlan{APIVersion: driveConnectionKickAPIVersion, NAS: nas, Request: request, Observed: observed}
+	plan.ObservedFingerprint, err = hashJSON(plan.Observed)
+	if err != nil {
+		return DriveConnectionKickPlan{}, err
+	}
+	plan.Risk = "medium"
+	plan.Summary = []string{fmt.Sprintf("disconnect Drive session %s (%s, %s, %s)",
+		request.SessionID, valueOrNone(observed.DeviceName), valueOrNone(observed.ClientType), valueOrNone(observed.Address))}
+	plan.Warnings = []string{"the client loses its session and must authenticate again to resume syncing; files already synced stay on the device"}
+	plan.Hash, err = driveConnectionKickPlanHash(plan)
+	if err != nil {
+		return DriveConnectionKickPlan{}, err
+	}
+	return plan, nil
+}
+
+func driveConnectionKickPlanHash(plan DriveConnectionKickPlan) (string, error) {
+	plan.Hash = ""
+	return hashJSON(plan)
+}
+
+func findDriveConnection(connections synology.DriveAdminConnections, sessionID string) (driveadmin.Connection, bool) {
+	for _, connection := range connections.Connections {
+		if connection.SessionID == sessionID {
+			return connection, true
+		}
+	}
+	return driveadmin.Connection{}, false
+}
+
+type DriveConnectionSummaryResult struct {
+	NAS     string                          `json:"nas" jsonschema:"NAS profile used for the request"`
+	Summary synology.DriveConnectionSummary `json:"summary" jsonschema:"Active connection counts by client family"`
+}
+
+type DriveDBUsageResult struct {
+	NAS   string               `json:"nas" jsonschema:"NAS profile used for the request"`
+	Usage synology.DriveDBUsage `json:"usage" jsonschema:"Cached Drive database usage in bytes"`
+}
+
+type DriveTopAccessFilesResult struct {
+	NAS   string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	Files synology.DriveTopAccessFiles  `json:"files" jsonschema:"Top accessed files, most accessed first"`
+	Query synology.DriveTopAccessQuery  `json:"query" jsonschema:"Ranking query after defaults were applied"`
+}
+
+type DriveActivationResult struct {
+	NAS        string                   `json:"nas" jsonschema:"NAS profile used for the request"`
+	Activation synology.DriveActivation `json:"activation" jsonschema:"Drive package activation state"`
+}
+
+func (s *Service) GetDriveConnectionSummary(ctx context.Context, requestedNAS string) (DriveConnectionSummaryResult, error) {
+	name, client, err := s.driveAdminClient(ctx, requestedNAS)
+	if err != nil {
+		return DriveConnectionSummaryResult{}, err
+	}
+	summary, err := client.DriveConnectionSummary(ctx)
+	if err != nil {
+		return DriveConnectionSummaryResult{}, authenticationError(name, err)
+	}
+	return DriveConnectionSummaryResult{NAS: name, Summary: summary}, nil
+}
+
+func (s *Service) GetDriveDBUsage(ctx context.Context, requestedNAS string) (DriveDBUsageResult, error) {
+	name, client, err := s.driveAdminClient(ctx, requestedNAS)
+	if err != nil {
+		return DriveDBUsageResult{}, err
+	}
+	usage, err := client.DriveDBUsage(ctx)
+	if err != nil {
+		return DriveDBUsageResult{}, authenticationError(name, err)
+	}
+	return DriveDBUsageResult{NAS: name, Usage: usage}, nil
+}
+
+const (
+	driveTopAccessDefaultLimit = 50
+	driveTopAccessMaxLimit     = 1000
+	driveTopAccessDefaultDays  = 1
+)
+
+func (s *Service) GetDriveTopAccessFiles(ctx context.Context, requestedNAS string, query synology.DriveTopAccessQuery) (DriveTopAccessFilesResult, error) {
+	if err := validateDriveTopAccessQuery(&query); err != nil {
+		return DriveTopAccessFilesResult{}, err
+	}
+	name, client, err := s.driveAdminClient(ctx, requestedNAS)
+	if err != nil {
+		return DriveTopAccessFilesResult{}, err
+	}
+	files, err := client.DriveTopAccessFiles(ctx, query)
+	if err != nil {
+		return DriveTopAccessFilesResult{}, authenticationError(name, err)
+	}
+	return DriveTopAccessFilesResult{NAS: name, Files: files, Query: query}, nil
+}
+
+func validateDriveTopAccessQuery(query *synology.DriveTopAccessQuery) error {
+	switch query.RankingBy {
+	case "":
+		query.RankingBy = "both"
+	case "both", "preview", "download":
+	default:
+		return fmt.Errorf("ranking_by must be both, preview, or download")
+	}
+	if query.PeriodDays < 0 || query.Limit < 0 || query.Offset < 0 {
+		return fmt.Errorf("top-access query values cannot be negative")
+	}
+	if query.PeriodDays == 0 {
+		query.PeriodDays = driveTopAccessDefaultDays
+	}
+	if query.Limit == 0 {
+		query.Limit = driveTopAccessDefaultLimit
+	}
+	if query.Limit > driveTopAccessMaxLimit {
+		return fmt.Errorf("top-access limit %d exceeds the maximum %d", query.Limit, driveTopAccessMaxLimit)
+	}
+	return nil
+}
+
+func (s *Service) GetDriveActivation(ctx context.Context, requestedNAS string) (DriveActivationResult, error) {
+	name, client, err := s.driveAdminClient(ctx, requestedNAS)
+	if err != nil {
+		return DriveActivationResult{}, err
+	}
+	activation, err := client.DriveActivation(ctx)
+	if err != nil {
+		return DriveActivationResult{}, authenticationError(name, err)
+	}
+	return DriveActivationResult{NAS: name, Activation: activation}, nil
 }
 
 func (s *Service) GetDriveAdminCapabilities(ctx context.Context, requestedNAS string) (DriveAdminCapabilitiesResult, error) {
@@ -114,6 +746,31 @@ func (s *Service) GetDriveAdminLog(ctx context.Context, requestedNAS string, que
 		return DriveAdminLogResult{}, authenticationError(name, err)
 	}
 	return DriveAdminLogResult{NAS: name, Log: log}, nil
+}
+
+// DriveLogExportResult carries the exported CSV bytes and its size.
+type DriveLogExportResult struct {
+	NAS   string `json:"nas" jsonschema:"NAS profile used for the request"`
+	CSV   []byte `json:"csv" jsonschema:"Exported Drive server log as CSV bytes"`
+	Bytes int    `json:"bytes" jsonschema:"Size of the exported CSV in bytes"`
+}
+
+func (s *Service) ExportDriveLog(ctx context.Context, requestedNAS string, query synology.DriveLogExportQuery) (DriveLogExportResult, error) {
+	if query.From < 0 || query.To < 0 {
+		return DriveLogExportResult{}, fmt.Errorf("log time bounds must be Unix seconds at or after 0")
+	}
+	if query.From > 0 && query.To > 0 && query.To < query.From {
+		return DriveLogExportResult{}, fmt.Errorf("log time upper bound is before the lower bound")
+	}
+	name, client, err := s.driveAdminClient(ctx, requestedNAS)
+	if err != nil {
+		return DriveLogExportResult{}, err
+	}
+	csv, err := client.DriveLogExport(ctx, query)
+	if err != nil {
+		return DriveLogExportResult{}, authenticationError(name, err)
+	}
+	return DriveLogExportResult{NAS: name, CSV: csv, Bytes: len(csv)}, nil
 }
 
 func validateDriveAdminLogQuery(query *driveadmin.LogQuery) error {
@@ -581,6 +1238,12 @@ func planDriveTeamFolderChangeWithClient(ctx context.Context, nas string, client
 	} else {
 		plan.Risk = "medium"
 	}
+	// The home entry's versioning fans out to every user's My Drive, so the
+	// change is always high risk regardless of direction.
+	if strings.HasPrefix(request.Name, "homes") {
+		plan.Risk = "high"
+		plan.Warnings = append(plan.Warnings, "this changes the My Drive versioning of every user home on the NAS")
+	}
 	plan.Hash, err = driveTeamFolderPlanHash(plan)
 	if err != nil {
 		return DriveTeamFolderPlan{}, err
@@ -646,8 +1309,8 @@ func validateDriveTeamFolderChange(change driveadmin.TeamFolderChange) error {
 	if name != change.Name {
 		return fmt.Errorf("team-folder name must not carry surrounding whitespace")
 	}
-	if strings.HasPrefix(name, "homes") {
-		return fmt.Errorf("the Drive home entry %q is managed by the DSM home service and is out of scope for a team-folder change", name)
+	if strings.HasPrefix(name, "homes") && change.Action != driveadmin.TeamFolderActionSetVersioning {
+		return fmt.Errorf("the Drive home entry %q follows the DSM home service and cannot be enabled or disabled as a team folder; only set_versioning applies", name)
 	}
 	if name == "surveillance" {
 		return fmt.Errorf("Drive ignores the surveillance share; it cannot be managed as a team folder")

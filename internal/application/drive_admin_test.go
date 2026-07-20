@@ -13,9 +13,12 @@ import (
 // mutation is staged as pending and takes effect on a later team-folder read,
 // so postcondition polling and DSM's silent-skip behavior are testable.
 type fakeDriveAdminClient struct {
-	caps      synology.DriveAdminCapabilities
-	folders   []driveadmin.TeamFolder
-	mutations int
+	caps        synology.DriveAdminCapabilities
+	folders     []driveadmin.TeamFolder
+	connections []driveadmin.Connection
+	privileges  []driveadmin.PrivilegedUser
+	nodes       []driveadmin.Node
+	mutations   int
 	// silentSkip mimics the Share.set handler ignoring an ineligible share:
 	// the call succeeds but nothing changes.
 	silentSkip bool
@@ -28,12 +31,12 @@ func (c *fakeDriveAdminClient) DriveAdminStatus(context.Context) (synology.Drive
 	return synology.DriveAdminStatus{}, nil
 }
 
-func (c *fakeDriveAdminClient) DriveAdminConnections(context.Context) (synology.DriveAdminConnections, error) {
-	return synology.DriveAdminConnections{}, nil
-}
-
 func (c *fakeDriveAdminClient) DriveAdminLog(context.Context, synology.DriveAdminLogQuery) (synology.DriveAdminLog, error) {
 	return synology.DriveAdminLog{}, nil
+}
+
+func (c *fakeDriveAdminClient) DriveLogExport(context.Context, synology.DriveLogExportQuery) ([]byte, error) {
+	return []byte("time,user,event\n"), nil
 }
 
 func (c *fakeDriveAdminClient) DriveAdminCapabilities(context.Context) (synology.DriveAdminCapabilities, synology.CompatibilityReport, error) {
@@ -42,6 +45,65 @@ func (c *fakeDriveAdminClient) DriveAdminCapabilities(context.Context) (synology
 
 func (c *fakeDriveAdminClient) DriveServerConfig(context.Context) (synology.DriveServerConfig, error) {
 	return synology.DriveServerConfig{}, nil
+}
+
+func (c *fakeDriveAdminClient) DriveConnectionSummary(context.Context) (synology.DriveConnectionSummary, error) {
+	return synology.DriveConnectionSummary{}, nil
+}
+
+func (c *fakeDriveAdminClient) DriveDBUsage(context.Context) (synology.DriveDBUsage, error) {
+	return synology.DriveDBUsage{}, nil
+}
+
+func (c *fakeDriveAdminClient) DriveTopAccessFiles(context.Context, synology.DriveTopAccessQuery) (synology.DriveTopAccessFiles, error) {
+	return synology.DriveTopAccessFiles{}, nil
+}
+
+func (c *fakeDriveAdminClient) DriveActivation(context.Context) (synology.DriveActivation, error) {
+	return synology.DriveActivation{}, nil
+}
+
+func (c *fakeDriveAdminClient) DriveAdminConnections(_ context.Context) (synology.DriveAdminConnections, error) {
+	return synology.DriveAdminConnections{Total: len(c.connections), Connections: append([]driveadmin.Connection(nil), c.connections...)}, nil
+}
+
+func (c *fakeDriveAdminClient) DriveNodes(context.Context, synology.DriveNodeQuery) (synology.DriveNodes, error) {
+	return synology.DriveNodes{Total: len(c.nodes), Items: append([]driveadmin.Node(nil), c.nodes...)}, nil
+}
+
+func (c *fakeDriveAdminClient) DriveNodeVersions(context.Context, synology.DriveNodeVersionQuery) (synology.DriveNodeVersions, error) {
+	return synology.DriveNodeVersions{}, nil
+}
+
+func (c *fakeDriveAdminClient) ApplyDriveNodeRestore(_ context.Context, request synology.DriveNodeRestoreRequest) (synology.DriveNodeRestoreResult, error) {
+	c.mutations++
+	if !c.silentSkip && request.CopyTo == "" {
+		for index := range c.nodes {
+			for _, node := range request.Nodes {
+				if c.nodes[index].Path == node.Path {
+					c.nodes[index].IsRemoved = false
+				}
+			}
+		}
+	}
+	return synology.DriveNodeRestoreResult{Backend: "fake", API: "fake", Version: 1, Restored: len(request.Nodes)}, nil
+}
+
+func (c *fakeDriveAdminClient) DrivePrivileges(context.Context, synology.DrivePrivilegeQuery) (synology.DrivePrivilegeList, error) {
+	return synology.DrivePrivilegeList{Total: len(c.privileges), Users: append([]driveadmin.PrivilegedUser(nil), c.privileges...)}, nil
+}
+
+func (c *fakeDriveAdminClient) ApplyDriveConnectionKick(_ context.Context, kick driveadmin.ConnectionKick) (synology.DriveConnectionMutationResult, error) {
+	c.mutations++
+	if !c.silentSkip {
+		for index, connection := range c.connections {
+			if connection.SessionID == kick.SessionID {
+				c.connections = append(c.connections[:index], c.connections[index+1:]...)
+				break
+			}
+		}
+	}
+	return synology.DriveConnectionMutationResult{Backend: "fake", API: "fake", Version: 2, Method: "delete"}, nil
 }
 
 func (c *fakeDriveAdminClient) ApplyDriveServerConfigChange(context.Context, driveadmin.ServerConfigChange) (synology.DriveConfigMutationResult, error) {
@@ -286,6 +348,183 @@ func TestDriveTeamFolderApplyRejectsStalePlan(t *testing.T) {
 	}
 }
 
+func TestDriveHomeVersioningIsAllowedAndAlwaysHighRisk(t *testing.T) {
+	withoutTeamFolderVerifyDelay(t)
+	client := driveTeamFolderTestClient()
+	eight, zero := 8, 0
+	client.folders = append(client.folders, driveadmin.TeamFolder{
+		Name: "homes/mydrive_home", Enabled: true, Status: "normal",
+		MaxVersions: &eight, VersionPolicy: "fifo", RetentionDays: &zero,
+	})
+
+	// Raising the kept versions is non-destructive but still high risk on the
+	// home entry because it fans out to every user home.
+	change := driveadmin.TeamFolderChange{Action: driveadmin.TeamFolderActionSetVersioning, Name: "homes/mydrive_home", MaxVersions: intPtr(10)}
+	if err := validateDriveTeamFolderChange(change); err != nil {
+		t.Fatalf("home set_versioning must validate: %v", err)
+	}
+	plan, err := planDriveTeamFolderChangeWithClient(context.Background(), "lab", client, change)
+	if err != nil {
+		t.Fatalf("plan error = %v", err)
+	}
+	if plan.Risk != "high" || plan.Destructive {
+		t.Fatalf("home versioning plan = %#v", plan)
+	}
+	found := false
+	for _, warning := range plan.Warnings {
+		if strings.Contains(warning, "every user home") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("home warnings = %#v", plan.Warnings)
+	}
+	result, err := applyDriveTeamFolderPlanWithClient(context.Background(), client, plan)
+	if err != nil || *result.TeamFolder.MaxVersions != 10 {
+		t.Fatalf("apply result = %#v err = %v", result, err)
+	}
+}
+
+func TestDriveConnectionKickPlanApply(t *testing.T) {
+	withoutTeamFolderVerifyDelay(t)
+	client := driveTeamFolderTestClient()
+	client.caps.ConnectionsRead = true
+	client.caps.ConnectionsKick = true
+	client.connections = []driveadmin.Connection{
+		{SessionID: "sess-1", DeviceName: "ALICE-NB", ClientType: "synology drive client", Address: "10.0.0.5"},
+		{SessionID: "sess-2", DeviceName: "BOB-NB", ClientType: "synology drive client", Address: "10.0.0.9"},
+	}
+	request := driveadmin.ConnectionKick{SessionID: "sess-2"}
+	plan, err := planDriveConnectionKickWithClient(context.Background(), "lab", client, request)
+	if err != nil {
+		t.Fatalf("planDriveConnectionKickWithClient() error = %v", err)
+	}
+	if plan.Risk != "medium" || plan.Observed.SessionID != "sess-2" || plan.Hash == "" {
+		t.Fatalf("plan = %#v", plan)
+	}
+
+	// A session that reconnected from another address invalidates the plan.
+	stale := driveTeamFolderTestClient()
+	stale.caps.ConnectionsRead = true
+	stale.caps.ConnectionsKick = true
+	stale.connections = []driveadmin.Connection{{SessionID: "sess-2", DeviceName: "BOB-NB", Address: "10.0.0.77"}}
+	if _, err := applyDriveConnectionKickPlanWithClient(context.Background(), stale, plan); err == nil || !strings.Contains(err.Error(), "stale") {
+		t.Fatalf("stale apply error = %v", err)
+	}
+	if stale.mutations != 0 {
+		t.Fatal("stale plan reached mutation")
+	}
+
+	result, err := applyDriveConnectionKickPlanWithClient(context.Background(), client, plan)
+	if err != nil {
+		t.Fatalf("applyDriveConnectionKickPlanWithClient() error = %v", err)
+	}
+	if !result.Applied || client.mutations != 1 || len(client.connections) != 1 || client.connections[0].SessionID != "sess-1" {
+		t.Fatalf("result = %#v connections = %#v", result, client.connections)
+	}
+
+	// A vanished session is a plan-time error, not a mutation.
+	if _, err := planDriveConnectionKickWithClient(context.Background(), "lab", client, request); err == nil || !strings.Contains(err.Error(), "not in the Drive connection list") {
+		t.Fatalf("missing session error = %v", err)
+	}
+
+	// A kick DSM silently ignored surfaces as not confirmed.
+	client.connections = append(client.connections, driveadmin.Connection{SessionID: "sess-3"})
+	skipPlan, err := planDriveConnectionKickWithClient(context.Background(), "lab", client, driveadmin.ConnectionKick{SessionID: "sess-3"})
+	if err != nil {
+		t.Fatalf("plan error = %v", err)
+	}
+	client.silentSkip = true
+	if _, err := applyDriveConnectionKickPlanWithClient(context.Background(), client, skipPlan); err == nil || !strings.Contains(err.Error(), "did not confirm") {
+		t.Fatalf("silent skip error = %v", err)
+	}
+}
+
+func TestDriveNodeRestorePlanApply(t *testing.T) {
+	client := driveTeamFolderTestClient()
+	client.caps.NodesRead = true
+	client.caps.NodeRestore = true
+	client.nodes = []driveadmin.Node{
+		{Name: "gone.txt", Path: "/gone.txt", NodeID: "5", SyncID: "10", IsRemoved: true},
+		{Name: "live.txt", Path: "/live.txt", NodeID: "6", SyncID: "11", IsRemoved: false},
+	}
+
+	// Restoring a removed node is additive → medium risk.
+	plan, err := planDriveNodeRestoreWithClient(context.Background(), "lab", client, NodeRestoreChange{Paths: []string{"/gone.txt"}})
+	if err != nil {
+		t.Fatalf("plan error = %v", err)
+	}
+	if plan.Risk != "medium" || plan.Destructive || len(plan.Observed) != 1 || plan.Observed[0].NodeID != "5" {
+		t.Fatalf("plan = %#v", plan)
+	}
+	result, err := applyDriveNodeRestorePlanWithClient(context.Background(), client, plan)
+	if err != nil {
+		t.Fatalf("apply error = %v", err)
+	}
+	if !result.Applied || result.Result.Restored != 1 || len(result.Restored) != 1 || result.Restored[0].IsRemoved {
+		t.Fatalf("result = %#v", result)
+	}
+
+	// Restoring in place over a present file → high risk.
+	over := driveTeamFolderTestClient()
+	over.caps.NodesRead = true
+	over.caps.NodeRestore = true
+	over.nodes = []driveadmin.Node{{Name: "live.txt", Path: "/live.txt", NodeID: "6", SyncID: "11", IsRemoved: false}}
+	overPlan, err := planDriveNodeRestoreWithClient(context.Background(), "lab", over, NodeRestoreChange{Paths: []string{"/live.txt"}})
+	if err != nil {
+		t.Fatalf("overwrite plan error = %v", err)
+	}
+	if overPlan.Risk != "high" || !overPlan.Destructive {
+		t.Fatalf("overwrite plan = %#v", overPlan)
+	}
+
+	// An unknown path is rejected during planning.
+	if _, err := planDriveNodeRestoreWithClient(context.Background(), "lab", client, NodeRestoreChange{Paths: []string{"/ghost"}}); err == nil || !strings.Contains(err.Error(), "not in the Drive view") {
+		t.Fatalf("unknown path error = %v", err)
+	}
+
+	// A restore Drive silently ignored surfaces as not confirmed.
+	skip := driveTeamFolderTestClient()
+	skip.caps.NodesRead = true
+	skip.caps.NodeRestore = true
+	skip.nodes = []driveadmin.Node{{Name: "gone.txt", Path: "/gone.txt", NodeID: "5", SyncID: "10", IsRemoved: true}}
+	skipPlan, err := planDriveNodeRestoreWithClient(context.Background(), "lab", skip, NodeRestoreChange{Paths: []string{"/gone.txt"}})
+	if err != nil {
+		t.Fatalf("skip plan error = %v", err)
+	}
+	skip.silentSkip = true
+	if _, err := applyDriveNodeRestorePlanWithClient(context.Background(), skip, skipPlan); err == nil || !strings.Contains(err.Error(), "still removed") {
+		t.Fatalf("silent skip error = %v", err)
+	}
+}
+
+func TestExportDriveLogValidatesTimeBounds(t *testing.T) {
+	s := &Service{}
+	if _, err := s.ExportDriveLog(context.Background(), "lab", synology.DriveLogExportQuery{From: -1}); err == nil || !strings.Contains(err.Error(), "Unix seconds") {
+		t.Fatalf("negative from error = %v", err)
+	}
+	if _, err := s.ExportDriveLog(context.Background(), "lab", synology.DriveLogExportQuery{From: 200, To: 100}); err == nil || !strings.Contains(err.Error(), "before the lower bound") {
+		t.Fatalf("inverted range error = %v", err)
+	}
+}
+
+func TestValidateDriveNodeRestoreRejectsBadIntents(t *testing.T) {
+	cases := []struct {
+		name    string
+		request NodeRestoreChange
+		want    string
+	}{
+		{"no paths", NodeRestoreChange{}, "at least one path"},
+		{"empty path", NodeRestoreChange{Paths: []string{" "}}, "must not be empty"},
+		{"duplicate path", NodeRestoreChange{Paths: []string{"/a", "/a"}}, "more than once"},
+	}
+	for _, test := range cases {
+		if err := validateDriveNodeRestore(test.request); err == nil || !strings.Contains(err.Error(), test.want) {
+			t.Fatalf("%s: error = %v, want %q", test.name, err, test.want)
+		}
+	}
+}
+
 func TestValidateDriveTeamFolderChangeRejectsUnsafeIntents(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -293,7 +532,8 @@ func TestValidateDriveTeamFolderChangeRejectsUnsafeIntents(t *testing.T) {
 		want   string
 	}{
 		{"missing name", driveadmin.TeamFolderChange{Action: driveadmin.TeamFolderActionDisable}, "requires the shared-folder name"},
-		{"home entry", driveadmin.TeamFolderChange{Action: driveadmin.TeamFolderActionEnable, Name: "homes/mydrive_home", MaxVersions: intPtr(8), VersionPolicy: "fifo"}, "home service"},
+		{"home enable", driveadmin.TeamFolderChange{Action: driveadmin.TeamFolderActionEnable, Name: "homes/mydrive_home", MaxVersions: intPtr(8), VersionPolicy: "fifo"}, "cannot be enabled or disabled"},
+		{"home disable", driveadmin.TeamFolderChange{Action: driveadmin.TeamFolderActionDisable, Name: "homes/mydrive_home"}, "cannot be enabled or disabled"},
 		{"surveillance", driveadmin.TeamFolderChange{Action: driveadmin.TeamFolderActionSetVersioning, Name: "surveillance", MaxVersions: intPtr(8)}, "surveillance"},
 		{"unknown action", driveadmin.TeamFolderChange{Action: "toggle", Name: "projects"}, "action must be"},
 		{"enable without versions", driveadmin.TeamFolderChange{Action: driveadmin.TeamFolderActionEnable, Name: "projects"}, "requires max_versions"},

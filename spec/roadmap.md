@@ -52,6 +52,13 @@ flowchart LR
   WI031 -. "plan/apply + package gating pattern" .-> WI050
   WI022 --> WI051["WI-051 Synology Office settings"]
   WI051 --> WI052["WI-052 Office font management write"]
+  WI022 --> WI053["WI-053 Drive observability reads"]
+  WI053 --> WI054["WI-054 Drive connection kick"]
+  WI053 --> WI055["WI-055 Drive user-privilege view"]
+  WI050 --> WI056["WI-056 My Drive home versioning"]
+  WI022 --> WI057["WI-057 Drive node views"]
+  WI057 --> WI058["WI-058 Drive node restore"]
+  WI022 --> WI059["WI-059 Drive log export"]
   WI023["WI-023 LAN device discovery"]
 ```
 
@@ -108,6 +115,13 @@ flowchart LR
 | [WI-047](work-items/WI-047-admin-ui-workflow-redesign.md) | P1 | `done` | G | WI-045, WI-046 | Redesign authenticated pages around resource lists, state-aware actions, and guided workflows. |
 | [WI-048](work-items/WI-048-mcp-oauth-url-login.md) | P0 | `done` | G | WI-045 | Add standards-based MCP OAuth URL login while retaining manual client tokens. |
 | [WI-050](work-items/WI-050-drive-team-folder-write.md) | P1 | `done` | C | WI-022, WI-031 | Guarded Drive team-folder enable/disable and versioning via `SYNO.SynologyDrive.Share` set, replacing the WI-022 fail-closed stub; CLI + MCP. |
+| [WI-059](work-items/WI-059-drive-log-export.md) | P3 | `done` | C | WI-022 | Drive log export to CSV (Log.export file response via a raw file POST transport), CLI + MCP (excluded from the read-only gateway); live-verified; Log.delete stays deferred. |
+| [WI-058](work-items/WI-058-drive-node-restore.md) | P2 | `done` | C | WI-057 | Guarded Drive node restore of removed nodes (async Restore start/status/finish task), completing the rescue story; CLI + MCP, live-verified end-to-end (upload → delete → restore) and reverted. |
+| [WI-057](work-items/WI-057-drive-node-views.md) | P2 | `done` | C | WI-022, WI-050 | Drive rescue-view reads: browse team folders/My Drive including removed entries, and per-node version history; CLI + MCP, live-verified. Node.Restore write deferred as its own item. |
+| [WI-056](work-items/WI-056-drive-home-versioning.md) | P3 | `done` | C | WI-050 | My Drive home versioning via the team-folder write (set_versioning only), always high risk with a fan-out warning; live-verified 8→10→8. |
+| [WI-055](work-items/WI-055-drive-user-privilege-view.md) | P2 | `done` | C | WI-022, WI-053 | Drive user-privilege view read; live-verified that Drive access control is the account module's application privilege (Privilege.set deliberately not exposed). |
+| [WI-054](work-items/WI-054-drive-connection-kick.md) | P2 | `done` | C | WI-022, WI-053 | Guarded Drive client-session disconnect (Connection.delete v2) plus source-true connection fields incl. session id; CLI + MCP. |
+| [WI-053](work-items/WI-053-drive-observability-reads.md) | P2 | `done` | C | WI-022 | Drive Admin observability reads: connection summary, cached DB usage, top accessed files, and package activation state; CLI + MCP, live-verified. |
 | [WI-051](work-items/WI-051-office-admin.md) | P2 | `done` | C | WI-019, WI-022 | Synology Office settings module: info/system-setting/preferences/fonts reads + guarded system and preference writes (package-gated on `Spreadsheet`), CLI + MCP, live-verified; font mutations and per-object settings deferred. |
 | [WI-052](work-items/WI-052-office-font-management.md) | P2 | `done` | C | WI-051 | Guarded Office custom-font name-registry management (add/enable/disable/delete) as a third Office change scope; custom/enabled font read fields; TTF upload deferred. |
 | [WI-049](work-items/WI-049-file-station.md) | P1 | `done` | C | WI-006 | Full read/write FileStation module (core SYNO.FileStation.*), shipped + live-verified end-to-end on DSM 7.3: reads (list/stat/search/dir-size/md5/virtual-folders/permission-check), streaming download+upload binary transport, and the mutation surface (create/rename/copy/move/delete/compress/extract/upload + sharing links) via hash-bound plan/apply, plus favorites and background-task list — across CLI (`file …`) and MCP (114 tools; read-only gateway strips writes + content transfer). Follow-ons shipped + live-verified: Sharing edit/clear_invalid, image Thumb.get (streaming binary read, gateway-stripped), and BackgroundTask.clear_finished; transfer errors now redact _sid/SynoToken. |
