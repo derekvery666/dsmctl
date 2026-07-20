@@ -1,5 +1,9 @@
 # Drive Admin
 
+Setting up Drive from scratch? Follow the end-to-end
+[Drive setup playbook](drive-playbook.md); this page documents the module
+itself.
+
 The Drive Admin module manages functionality provided by the **Synology Drive
 Server package** (`SynologyDrive`), not by DSM itself. It is the first consumer
 of dsmctl's package-scoped operation selection: Drive's WebAPI behavior follows
