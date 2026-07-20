@@ -132,7 +132,7 @@ func newNASRemoveCommand(opts *options) *cobra.Command {
 			// session, and after Save the profile is gone from disk.
 			var service *application.Service
 			if !keepCredentials {
-				service, err = loadService(opts.configPath)
+				service, err = loadService(opts)
 				if err != nil {
 					return err
 				}

@@ -31,7 +31,7 @@ func newTFTPServiceCapabilitiesCommand(opts *options) *cobra.Command {
 		Short: "Show whether TFTP can be read and changed",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -65,7 +65,7 @@ func newTFTPServiceStateCommand(opts *options) *cobra.Command {
 		Short: "Show TFTP service, root folder, permission, logging, and timeout",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -111,7 +111,7 @@ func newTFTPServicePlanCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
 				return fmt.Errorf("read TFTP service change: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -139,7 +139,7 @@ func newTFTPServiceApplyCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
 				return fmt.Errorf("read TFTP service plan: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}

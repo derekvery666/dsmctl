@@ -51,7 +51,7 @@ func newSMBStateCommand(opts *options) *cobra.Command {
 		Short: "Show normalized SMB service and protocol settings",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -77,7 +77,7 @@ func newNFSStateCommand(opts *options) *cobra.Command {
 		Short: "Show normalized NFS service, protocol, and NFSv4 domain settings",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -103,7 +103,7 @@ func newFileServicesCapabilitiesCommand(opts *options) *cobra.Command {
 		Short: "Show SMB/NFS support and selected DSM backends",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -135,7 +135,7 @@ func newFileServicesPlanCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
 				return fmt.Errorf("read File Services change: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -163,7 +163,7 @@ func newFileServicesApplyCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
 				return fmt.Errorf("read File Services plan: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}

@@ -81,7 +81,7 @@ func newAuthStatusCommand(opts *options) *cobra.Command {
 			"offline: it never reveals secrets and never contacts a NAS.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -113,7 +113,7 @@ func newAuthLogoutCommand(opts *options) *cobra.Command {
 			"'dsmctl auth login'.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}

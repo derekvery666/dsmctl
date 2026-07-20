@@ -43,7 +43,7 @@ func newDriveConfigStateCommand(opts *options) *cobra.Command {
 		Short: "Show the Drive server database configuration",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -80,7 +80,7 @@ func newDriveConfigPlanCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
 				return fmt.Errorf("read Drive config change: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -108,7 +108,7 @@ func newDriveConfigApplyCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
 				return fmt.Errorf("read Drive config plan: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -169,7 +169,7 @@ func newDriveAdminRestorePlanCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
 				return fmt.Errorf("read node restore request: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -197,7 +197,7 @@ func newDriveAdminRestoreApplyCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
 				return fmt.Errorf("read node restore plan: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -224,7 +224,7 @@ func newDriveAdminFilesCommand(opts *options) *cobra.Command {
 		Short: "Browse a Drive view (My Drive or a team folder), including removed entries",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -276,7 +276,7 @@ func newDriveAdminFileVersionsCommand(opts *options) *cobra.Command {
 		Short: "List a node's stored version history",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -320,7 +320,7 @@ func newDriveAdminUsersCommand(opts *options) *cobra.Command {
 		Short: "List accounts allowed to use Drive (grant or revoke via the account module's application privilege)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -359,7 +359,7 @@ func newDriveAdminSummaryCommand(opts *options) *cobra.Command {
 		Short: "Show active Drive connection counts by client family",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -391,7 +391,7 @@ func newDriveAdminDBUsageCommand(opts *options) *cobra.Command {
 		Short: "Show Drive's cached database usage breakdown",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -425,7 +425,7 @@ func newDriveAdminTopFilesCommand(opts *options) *cobra.Command {
 		Short: "Show the most accessed files ranked from Drive's access log",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -467,7 +467,7 @@ func newDriveAdminActivationCommand(opts *options) *cobra.Command {
 		Short: "Show the Drive package activation state",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -498,7 +498,7 @@ func newDriveAdminCapabilitiesCommand(opts *options) *cobra.Command {
 		Short: "Show Drive Admin operation support, selected backends, and the installed package version",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -524,7 +524,7 @@ func newDriveAdminStatusCommand(opts *options) *cobra.Command {
 		Short: "Show the Drive service status and installed package evidence",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -550,7 +550,7 @@ func newDriveAdminConnectionsCommand(opts *options) *cobra.Command {
 		Short: "List active Drive client connections and disconnect them through plan/apply",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -577,7 +577,7 @@ func newDriveAdminConnectionsKickCommand(opts *options) *cobra.Command {
 		Short: "Validate a session disconnect and emit an approval plan",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -606,7 +606,7 @@ func newDriveAdminConnectionsApplyCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
 				return fmt.Errorf("read connection kick plan: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -631,7 +631,7 @@ func newDriveAdminTeamFoldersCommand(opts *options) *cobra.Command {
 		Short: "List Drive team folders and manage them through plan/apply",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -665,7 +665,7 @@ func newDriveAdminTeamFoldersPlanCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
 				return fmt.Errorf("read team-folder change: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -693,7 +693,7 @@ func newDriveAdminTeamFoldersApplyCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
 				return fmt.Errorf("read team-folder plan: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -735,7 +735,7 @@ func newDriveAdminLogExportCommand(opts *options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -783,7 +783,7 @@ func newDriveAdminLogListCommand(opts *options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}

@@ -37,7 +37,7 @@ func newPackageInstallCommand(opts *options) *cobra.Command {
 		Short: "Install a package from the online server (plan by default; --approve to run)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -72,7 +72,7 @@ func newPackageUpdateCommand(opts *options) *cobra.Command {
 		Short: "Update an installed package to the offered version (plan by default; --approve to run)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -103,7 +103,7 @@ func newPackageAvailableCommand(opts *options) *cobra.Command {
 		Short: "List packages offered by the online package server (Synology repository)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -142,7 +142,7 @@ func newPackageCapabilitiesCommand(opts *options) *cobra.Command {
 		Short: "Show Package Center operation support and selected DSM backends",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -168,7 +168,7 @@ func newPackageInventoryCommand(opts *options) *cobra.Command {
 		Short: "List installed packages and their run status",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -194,7 +194,7 @@ func newPackageSettingsCommand(opts *options) *cobra.Command {
 		Short: "Show global Package Center settings",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -224,7 +224,7 @@ func newPackagePlanCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
 				return fmt.Errorf("read Package Center change: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -252,7 +252,7 @@ func newPackageApplyCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
 				return fmt.Errorf("read Package Center plan: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}

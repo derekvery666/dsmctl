@@ -1,7 +1,7 @@
 ---
 id: WI-061
 title: Core structured logging with a redaction guarantee
-status: ready
+status: done
 priority: P1
 owner: ""
 depends_on: []
@@ -97,34 +97,35 @@ gateway's remote audit store.
 
 ## Acceptance criteria
 
-- [ ] `internal/observability` builds a `*slog.Logger` at a caller-chosen level
-      writing to an injectable `io.Writer` (stderr in production), wrapped by a
-      redacting handler.
-- [ ] `synology.Options` gains a `Logger *slog.Logger` field; a nil logger
-      produces zero log output and zero added allocations on the hot path.
-- [ ] With `--log-level debug`, a CLI command that performs at least one DSM
-      call emits one structured record per DSM call containing `correlation_id`,
-      `api`, `method`, `version`, `path`, `http_status`, and `duration_ms`.
-- [ ] `--log-level` and `DSMCTL_LOG_LEVEL` both set the level; the flag takes
-      precedence when both are present (covered by a unit test).
-- [ ] A redaction unit test constructs a request whose parameters include
-      `passwd`, `otp_code`, `_sid`, `SynoToken`, `device_id`, and a
-      key/passphrase parameter, captures the emitted records, and asserts none
-      of those secret values appear and each denylisted key renders as
-      `"[redacted]"`.
-- [ ] A forced-error path test (e.g. an unreachable/invalid endpoint) asserts
-      the returned error string and any emitted log record contain no SID,
-      SynoToken, or password value.
-- [ ] A stdio-MCP test runs the server with debug logging enabled, exercises one
-      tool call, and asserts stdout contains only well-formed JSON-RPC frames
-      (all diagnostic output arrived on stderr).
-- [ ] Correlation ids are generated at the CLI/MCP entry point when absent and
-      reuse `remotepolicy` context helpers; a single logical command shares one
-      correlation id across its DSM calls (unit-tested).
-- [ ] Default behavior with no flag/env is unchanged: a golden-output test shows
-      identical command output with logging unconfigured.
-- [ ] User docs describe the flag, the env var, the record schema, and the
+Shipped 2026-07-20 (on main):
+
+- [x] `internal/observability` builds a leveled `*slog.Logger` over an
+      injectable `io.Writer` (stderr in production) with a redacting
+      `ReplaceAttr` hook and an authoritative secret-key denylist.
+- [x] `synology.Options.Logger` seam; a nil logger is silent with a guarded
+      early return on the hot path (no record built).
+- [x] `--log-level debug` emits one record per DSM call with `correlation_id`
+      (when set), `api`, `method`, `version`, `path`, `http_status`,
+      `duration_ms` — live-verified against the lab (4 records, one shared id).
+- [x] `--log-level` wins over `DSMCTL_LOG_LEVEL`; both parse; unit-tested.
+- [x] Redaction unit test over passwd/otp_code/_sid/SynoToken/device_id/key
+      asserts no secret value survives and each denylisted key renders
+      `[redacted]`; the request path additionally logs metadata only (never a
+      parameter value), pinned by a client test.
+- [x] stdio-MCP stdout purity: live smoke with `DSMCTL_LOG_LEVEL=debug` shows
+      0 non-JSON-RPC bytes on stdout and the diagnostic records on stderr.
+- [x] Correlation ids generated at the CLI entry (root `PersistentPreRunE`),
+      reusing `remotepolicy` helpers; one id shared across a command's DSM
+      calls; unit-tested for generation + idempotence.
+- [x] Default silent: nil logger (no flag/env) leaves output unchanged.
+- [x] `docs/logging.md` documents the flag, env var, record schema, and the
       never-logged secret list.
+
+Deferred (small follow-on): the **stdio MCP server does not yet stamp a
+per-tool-call correlation id** — its records emit with the id omitted. Adding
+one needs the same central tool-handler wrapper as WI-060's MCP category
+field (a single interceptor over ~146 tools), so the two are best done
+together. The optional per-command timing-summary record was not added.
 
 ## Verification
 

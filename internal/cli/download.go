@@ -34,7 +34,7 @@ func newDownloadSettingsCommand(opts *options) *cobra.Command {
 		Short: "Show the full Download Station settings (BT, eMule, FTP/HTTP, NZB, auto-extract, location, RSS, scheduler)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -64,7 +64,7 @@ func newDownloadCapabilitiesCommand(opts *options) *cobra.Command {
 		Short: "Show Download Station read support, package evidence, and selected DSM backends",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -90,7 +90,7 @@ func newDownloadServiceCommand(opts *options) *cobra.Command {
 		Short: "Show Download Station service configuration and schedule",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -116,7 +116,7 @@ func newDownloadTasksCommand(opts *options) *cobra.Command {
 		Short: "List Download Station download tasks",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -150,7 +150,7 @@ func newDownloadTaskPlanCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
 				return fmt.Errorf("read task change: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -178,7 +178,7 @@ func newDownloadTaskApplyCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
 				return fmt.Errorf("read task plan: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -204,7 +204,7 @@ func newDownloadStatisticsCommand(opts *options) *cobra.Command {
 		Short:   "Show current aggregate download/upload speed",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -234,7 +234,7 @@ func newDownloadSettingsPlanCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
 				return fmt.Errorf("read settings change: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -262,7 +262,7 @@ func newDownloadSettingsApplyCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
 				return fmt.Errorf("read settings plan: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}

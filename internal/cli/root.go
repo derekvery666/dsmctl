@@ -11,6 +11,7 @@ import (
 type options struct {
 	configPath string
 	nas        string
+	logLevel   string
 }
 
 func New(version string) *cobra.Command {
@@ -21,9 +22,16 @@ func New(version string) *cobra.Command {
 		Version:       version,
 		SilenceErrors: true,
 		SilenceUsage:  true,
+		// Stamp a per-invocation correlation id so all of a command's DSM calls
+		// share one id in the diagnostic log (when logging is enabled).
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			cmd.SetContext(withCorrelationID(cmd.Context()))
+			return nil
+		},
 	}
 	root.PersistentFlags().StringVar(&opts.configPath, "config", config.DefaultPath(), "configuration file path")
 	root.PersistentFlags().StringVar(&opts.nas, "nas", "", "NAS profile name (defaults to the configured default)")
+	root.PersistentFlags().StringVar(&opts.logLevel, "log-level", "", "diagnostic log level: debug, info, warn, or error (default: off; also DSMCTL_LOG_LEVEL)")
 	root.AddCommand(
 		newAccessCommand(opts),
 		newAccountCommand(opts),

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -123,6 +124,14 @@ func WithConfigSource(source config.Source) Option {
 	}
 }
 
+// WithLogger threads an opt-in diagnostic logger into every DSM client the
+// manager builds. A nil logger (the default) disables per-request logging.
+func WithLogger(logger *slog.Logger) Option {
+	return func(manager *Manager) {
+		manager.logger = logger
+	}
+}
+
 type clientEntry struct {
 	client   *synology.Client
 	revision uint64
@@ -135,6 +144,7 @@ type Manager struct {
 	devices     credentials.DeviceStore
 	sessions    credentials.SessionStore
 	deviceName  string
+	logger      *slog.Logger
 
 	// profileGate orders dynamic repository commits against client acquisition.
 	// Admin mutations hold it exclusively through commit and cache eviction;
@@ -238,6 +248,7 @@ func (m *Manager) Client(ctx context.Context, requested string) (string, Client,
 		DeviceID:     device.ID,
 		SaveDeviceID: saveDeviceID,
 		HTTPClient:   httpClient(profile),
+		Logger:       m.logger,
 	})
 	if err != nil {
 		return "", nil, fmt.Errorf("create client for NAS %q: %w", name, err)
@@ -397,6 +408,7 @@ func (m *Manager) seededClient(name string, profile config.Profile, session cred
 			_ = m.sessions.SaveSession(ctx, name, updated)
 			return refreshed.SID, refreshed.SynoToken, nil
 		},
+		Logger: m.logger,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create client for NAS %q from stored session: %w", name, err)

@@ -68,7 +68,7 @@ func newFileShareLinkListCommand(opts *options) *cobra.Command {
 		Short: "List public sharing links",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -182,7 +182,7 @@ func newFileTasksCommand(opts *options) *cobra.Command {
 		Short: "List in-progress background file-operation tasks",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -231,7 +231,7 @@ func newFileTasksClearFinishedCommand(opts *options) *cobra.Command {
 // autoApprove is set — applies it in the same process. Without --yes the plan and
 // its approval hash are printed so a caller can review and apply separately.
 func runFileMutation(cmd *cobra.Command, opts *options, request filestation.ChangeRequest, autoApprove bool) error {
-	service, err := loadService(opts.configPath)
+	service, err := loadService(opts)
 	if err != nil {
 		return err
 	}
@@ -457,7 +457,7 @@ func newFilePlanCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
 				return fmt.Errorf("read FileStation change: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -485,7 +485,7 @@ func newFileApplyCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
 				return fmt.Errorf("read FileStation plan: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -520,7 +520,7 @@ func newFileFavoriteListCommand(opts *options) *cobra.Command {
 		Short: "List personal favorites",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -546,7 +546,7 @@ func newFileFavoriteAddCommand(opts *options) *cobra.Command {
 		Short: "Add a personal favorite (reversible, local to your account)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -569,7 +569,7 @@ func newFileFavoriteRemoveCommand(opts *options) *cobra.Command {
 		Short:   "Remove a personal favorite",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -613,7 +613,7 @@ func newFileGetCommand(opts *options) *cobra.Command {
 			if local == "" || local == "." || local == string(filepath.Separator) {
 				return fmt.Errorf("cannot determine a local output name for %q; pass --output", remote)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -674,7 +674,7 @@ func newFileThumbCommand(opts *options) *cobra.Command {
 			if local == "" || local == "." || local == string(filepath.Separator) {
 				return fmt.Errorf("cannot determine a local output name for %q; pass --output", remote)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -715,7 +715,7 @@ func newFileCapabilitiesCommand(opts *options) *cobra.Command {
 		Short: "Show FileStation read support and selected DSM backends",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -741,7 +741,7 @@ func newFileInfoCommand(opts *options) *cobra.Command {
 		Short: "Show FileStation service information for the current session",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -783,7 +783,7 @@ func newFileSharesCommand(opts *options) *cobra.Command {
 		Short:   "List shared folders visible to the current session",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -825,7 +825,7 @@ func newFileListCommand(opts *options) *cobra.Command {
 		Short:   "List the entries of a folder",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -866,7 +866,7 @@ func newFileStatCommand(opts *options) *cobra.Command {
 		Short:   "Show detailed information for one or more entries",
 		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -904,7 +904,7 @@ func newFileSearchCommand(opts *options) *cobra.Command {
 		Short: "Search a folder subtree for matching entries",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -949,7 +949,7 @@ func newFileDirSizeCommand(opts *options) *cobra.Command {
 		Short:   "Compute the aggregate size of one or more folders",
 		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -981,7 +981,7 @@ func newFileMD5Command(opts *options) *cobra.Command {
 		Short: "Compute the MD5 digest of a file",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -1012,7 +1012,7 @@ func newFileVirtualFoldersCommand(opts *options) *cobra.Command {
 		Short:   "List mounted virtual folders",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -1044,7 +1044,7 @@ func newFileCheckPermissionCommand(opts *options) *cobra.Command {
 		Short:   "Check whether the current session may write at a path",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}

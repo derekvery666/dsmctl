@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ychiu1211/dsmctl/internal/remotepolicy"
 	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
 )
 
@@ -65,6 +67,13 @@ type Options struct {
 	// no longer be resumed, so reusing a live session never resolves a password.
 	PasswordFunc func(ctx context.Context) (string, error)
 
+	// Logger, when non-nil, receives one debug record per DSM call (api,
+	// method, version, path, HTTP status, duration, and the request's
+	// correlation id). It must already have the redaction hook installed; the
+	// request path never logs a secret parameter regardless. A nil Logger
+	// disables logging with no added work on the hot path.
+	Logger *slog.Logger
+
 	// PreserveSessionOnClose keeps the DSM session alive when the client is
 	// closed: Close drops the in-memory session instead of calling
 	// SYNO.API.Auth logout. Set it for clients seeded from a persisted
@@ -90,6 +99,7 @@ type Client struct {
 	passwordFunc    func(ctx context.Context) (string, error)
 	httpClient      *http.Client
 	preserveSession bool
+	logger          *slog.Logger
 
 	mu         sync.Mutex
 	target     compatibility.Target
@@ -138,6 +148,7 @@ func NewClient(options Options) (*Client, error) {
 		passwordFunc:    options.PasswordFunc,
 		httpClient:      httpClient,
 		preserveSession: options.PreserveSessionOnClose,
+		logger:          options.Logger,
 		target:          compatibility.NewTarget(),
 		apiChecked:      make(map[string]bool),
 		sid:             options.SessionID,
@@ -549,6 +560,29 @@ func (c *Client) requestFileLocked(ctx context.Context, apiPath string, params u
 	return body, nil
 }
 
+// logRequest emits one debug record per DSM call when a logger is configured.
+// It carries only non-secret metadata (never a parameter value) plus the
+// request's correlation id, and writes to the logger's sink (stderr), never
+// stdout, so it is safe alongside the stdio MCP server.
+func (c *Client) logRequest(ctx context.Context, api, method, version, apiPath string, status int, started time.Time) {
+	if c.logger == nil {
+		return
+	}
+	attrs := make([]slog.Attr, 0, 7)
+	if id := remotepolicy.CorrelationID(ctx); id != "" {
+		attrs = append(attrs, slog.String("correlation_id", id))
+	}
+	attrs = append(attrs,
+		slog.String("api", api),
+		slog.String("method", method),
+		slog.String("version", version),
+		slog.String("path", apiPath),
+		slog.Int("http_status", status),
+		slog.Int64("duration_ms", time.Since(started).Milliseconds()),
+	)
+	c.logger.LogAttrs(ctx, slog.LevelDebug, "dsm request", attrs...)
+}
+
 func (c *Client) requestLocked(ctx context.Context, apiPath string, params url.Values, api, method string) (json.RawMessage, error) {
 	endpoint := *c.baseURL
 	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/webapi/" + strings.TrimLeft(apiPath, "/")
@@ -570,11 +604,14 @@ func (c *Client) requestLocked(ctx context.Context, apiPath string, params url.V
 		request.Header.Set("X-SYNO-TOKEN", c.synoToken)
 	}
 
+	started := time.Now()
 	response, err := c.httpClient.Do(request)
 	if err != nil {
+		c.logRequest(ctx, api, method, params.Get("version"), apiPath, 0, started)
 		return nil, fmt.Errorf("request %s: %w", endpoint.Redacted(), err)
 	}
 	defer response.Body.Close()
+	c.logRequest(ctx, api, method, params.Get("version"), apiPath, response.StatusCode, started)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
 		return nil, fmt.Errorf("request %s returned HTTP %s", endpoint.Redacted(), response.Status)

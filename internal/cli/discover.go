@@ -34,7 +34,7 @@ func newDiscoverCommand(opts *options) *cobra.Command {
 			"and --clear discards it.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}

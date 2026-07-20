@@ -45,7 +45,7 @@ func newSurveillanceHomeModeStateCommand(opts *options) *cobra.Command {
 		Short: "Show whether Home Mode is on",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -78,7 +78,7 @@ func newSurveillanceHomeModePlanCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
 				return fmt.Errorf("read home mode change: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -106,7 +106,7 @@ func newSurveillanceHomeModeApplyCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
 				return fmt.Errorf("read home mode plan: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -131,7 +131,7 @@ func newSurveillanceCapabilitiesCommand(opts *options) *cobra.Command {
 		Short: "Show Surveillance Station support and the installed package",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -169,7 +169,7 @@ func newSurveillanceInfoCommand(opts *options) *cobra.Command {
 		Short: "Show Surveillance Station system information",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -204,7 +204,7 @@ func newSurveillanceCamerasCommand(opts *options) *cobra.Command {
 		Short: "List configured cameras",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}

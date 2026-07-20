@@ -35,7 +35,7 @@ func newExternalAccessCapabilitiesCommand(opts *options) *cobra.Command {
 		Short: "Show which External Access read areas are available and their selected DSM backends",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -61,7 +61,7 @@ func newExternalAccessAccountCommand(opts *options) *cobra.Command {
 		Short: "Show the Synology Account (MyDS) binding; never reveals the account token",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -88,7 +88,7 @@ func newExternalAccessQuickConnectCommand(opts *options) *cobra.Command {
 		Short:   "Show QuickConnect configuration, relay setting, and live status",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -124,7 +124,7 @@ func newExternalAccessQuickConnectPlanCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
 				return fmt.Errorf("read QuickConnect change: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -152,7 +152,7 @@ func newExternalAccessQuickConnectApplyCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
 				return fmt.Errorf("read QuickConnect plan: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -177,7 +177,7 @@ func newExternalAccessDDNSCommand(opts *options) *cobra.Command {
 		Short: "Show configured DDNS records and detected external addresses",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -208,7 +208,7 @@ func newExternalAccessPortForwardCommand(opts *options) *cobra.Command {
 		Short:   "Show the router configuration and port-forwarding rules",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -351,7 +351,7 @@ func newExternalAccessQuickConnectConfigCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
 				return fmt.Errorf("read QuickConnect config change: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -375,7 +375,7 @@ func newExternalAccessQuickConnectConfigCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, applyPath, &p); err != nil {
 				return fmt.Errorf("read QuickConnect config plan: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -409,7 +409,7 @@ func newExternalAccessQuickConnectPermissionCommand(opts *options) *cobra.Comman
 			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
 				return fmt.Errorf("read QuickConnect permission change: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -433,7 +433,7 @@ func newExternalAccessQuickConnectPermissionCommand(opts *options) *cobra.Comman
 			if err := decodeJSONInput(cmd, applyPath, &p); err != nil {
 				return fmt.Errorf("read QuickConnect permission plan: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -463,7 +463,7 @@ func newExternalAccessDDNSPlanCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
 				return fmt.Errorf("read DDNS change: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -491,7 +491,7 @@ func newExternalAccessDDNSApplyCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &p); err != nil {
 				return fmt.Errorf("read DDNS plan: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}

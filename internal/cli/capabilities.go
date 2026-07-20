@@ -19,7 +19,7 @@ func newNASCapabilitiesCommand(opts *options) *cobra.Command {
 		Short: "Show discovered APIs and selected compatibility backends",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}

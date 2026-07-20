@@ -35,7 +35,7 @@ func newOfficeCapabilitiesCommand(opts *options) *cobra.Command {
 		Short: "Show Office settings support and the installed package",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -76,7 +76,7 @@ func newOfficeInfoCommand(opts *options) *cobra.Command {
 		Short: "Show Synology Office deployment info",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -110,7 +110,7 @@ func newOfficeSettingsCommand(opts *options) *cobra.Command {
 		Short: "Show system-wide Synology Office settings",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -139,7 +139,7 @@ func newOfficePreferencesCommand(opts *options) *cobra.Command {
 		Short: "Show the calling user's Synology Office editor preferences",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -175,7 +175,7 @@ func newOfficeFontsCommand(opts *options) *cobra.Command {
 		Short: "List the Synology Office font inventory",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -212,7 +212,7 @@ func newOfficePlanCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
 				return fmt.Errorf("read Office change: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -240,7 +240,7 @@ func newOfficeApplyCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
 				return fmt.Errorf("read Office plan: %w", err)
 			}
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}

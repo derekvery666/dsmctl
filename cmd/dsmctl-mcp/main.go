@@ -15,6 +15,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/config"
 	"github.com/ychiu1211/dsmctl/internal/credentials"
 	"github.com/ychiu1211/dsmctl/internal/mcpserver"
+	"github.com/ychiu1211/dsmctl/internal/observability"
 	"github.com/ychiu1211/dsmctl/internal/runtime"
 )
 
@@ -35,10 +36,16 @@ func main() {
 	// Prefer the stored web-login session, exactly like the CLI. The password
 	// resolver stays as the automation fallback (environment variable, or a
 	// password stored by an older release).
-	manager := runtime.NewManager(cfg, secrets,
+	managerOptions := []runtime.Option{
 		runtime.WithDeviceStore(secrets),
 		runtime.WithSessionStore(secrets),
-	)
+	}
+	// Opt-in diagnostic logging via DSMCTL_LOG_LEVEL. It goes to stderr only —
+	// stdout carries the JSON-RPC frames — and redacts secret parameters.
+	if level, ok := observability.ParseLevel(os.Getenv("DSMCTL_LOG_LEVEL")); ok {
+		managerOptions = append(managerOptions, runtime.WithLogger(observability.New(os.Stderr, level)))
+	}
+	manager := runtime.NewManager(cfg, secrets, managerOptions...)
 	service := application.NewService(cfg, manager,
 		application.WithCredentialStore(secrets),
 		application.WithDiscoveryStore(application.DiscoveryStorePath(*configPath)),

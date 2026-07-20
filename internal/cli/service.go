@@ -30,20 +30,26 @@ func (r credentialResolver) Password(ctx context.Context, profileName string, pr
 	return "", fmt.Errorf("not signed in to NAS %q and no password available; run 'dsmctl auth login --nas %s' or set %s", profileName, profileName, varName)
 }
 
-func loadService(configPath string) (*application.Service, error) {
-	cfg, err := config.NewStore(configPath).Load()
+func loadService(opts *options) (*application.Service, error) {
+	cfg, err := config.NewStore(opts.configPath).Load()
 	if err != nil {
 		return nil, err
 	}
 	secrets := credentials.NewSecureStore()
+	managerOptions := []runtime.Option{
+		runtime.WithDeviceStore(secrets),
+		runtime.WithSessionStore(secrets),
+	}
+	if logger := buildLogger(opts.logLevel); logger != nil {
+		managerOptions = append(managerOptions, runtime.WithLogger(logger))
+	}
 	manager := runtime.NewManager(
 		cfg,
 		credentialResolver{env: credentials.NewEnvironment()},
-		runtime.WithDeviceStore(secrets),
-		runtime.WithSessionStore(secrets),
+		managerOptions...,
 	)
 	return application.NewService(cfg, manager,
 		application.WithCredentialStore(secrets),
-		application.WithDiscoveryStore(application.DiscoveryStorePath(configPath)),
+		application.WithDiscoveryStore(application.DiscoveryStorePath(opts.configPath)),
 	), nil
 }
