@@ -1,8 +1,8 @@
 ---
-id: WI-087
+id: WI-088
 title: Snapshot Replication module
-status: in_progress
-owner: "claude/snapshot-replication-integration-afbc59"
+status: done
+owner: ""
 priority: P2
 depends_on: [WI-019, WI-022, WI-029]
 parallel_group: C
@@ -18,7 +18,7 @@ touches:
   - docs/snapshot-replication.md
 ---
 
-# WI-087 — Snapshot Replication module
+# WI-088 — Snapshot Replication module
 
 ## Outcome
 
@@ -28,16 +28,28 @@ snapshot schedules and retention policy, replication relations and their sync
 status, and the Snapshot Replication log feed — and, through the hash-bound
 plan/apply contract, take, describe/lock, and delete shared-folder snapshots.
 This is the first data-protection module (the gap-inventory group that also
-holds Hyper Backup and Active Backup); it is package-version gated on the
-installed `SnapshotReplication` package (dependency `ReplicationService`) and
-fails closed when the package is absent or below baseline, exactly like the
-Drive/Photos/Download Station modules.
+holds Hyper Backup and Active Backup).
 
-All API names, methods, and field names below are researched from the package
-UI bundles and probes and **MUST be treated as to-be-live-verified**; the
-standing policy is that source-derived names are often stale — confirm every
-shape against the lab and re-read after any write (see
-[[dsm-webapi-live-verify-fields]], [[dsm-webapi-string-param-quoting]]).
+**Gating model (revised at implementation, live-verified):** the snapshot
+lifecycle, share snapshot configuration, retention policy, log feed, and node
+identity are **DSM core APIs** that answer without the package —
+`SYNO.Core.Share.Snapshot create` was proven live on a package-less DSM
+7.3-81168 — so those operations gate on advertised API versions only. Only the
+replication surface (`SYNO.DR.Plan`) is package-version gated on
+`SnapshotReplication` 7.x and fails closed without it. This deliberate split
+is what made full live verification possible, because of the discovery below.
+
+**DSM 7.3-81168 package deadlock (discovered during this item):** that build's
+own online feed cannot install Snapshot Replication at all. The feed offers
+SnapshotReplication 7.4.7-1859 paired with ReplicationService 1.3.0-0423, but
+7.4.7-1859 requires ReplicationService ≥ 0501 (upload error 4526), DSM
+7.3-81168 refuses any SnapshotReplication < 7.4.7-1850 (error 4583), and every
+ReplicationService build ≥ 0501 requires DSM ≥ 7.3-81179 (error 4538; the
+0504/0505 builds are the DSM 7.2 line, error 4537). Installs fail silently in
+the Package Center machinery (the WI-029 poller sees the task vanish and the
+inventory never confirms). Consequence: replication-plan fields ship
+source-derived and WIRE-UNVERIFIED until a NAS on DSM ≥ 7.3-81179 exists in
+the lab; ReplicationService 1.3.0-0423 was left installed on the lab.
 
 ## Scope
 
@@ -78,6 +90,11 @@ Share-snapshot lifecycle only, all through the mutation-safety contract:
 - Snapshot schedule/retention **set** ships only if the wire shape is
   live-verified end-to-end on the lab within this item; otherwise it is
   recorded as a deferred follow-on (fail closed, never guessed).
+  **Outcome: deferred** — `SYNO.DisasterRecovery.Retention set` takes the
+  policy numbers plus an embedded schedule and task id (`tid`) with
+  interacting semantics; it was not verifiable end-to-end in this item.
+  The retention/schedule READ shipped (`Retention get {type:"share",name}`,
+  live-verified).
 
 ## Non-goals
 
@@ -124,38 +141,66 @@ Share-snapshot lifecycle only, all through the mutation-safety contract:
 
 ## Acceptance criteria
 
-- [ ] Slice A: CLI `snapshot capabilities|list|schedule|replication|log` and
-      matching `get_*` MCP tools return normalized state (package evidence,
-      per-share snapshot lists with attributes, schedule/retention, replication
-      relations, log feed) with tolerant decoders that reject malformed shapes.
-- [ ] Package gate: absent/stopped `SnapshotReplication` fails closed with the
-      installed-but-not-running hint, without disabling adjacent modules.
-- [ ] Slice B: take/edit/delete snapshot via hash-bound plan/apply with
-      observed-set fingerprint, stale rejection, and postcondition re-read;
-      delete is high-risk; the read-only gateway strips plan/apply tools.
-- [ ] Live verification on the DSM 7.3 lab: reads against real state; the full
-      write lifecycle (create → describe → lock → unlock → delete) against a
-      throwaway `dsmctl-e2e-snap-*` share, then share cleanup verified.
-- [ ] Unit: decoder tolerance + malformed rejection, request-capture asserting
-      wire shapes (JSON-literal string params), plan hash + staleness tests;
+- [x] Slice A: CLI `snapshot capabilities|state|share|replication|log` and the
+      `get_snapshot_capabilities|state|share|replication_status|log` MCP tools
+      return normalized state (package evidence, per-share snapshot lists with
+      attributes, config, retention policy, replication availability, log
+      feed) with tolerant decoders that reject malformed shapes. (The
+      commands landed as `state`/`share` rather than `list`/`schedule`;
+      schedule read is the retention policy's `schedule` presence flag.)
+- [x] Package gate: the replication read fails closed without the package
+      (live-verified `(not supported)` + honest reason in the replication
+      command) including the installed-but-not-running hint path; the snapshot
+      surface deliberately stays core-gated (see the revised gating model).
+- [x] Slice B: take/edit/delete snapshot and share-config write via hash-bound
+      plan/apply with observed-set fingerprint, stale rejection, and
+      postcondition re-read; delete is high-risk with locked-snapshot
+      warnings; the read-only gateway strips `plan_snapshot_change` /
+      `apply_snapshot_plan`.
+- [x] Live verification on the DSM 7.3-81168 lab: all reads against real state
+      (including a populated log entry); the full write lifecycle — create
+      with description+lock → edit description + unlock → snapshot-browsing
+      on → off → delete both snapshots — against the throwaway
+      `dsmctl-e2e-snap-r1` share, then share deletion verified (lab restored
+      to its original 4 shares).
+- [x] Unit: decoder tolerance + malformed rejection, request-capture asserting
+      wire shapes, plan hash/tamper/staleness/postcondition tests;
       `go build ./...`, `go vet ./...`, `go test ./... -count=1` clean.
-- [ ] MCP server tool-count and allowlist tests updated; docs page shipped and
-      linked; roadmap + gap inventory updated.
+- [x] MCP server tool-count (180 → 187) and allowlist tests updated;
+      `docs/snapshot-replication.md` shipped and linked from the README;
+      roadmap + gap inventory updated.
 
 ## Verification
 
-- Unit and request-capture tests as above (fixtures under
-  `internal/synology/operations/snapshotreplication/testdata/`).
-- Live reads against the DSM 7.3-81168 lab (DS3018xs, btrfs `/volume1`).
-- Live writes only on the throwaway `dsmctl-e2e-snap-*` share as described.
-- Research sources: probe sweep against the lab (method existence + shapes)
-  and the SnapshotReplication 7.4.7 UI bundles; every name re-verified live
-  before ship per [[dsm-webapi-live-verify-fields]].
+Completed 2026-07-21 on the DSM 7.3-81168 lab (DS3018xs, btrfs `/volume1`):
+
+- `go build ./...`, `go vet ./...`, `go test ./... -count=1` — clean.
+- Unit + request-capture tests in
+  `internal/synology/operations/snapshotreplication/operation_test.go`
+  (inline live-captured shapes) and
+  `internal/application/snapshot_replication_test.go` (fake-client
+  plan/apply, stale rejection, tamper rejection, silent-no-op postcondition).
+- Live wire facts: `SYNO.Core.Share.Snapshot` — `list` v2 with
+  `additional=["desc","lock","schedule_snapshot","worm_lock"]`; `create` v1
+  `{name, snapinfo:{desc,lock}}` returning the bare time-name string; `set`
+  v1 `{name, snapshot, snapinfo:{...}}` (fields inside the `snapinfo`
+  envelope — bare desc/lock params are rejected); `delete` v1
+  `{name, snapshots:[...]}`; `get/set_share_conf` v1
+  `{name, sharesnapinfo}`. `SYNO.DisasterRecovery.Retention` `get/info` v1;
+  `SYNO.DisasterRecovery.Log` `list` v1 (entry: string `time`, text under
+  `event`, `user`, `level`); `SYNO.DR.Node` `info` v1. All live-verified with
+  postcondition re-reads per [[dsm-webapi-live-verify-fields]].
+- Research sources: probe sweeps against the lab and the SnapshotReplication
+  7.2.1-0607 plain-tar SPK (webapi `.lib` descriptors + `disaster_recovery.js`
+  — the 7.4.7 SPK is a signed envelope and was only used for its INFO). The
+  `SYNO.DR.Plan list` additional set and per-plan fields remain
+  source-derived (package uninstallable on this DSM build).
 
 ## Coordination
 
-- WI-084–WI-086 are reserved by the provisioning program (parallel sessions);
-  this item deliberately takes WI-087.
+- WI-084–WI-086 are reserved by the provisioning program and WI-087 by the
+  parallel Hyper Backup module session; this item takes WI-088 (renumbered
+  from an initial WI-087 claim once the collision surfaced).
 - Parallel group C; new operation packages are the parallel boundary. Shared
   files touched: `internal/mcpserver/server.go`, `read_only.go`,
   `server_test.go`, `spec/roadmap.md`, `spec/gap-inventory.md` — coordinate

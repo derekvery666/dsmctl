@@ -202,6 +202,11 @@ Package Center changes use the same plan/apply contract: a `lifecycle` action
 change to the automatic-update policy. The publisher trust level is read-only
 (no DSM write endpoint). See [the Package Center guide](docs/package-center.md).
 
+Shared-folder btrfs snapshots (list with attributes, guarded take\edit\delete,
+per-share snapshot configuration, retention policy, and the Snapshot
+Replication log and replication-plan reads) are covered in
+[the Snapshot Replication guide](docs/snapshot-replication.md).
+
 User passwords are never included in requests or plans. A user create/change refers to an apply-time environment variable such as `"credential_ref":"env:DSMCTL_NEW_USER_PASSWORD"`. Request formats and examples are in [account and share management](docs/account-share-management.md).
 
 Manage more than one NAS:

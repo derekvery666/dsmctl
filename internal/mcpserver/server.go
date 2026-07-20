@@ -30,6 +30,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/domain/san"
 	"github.com/ychiu1211/dsmctl/internal/domain/servicediscovery"
 	"github.com/ychiu1211/dsmctl/internal/domain/share"
+	"github.com/ychiu1211/dsmctl/internal/domain/snapshotreplication"
 	"github.com/ychiu1211/dsmctl/internal/domain/storage"
 	"github.com/ychiu1211/dsmctl/internal/domain/surveillance"
 	"github.com/ychiu1211/dsmctl/internal/domain/syslog"
@@ -766,6 +767,72 @@ type applySurveillanceHomeModePlanInput struct {
 
 type applySurveillanceHomeModePlanOutput struct {
 	Result application.SurveillanceHomeModeApplyResult `json:"result" jsonschema:"Home Mode mutation result after stale-state and postcondition checks"`
+}
+
+type getSnapshotInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getSnapshotCapabilitiesOutput struct {
+	NAS          string                                   `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.SnapshotReplicationCapabilities `json:"capabilities" jsonschema:"Snapshot Replication operations exposed by dsmctl, with installed-package evidence"`
+	Report       synology.CompatibilityReport             `json:"report" jsonschema:"Discovered APIs, installed packages, and selected snapshot backends"`
+}
+
+type getSnapshotStateOutput struct {
+	NAS     string                                   `json:"nas" jsonschema:"NAS profile used for the request"`
+	Package snapshotreplication.PackageEvidence      `json:"package" jsonschema:"Installed SnapshotReplication package evidence (required only for replication)"`
+	Node    synology.SnapshotReplicationNodeIdentity `json:"node" jsonschema:"Local replication node identity"`
+	Shares  []snapshotreplication.ShareOverview      `json:"shares" jsonschema:"Snapshot overview of every snapshot-capable shared folder"`
+}
+
+type getSnapshotShareInput struct {
+	NAS   string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Share string `json:"share" jsonschema:"Shared-folder name whose snapshots to read"`
+}
+
+type getSnapshotShareOutput struct {
+	NAS       string                                      `json:"nas" jsonschema:"NAS profile used for the request"`
+	Config    synology.SnapshotReplicationShareConfig     `json:"config" jsonschema:"Per-share snapshot configuration"`
+	Retention synology.SnapshotReplicationRetentionPolicy `json:"retention" jsonschema:"Snapshot retention policy of the share"`
+	Snapshots synology.SnapshotReplicationShareSnapshots  `json:"snapshots" jsonschema:"Snapshot inventory of the share with attributes"`
+}
+
+type getSnapshotReplicationStatusOutput struct {
+	NAS       string                              `json:"nas" jsonschema:"NAS profile used for the request"`
+	Package   snapshotreplication.PackageEvidence `json:"package" jsonschema:"Installed SnapshotReplication package evidence"`
+	Supported bool                                `json:"supported" jsonschema:"Whether replication plans can be read on this NAS"`
+	Reason    string                              `json:"reason,omitempty" jsonschema:"Why replication is unavailable when supported is false"`
+	Plans     *synology.SnapshotReplicationPlans  `json:"plans,omitempty" jsonschema:"Replication plans when supported"`
+}
+
+type getSnapshotLogInput struct {
+	NAS    string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Offset int    `json:"offset,omitempty" jsonschema:"Entries to skip"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"Maximum entries to return; defaults to 50, capped at 1000"`
+}
+
+type getSnapshotLogOutput struct {
+	NAS string                              `json:"nas" jsonschema:"NAS profile used for the request"`
+	Log synology.SnapshotReplicationLogPage `json:"log" jsonschema:"One page of the Snapshot Replication log feed"`
+}
+
+type planSnapshotChangeInput struct {
+	NAS     string                     `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request snapshotreplication.Change `json:"request" jsonschema:"Snapshot change intent: create, set_attributes, delete, or set_share_config"`
+}
+
+type planSnapshotChangeOutput struct {
+	Plan application.SnapshotReplicationPlan `json:"plan" jsonschema:"Validated plan bound to the observed share snapshot state and approval hash"`
+}
+
+type applySnapshotPlanInput struct {
+	Plan         application.SnapshotReplicationPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_snapshot_change"`
+	ApprovalHash string                              `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved snapshot plan"`
+}
+
+type applySnapshotPlanOutput struct {
+	Result application.SnapshotReplicationApplyResult `json:"result" jsonschema:"Snapshot mutation result after stale-state and postcondition checks; carries the created snapshot time name for create"`
 }
 
 type getStorageInput struct {
@@ -3765,6 +3832,97 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, applySurveillanceHomeModePlanOutput{}, err
 		}
 		return nil, applySurveillanceHomeModePlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_snapshot_capabilities",
+		Title:       "Get Snapshot Replication capabilities",
+		Description: "Report which snapshot and replication operations dsmctl exposes on the selected NAS: snapshot/config/retention/log/node reads, package-gated replication reads, and the guarded snapshot writes, plus the installed SnapshotReplication package evidence.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getSnapshotInput) (*mcp.CallToolResult, getSnapshotCapabilitiesOutput, error) {
+		result, err := service.GetSnapshotReplicationCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getSnapshotCapabilitiesOutput{}, err
+		}
+		return nil, getSnapshotCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_snapshot_state",
+		Title:       "Get snapshot overview",
+		Description: "Summarize btrfs snapshots across every snapshot-capable shared folder (count, latest snapshot, browsing, retention task), plus the replication node identity and package evidence. Never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getSnapshotInput) (*mcp.CallToolResult, getSnapshotStateOutput, error) {
+		result, err := service.GetSnapshotReplicationState(ctx, input.NAS)
+		if err != nil {
+			return nil, getSnapshotStateOutput{}, err
+		}
+		return nil, getSnapshotStateOutput{NAS: result.NAS, Package: result.Package, Node: result.Node, Shares: result.Shares}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_snapshot_share",
+		Title:       "Get one share's snapshots",
+		Description: "Read one shared folder's snapshot inventory with attributes (time, description, lock, schedule, WORM), its snapshot configuration, and its retention policy. Never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getSnapshotShareInput) (*mcp.CallToolResult, getSnapshotShareOutput, error) {
+		result, err := service.GetSnapshotReplicationShare(ctx, input.NAS, input.Share)
+		if err != nil {
+			return nil, getSnapshotShareOutput{}, err
+		}
+		return nil, getSnapshotShareOutput{NAS: result.NAS, Config: result.Config, Retention: result.Retention, Snapshots: result.Snapshots}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_snapshot_replication_status",
+		Title:       "Get replication status",
+		Description: "List replication plans when the SnapshotReplication package is installed; otherwise report why replication is unavailable. Never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getSnapshotInput) (*mcp.CallToolResult, getSnapshotReplicationStatusOutput, error) {
+		result, err := service.GetSnapshotReplicationReplication(ctx, input.NAS)
+		if err != nil {
+			return nil, getSnapshotReplicationStatusOutput{}, err
+		}
+		return nil, getSnapshotReplicationStatusOutput{NAS: result.NAS, Package: result.Package, Supported: result.Supported, Reason: result.Reason, Plans: result.Plans}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_snapshot_log",
+		Title:       "Get Snapshot Replication log",
+		Description: "Read one page of the Snapshot Replication log feed with level counts. Never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getSnapshotLogInput) (*mcp.CallToolResult, getSnapshotLogOutput, error) {
+		result, err := service.GetSnapshotReplicationLog(ctx, input.NAS, input.Offset, input.Limit)
+		if err != nil {
+			return nil, getSnapshotLogOutput{}, err
+		}
+		return nil, getSnapshotLogOutput{NAS: result.NAS, Log: result.Log}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_snapshot_change",
+		Title:       "Plan a snapshot change",
+		Description: "Validate one snapshot change (take a snapshot, edit description/lock, delete snapshots, or set share snapshot configuration), bind it to the share's observed snapshot state, and return a hash-bound approval plan. Delete is high risk and irreversible. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planSnapshotChangeInput) (*mcp.CallToolResult, planSnapshotChangeOutput, error) {
+		plan, err := service.PlanSnapshotReplicationChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planSnapshotChangeOutput{}, err
+		}
+		return nil, planSnapshotChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_snapshot_plan",
+		Title:       "Apply an approved snapshot plan",
+		Description: "Apply an unmodified snapshot plan only while its approval hash and the share's observed snapshot state still match, then re-read the share to verify the postcondition.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applySnapshotPlanInput) (*mcp.CallToolResult, applySnapshotPlanOutput, error) {
+		result, err := service.ApplySnapshotReplicationPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applySnapshotPlanOutput{}, err
+		}
+		return nil, applySnapshotPlanOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

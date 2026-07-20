@@ -62,8 +62,8 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools() error = %v", err)
 	}
-	if len(tools.Tools) != 180 {
-		t.Fatalf("ListTools() returned %d tools, want 180", len(tools.Tools))
+	if len(tools.Tools) != 187 {
+		t.Fatalf("ListTools() returned %d tools, want 187", len(tools.Tools))
 	}
 	for _, tool := range tools.Tools {
 		if scope, ok := ToolScope(tool.Name); !ok || scope == "" {
@@ -157,6 +157,12 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"get_login_portal_dsm":                false,
 		"get_login_portal_applications":       false,
 		"get_login_portal_reverse_proxy":      false,
+		"get_snapshot_capabilities":           false,
+		"get_snapshot_state":                  false,
+		"get_snapshot_share":                  false,
+		"get_snapshot_replication_status":     false,
+		"get_snapshot_log":                    false,
+		"plan_snapshot_change":                false,
 	}
 	mutationTools := map[string]bool{
 		"apply_account_plan":                false,
@@ -176,6 +182,7 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"apply_surveillance_home_mode_plan": false,
 		"apply_package_plan":                false,
 		"apply_resource_recording_plan":     false,
+		"apply_snapshot_plan":               false,
 	}
 	for _, tool := range tools.Tools {
 		if _, ok := mutationTools[tool.Name]; ok {
