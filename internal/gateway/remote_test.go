@@ -212,6 +212,17 @@ func TestManagedMCPAuthenticatesBeforeInitializeFiltersToolsAndNAS(t *testing.T)
 		if !known || scope != remotepolicy.ScopeRead {
 			t.Fatalf("read-only token saw tool %q scope %q", tool.Name, scope)
 		}
+		// get_certificate_export is a get_-prefixed tool ToolScope classifies as
+		// ScopeRead, but it writes a private-key archive to the gateway host at a
+		// caller-controlled path; NewRemote strips it so a read-only token can
+		// never see it.
+		if tool.Name == "get_certificate_export" {
+			t.Fatal("read-only token can see get_certificate_export (private-key export)")
+		}
+	}
+	// ...and cannot reach it by calling it directly either.
+	if exportResult, exportErr := readerSession.CallTool(ctx, &mcp.CallToolParams{Name: "get_certificate_export", Arguments: map[string]any{"nas": "allowed", "cert_id": "A", "local_path": "x"}}); exportErr == nil && !exportResult.IsError {
+		t.Fatal("read-only token reached get_certificate_export")
 	}
 	result, err := readerSession.CallTool(ctx, &mcp.CallToolParams{Name: "list_nas", Arguments: map[string]any{}})
 	if err != nil {

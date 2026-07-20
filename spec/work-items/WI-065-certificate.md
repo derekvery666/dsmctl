@@ -326,3 +326,57 @@ module.
   context already carries the pinned fingerprint). (d) The private key is
   resolved into a `[]byte` and zeroized after import; the intermediate Go
   `string` from `ResolveSecret` cannot be wiped but its lifetime is minimized.
+
+## Adversarial security review — Slice B fixes
+
+An adversarial review of the Slice B commit found and fixed the following. These
+are code fixes on `claude/wi065-certificate-writes`; `WIRE-UNVERIFIED` markers are
+unchanged and no live NAS mutation was performed.
+
+- **HIGH — `get_certificate_export` reachable under a read scope on the managed
+  remote gateway.** `ToolScope` classifies any `get_` tool as `ScopeRead`, so a
+  `nas.read`-only remote token could invoke export, which writes a **private-key
+  archive to the gateway HOST** at a caller-controlled path. Fixed by stripping
+  `get_certificate_export` from `NewRemote` (mirroring `NewReadOnly`) so it is not
+  on the remote surface at all, and by confining the export writer (below).
+  Regression: `internal/gateway/remote_test.go` now asserts a read-only token can
+  neither see nor call it. **Footgun flagged for follow-up:** the prefix-based
+  `ScopeRead` rule means any future `get_`-named tool with side effects is
+  read-reachable by default; consider an explicit per-tool scope table.
+- **HIGH (same finding) — arbitrary host-file overwrite via `ExportCertificate`
+  `local_path`.** The writer used `O_CREATE|O_WRONLY|O_TRUNC` on a caller-supplied
+  path with no confinement. Fixed with `safeExportPath` (rejects `..` traversal)
+  and `O_EXCL` (never overwrites an existing file; also fails on an existing
+  symlink at the final component, defeating a symlink-swap redirect). Residual:
+  a *new* file can still be created at an absolute path locally — acceptable for a
+  local CLI export and no longer reachable remotely.
+- **MEDIUM — transport-error `_sid`/`SynoToken` leak.** A failed `http.Client.Do`
+  returns a `*url.Error` whose `Error()` carries the full request URL (with the
+  session id and token); redacting only the `%s` operand missed it. Fixed in the
+  shared transport with `redactTransferError`, which also covers the pre-existing
+  same bug in the WI-049 upload/download/thumbnail transports. Regression:
+  `TestDoCertificateExportRedactsSessionTokensOnTransportError`.
+- **MEDIUM — `set_default` skipped SAN-covers-host validation.** It now looks the
+  target up with the full certificate (`findCertByID`) and validates
+  `ValidateNamesCoverHost` at plan time, so making a non-covering certificate the
+  DSM default is a plan-time error, not a post-apply lockout.
+- **MEDIUM — import postcondition false success on a same-identity replace.** The
+  identity-only match (this supersedes limitation (b) above) is now augmented with
+  the validity window (`valid_from`/`valid_till`, the only distinguishing public
+  field `CRT.list` exposes — there is no serial or DER fingerprint). A
+  **current-session** import is still positively proven by the re-pin TLS
+  handshake; a **non-current-session replace** that cannot be distinguished now
+  **fails closed** instead of reporting `Applied=true`.
+- **LOW — confusing error on `set_default`/`bind` re-pin.** These paths do not
+  re-pin, so in `pinned_fingerprint` mode a *successful* change makes the
+  postcondition re-read fail TLS verification. `lockoutOrError` now also detects a
+  TLS pin/verification failure (not only `SessionExpiredError`) and surfaces the
+  possible-lockout wording.
+- **LIVE-VERIFY (finding #6, no code fix) — `isDSMService()` whitelist.**
+  Current-session/SAN protection for bind and delete keys off the hardcoded
+  service whitelist `{default, dsm, webui}` (`certificate_mutation.go`
+  `isDSMService`). If the real DSM-desktop service key on a target DSM differs
+  from these, binding or deleting the serving certificate under a non-whitelisted
+  key would **skip the acknowledgement + SAN-coverage checks**. Confirm the actual
+  DSM-desktop service key(s) with a `DSMCTL_DUMP` probe during live verification
+  and extend the whitelist if needed.

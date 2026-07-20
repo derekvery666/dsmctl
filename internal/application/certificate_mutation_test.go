@@ -409,6 +409,123 @@ func TestApplyCertificateLockoutReportedNotSuccess(t *testing.T) {
 	}
 }
 
+// TestPlanCertificateSetDefaultValidatesSANCoverage proves set_default now
+// validates that the target certificate covers the connection host at plan time
+// (finding #3), so making a non-covering certificate the DSM default is a
+// plan-time error rather than a post-apply session lockout.
+func TestPlanCertificateSetDefaultValidatesSANCoverage(t *testing.T) {
+	client := &fakeCertClient{certs: []certdom.Certificate{
+		{ID: "A", IsDefault: true, Subject: certdom.Name{CommonName: "a"}},
+		{ID: "B", Subject: certdom.Name{CommonName: "other.example.com"}, SubjectAltNames: []string{"other.example.com"}},
+	}}
+	request := certdom.ChangeRequest{Action: certdom.ActionSetDefault, SetDefault: &certdom.SetDefaultChange{ID: "B", AcknowledgeCurrentSession: true}}
+	// Non-covering: cert B does not cover nas.example.com.
+	if _, err := planCertificateChangeWithClient(context.Background(), "lab", client, request, planCtx("nas.example.com")); err == nil || !strings.Contains(err.Error(), "does not cover connection host") {
+		t.Fatalf("expected SAN-coverage rejection, got %v", err)
+	}
+	// Covering: a cert whose SAN covers the host is accepted.
+	client.certs[1].SubjectAltNames = []string{"nas.example.com"}
+	plan, err := planCertificateChangeWithClient(context.Background(), "lab", client, request, planCtx("nas.example.com"))
+	if err != nil {
+		t.Fatalf("covering set_default rejected: %v", err)
+	}
+	if !plan.CurrentSessionAffected {
+		t.Fatal("set_default must be flagged current-session")
+	}
+}
+
+// TestApplyCertificateImportNonCurrentSessionReplaceFailsClosed proves a
+// non-current-session replace whose post-apply store shows only a same-identity
+// certificate that does NOT match the imported leaf's validity window fails
+// closed rather than reporting a false success (finding #4).
+func TestApplyCertificateImportNonCurrentSessionReplaceFailsClosed(t *testing.T) {
+	keyPEM, leafPath := genKeyAndLeaf(t, "svc.example.com", []string{"svc.example.com"}, time.Now().Add(24*time.Hour))
+	t.Setenv("TLS_KEY", keyPEM)
+	client := &fakeCertClient{certs: []certdom.Certificate{
+		{ID: "B", Subject: certdom.Name{CommonName: "svc.example.com"}, SubjectAltNames: []string{"svc.example.com"}, Issuer: certdom.Name{CommonName: "svc.example.com"}},
+	}}
+	change := &certdom.ImportChange{LeafCertPath: leafPath, KeyCredentialRef: "env:TLS_KEY", ReplaceID: "B"}
+	plan, err := planCertificateChangeWithClient(context.Background(), "lab", client, certdom.ChangeRequest{Action: certdom.ActionImport, Import: change}, planCtx("nas.example.com"))
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if plan.CurrentSessionAffected {
+		t.Fatal("replacing a non-DSM certificate must not be flagged current-session")
+	}
+	plan.Hash, _ = certificatePlanHash(plan)
+	// Same identity, unparseable/absent validity → not distinguishing.
+	client.afterWrite = []certdom.Certificate{{
+		ID: "B", Subject: certdom.Name{CommonName: plan.Desired.Subject.CommonName},
+		Issuer: certdom.Name{CommonName: plan.Desired.Issuer.CommonName}, SubjectAltNames: plan.Desired.SubjectAltNames,
+	}}
+	service := newCertService(t)
+	if _, err := service.applyCertificateImport(context.Background(), client, plan); err == nil || !strings.Contains(err.Error(), "could not be positively verified") {
+		t.Fatalf("expected fail-closed on non-current-session replace, got %v", err)
+	}
+
+	// With a matching validity window, the same replace verifies and applies.
+	client.writeCount = 0
+	client.afterWrite = []certdom.Certificate{{
+		ID: "B", Subject: certdom.Name{CommonName: plan.Desired.Subject.CommonName},
+		Issuer: certdom.Name{CommonName: plan.Desired.Issuer.CommonName}, SubjectAltNames: plan.Desired.SubjectAltNames,
+		ValidFromUnix: plan.Desired.NotBeforeUnix, ValidTillUnix: plan.Desired.NotAfterUnix,
+	}}
+	result, err := service.applyCertificateImport(context.Background(), client, plan)
+	if err != nil {
+		t.Fatalf("validity-matched replace should apply: %v", err)
+	}
+	if !result.Applied || result.Repinned {
+		t.Fatalf("result = %#v (non-current-session must not re-pin)", result)
+	}
+}
+
+// TestApplyCertificateSetDefaultTLSPinLockoutReported proves that when the
+// post-apply re-read fails TLS pin verification (the pinned fingerprint is stale
+// because the successful set_default changed the served certificate), the result
+// is a possible-lockout report, not a plain failure (finding #5).
+func TestApplyCertificateSetDefaultTLSPinLockoutReported(t *testing.T) {
+	client := &fakeCertClient{
+		certs: []certdom.Certificate{
+			{ID: "A", IsDefault: true, Subject: certdom.Name{CommonName: "a"}},
+			{ID: "B", Subject: certdom.Name{CommonName: "b"}},
+		},
+		postReadErr: errors.New("TLS server certificate does not match the pinned SHA-256 fingerprint"),
+	}
+	plan, err := planCertificateChangeWithClient(context.Background(), "lab", client, certdom.ChangeRequest{Action: certdom.ActionSetDefault, SetDefault: &certdom.SetDefaultChange{ID: "B", AcknowledgeCurrentSession: true}}, planCtx(""))
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if _, err := applyCertificateSetDefault(context.Background(), client, plan); err == nil || !strings.Contains(err.Error(), "lockout") {
+		t.Fatalf("expected a lockout report for a TLS pin failure, got %v", err)
+	}
+}
+
+// TestExportCertificatePathConfinement proves the export writer removes the
+// arbitrary-overwrite primitive (finding #1ii): parent-directory traversal is
+// rejected, and an existing file is never clobbered.
+func TestExportCertificatePathConfinement(t *testing.T) {
+	for _, p := range []string{"", "..", "../escape", "a/../../b"} {
+		if _, err := safeExportPath(p); err == nil {
+			t.Errorf("safeExportPath(%q) accepted an unsafe path", p)
+		}
+	}
+	if _, err := safeExportPath(filepath.Join("certs", "out.p12")); err != nil {
+		t.Errorf("safeExportPath rejected a normal path: %v", err)
+	}
+
+	dir := t.TempDir()
+	out := filepath.Join(dir, "export.p12")
+	if n, err := writeCertificateExport(out, strings.NewReader("ARCHIVE")); err != nil || n == 0 {
+		t.Fatalf("first write: n=%d err=%v", n, err)
+	}
+	if _, err := writeCertificateExport(out, strings.NewReader("CLOBBER")); err == nil || !strings.Contains(err.Error(), "refusing to overwrite") {
+		t.Fatalf("expected overwrite refusal, got %v", err)
+	}
+	if data, _ := os.ReadFile(out); string(data) != "ARCHIVE" {
+		t.Fatalf("existing file was clobbered: %q", data)
+	}
+}
+
 func TestExportCertificateWritesLocalFileNoKeyReturned(t *testing.T) {
 	client := &fakeCertClient{exportBody: "PEM-ARCHIVE-CONTAINS-PRIVATE-KEY"}
 	service := newCertService(t)

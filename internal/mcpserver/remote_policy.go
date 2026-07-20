@@ -16,6 +16,14 @@ import (
 // remains the local CLI/stdio server and is intentionally unaffected.
 func NewRemote(service *application.Service, version string, auditor remotepolicy.Auditor) *mcp.Server {
 	server := New(service, version)
+	// get_certificate_export is named like a read but writes a certificate
+	// archive containing the PRIVATE KEY to the gateway HOST's filesystem at a
+	// caller-controlled path. The prefix-based ToolScope classifies any get_ tool
+	// as ScopeRead, so without this it would be reachable by a nas.read-only
+	// remote token. Exporting a private key to the gateway host is meaningless for
+	// a remote caller, so it is stripped from the remote surface entirely — the
+	// same posture NewReadOnly takes.
+	server.RemoveTools("get_certificate_export")
 	server.AddReceivingMiddleware(remotePolicyMiddleware(service, auditor))
 	return server
 }

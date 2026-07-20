@@ -132,7 +132,7 @@ func doCertificateImport(ctx context.Context, prep transferPrep, request Certifi
 
 	response, err := prep.client.Do(httpRequest)
 	if err != nil {
-		return CertificateMutationResult{}, fmt.Errorf("request %s: %w", redactTransferURL(endpoint), err)
+		return CertificateMutationResult{}, redactTransferError(endpoint, err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
@@ -353,7 +353,7 @@ func doCertificateExport(ctx context.Context, prep transferPrep, sid, synoToken,
 	}
 	response, err := prep.client.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("request %s: %w", redactTransferURL(endpoint), err)
+		return nil, redactTransferError(endpoint, err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))

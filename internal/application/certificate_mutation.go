@@ -2,10 +2,14 @@ package application
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -229,13 +233,42 @@ func applyCertificateDelete(ctx context.Context, client certificateClient, plan 
 	return CertificateApplyResult{NAS: plan.NAS, PlanHash: plan.Hash, Applied: true, Operation: operation}, nil
 }
 
-// lockoutOrError reports a broken-and-unrecoverable handshake after a
-// current-session-affecting change as a lockout rather than a plain failure.
+// lockoutOrError reports a broken TLS handshake or a failed certificate
+// verification on the post-apply re-read of a current-session-affecting change
+// as a possible lockout rather than a plain failure. Beyond a session that DSM
+// tore down (SessionExpiredError), this also covers set_default and bind, which
+// do NOT re-pin: in pinned_fingerprint mode a SUCCESSFUL change replaces the
+// certificate the DSM desktop serves, so the re-read dials into a leaf the old
+// pin no longer matches and TLS verification fails even though the write took
+// effect.
 func lockoutOrError(plan CertificatePlan, err error) error {
-	if plan.CurrentSessionAffected && synology.IsSessionExpired(err) {
-		return fmt.Errorf("certificate applied but the current dsmctl session can no longer reach %q over TLS (possible lockout); re-establish trust and verify the certificate manually: %w", plan.NAS, err)
+	if plan.CurrentSessionAffected && (synology.IsSessionExpired(err) || isTLSVerificationFailure(err)) {
+		return fmt.Errorf("certificate applied but the current dsmctl session can no longer establish trusted TLS with %q (possible lockout — in pinned mode the change likely took effect but the pinned fingerprint is now stale); re-establish trust (for example update the pinned fingerprint) and verify the certificate manually: %w", plan.NAS, err)
 	}
 	return err
+}
+
+// isTLSVerificationFailure reports whether err is a TLS certificate
+// verification/pinning failure. Standard chain-validation failures surface as
+// typed crypto errors; the pinned-fingerprint verifiers short-circuit chain
+// validation and return a plain error from VerifyConnection, so those are matched
+// by their message (both the profile pin in runtime.Manager and the import
+// re-pin in synology use "... SHA-256 fingerprint").
+func isTLSVerificationFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	var certVerifyErr *tls.CertificateVerificationError
+	if errors.As(err, &certVerifyErr) {
+		return true
+	}
+	var hostErr x509.HostnameError
+	var authErr x509.UnknownAuthorityError
+	var invalidErr x509.CertificateInvalidError
+	if errors.As(err, &hostErr) || errors.As(err, &authErr) || errors.As(err, &invalidErr) {
+		return true
+	}
+	return strings.Contains(err.Error(), "pinned SHA-256 fingerprint")
 }
 
 func planCertificateChangeWithClient(ctx context.Context, nas string, client certificateClient, request certificate.ChangeRequest, pctx planContext) (CertificatePlan, error) {
@@ -267,7 +300,7 @@ func planCertificateChangeWithClient(ctx context.Context, nas string, client cer
 			return CertificatePlan{}, err
 		}
 	case certificate.ActionSetDefault:
-		if err := buildSetDefaultPlan(&plan, current, request.SetDefault); err != nil {
+		if err := buildSetDefaultPlan(&plan, current, request.SetDefault, pctx); err != nil {
 			return CertificatePlan{}, err
 		}
 	case certificate.ActionBindService:
@@ -355,8 +388,10 @@ func buildImportPlan(plan *CertificatePlan, current synology.Certificates, chang
 	return nil
 }
 
-func buildSetDefaultPlan(plan *CertificatePlan, current synology.Certificates, change *certificate.SetDefaultChange) error {
-	target, found := findObservedCertByID(current, change.ID)
+func buildSetDefaultPlan(plan *CertificatePlan, current synology.Certificates, change *certificate.SetDefaultChange, pctx planContext) error {
+	// Use the full certificate (with SANs), not the observed subset, so SAN
+	// coverage of the connection host can be validated like a DSM-desktop bind.
+	target, found := findCertByID(current, change.ID)
 	if !found {
 		return fmt.Errorf("certificate %q does not exist", change.ID)
 	}
@@ -366,11 +401,16 @@ func buildSetDefaultPlan(plan *CertificatePlan, current synology.Certificates, c
 	// Making a different certificate the default changes what the DSM desktop
 	// presents — it always affects the current session.
 	plan.CurrentSessionAffected = true
+	// The new default must cover the connection host, or making it the default is
+	// a plan-time error rather than a session lockout after apply.
+	if err := certificate.ValidateNamesCoverHost(target.SubjectAltNames, target.Subject.CommonName, pctx.host); err != nil {
+		return err
+	}
 	if !change.AcknowledgeCurrentSession {
 		return errCurrentSessionAck("set_default")
 	}
 	plan.Warnings = append(plan.Warnings, "changes the default certificate the DSM desktop presents; this can interrupt the current session")
-	plan.Summary = append(plan.Summary, fmt.Sprintf("set certificate %q (%s) as the default", change.ID, target.SubjectCN))
+	plan.Summary = append(plan.Summary, fmt.Sprintf("set certificate %q (%s) as the default", change.ID, target.Subject.CommonName))
 	return nil
 }
 
@@ -419,19 +459,42 @@ func verifyCertificatePostcondition(ctx context.Context, client certificateClien
 	}
 	switch plan.Request.Action {
 	case certificate.ActionImport:
-		// DSM's CRT list does not return a DER fingerprint, so verify the desired
-		// certificate's PUBLIC identity (subject CN + issuer CN + the SAN set)
-		// appears in the store. Full DER re-verification would require export
-		// (which extracts the key) and is a live-verification follow-up.
 		if plan.Desired == nil {
 			return nil
 		}
+		desired := *plan.Desired
+		// A current-session-affecting import re-pins the client to the new leaf's
+		// SHA-256 BEFORE this re-read, so a successful re-read has already ridden a
+		// TLS handshake that verified the exact leaf DER — that is the positive
+		// cryptographic proof the new certificate is installed and served. A
+		// same-identity match in the store is the confirmatory signal.
+		if plan.CurrentSessionAffected {
+			for _, cert := range state.Certificates {
+				if certMatchesDesired(cert, desired) {
+					return nil
+				}
+			}
+			return fmt.Errorf("imported certificate (subject %q) was not found in the store after apply", desired.Subject.CommonName)
+		}
+		// Not current-session: there is no TLS proof. DSM's CRT list exposes no
+		// serial or DER fingerprint, so a bare identity match (subject/issuer CN +
+		// SAN set) could be a STALE certificate of the same identity that DSM did
+		// not actually replace. Require the one distinguishing public field the
+		// list does expose — the validity window (valid_from/valid_till) — to also
+		// match the imported leaf.
 		for _, cert := range state.Certificates {
-			if certMatchesDesired(cert, *plan.Desired) {
+			if certMatchesDesired(cert, desired) && certValidityMatchesDesired(cert, desired) {
 				return nil
 			}
 		}
-		return fmt.Errorf("imported certificate (subject %q) was not found in the store after apply", plan.Desired.Subject.CommonName)
+		// No identity+validity match. For a replace we cannot prove the new key
+		// material installed (the list has no serial/fingerprint, and the validity
+		// window may coincide with the replaced certificate), so fail CLOSED rather
+		// than report a false success on a same-identity certificate.
+		if plan.Request.Import != nil && strings.TrimSpace(plan.Request.Import.ReplaceID) != "" {
+			return fmt.Errorf("certificate replace of %q applied but could not be positively verified: DSM's certificate list exposes no serial or fingerprint, and no installed certificate matches both the imported leaf's identity and its validity window; verify the certificate manually", plan.Request.Import.ReplaceID)
+		}
+		return fmt.Errorf("imported certificate (subject %q) matching the leaf's validity window was not found in the store after apply", desired.Subject.CommonName)
 	case certificate.ActionSetDefault:
 		for _, cert := range state.Certificates {
 			if cert.ID == plan.Request.SetDefault.ID {
@@ -486,6 +549,12 @@ func (s *Service) ExportCertificate(ctx context.Context, requestedNAS, certID, l
 	if strings.TrimSpace(localPath) == "" {
 		return ExportCertificateResult{}, fmt.Errorf("a local output path is required")
 	}
+	// Validate the destination BEFORE contacting the NAS so a bad path fails fast
+	// and the private-key archive is never fetched for a rejected write.
+	cleaned, err := safeExportPath(localPath)
+	if err != nil {
+		return ExportCertificateResult{}, err
+	}
 	name, client, err := s.certificateClient(ctx, requestedNAS)
 	if err != nil {
 		return ExportCertificateResult{}, err
@@ -495,19 +564,55 @@ func (s *Service) ExportCertificate(ctx context.Context, requestedNAS, certID, l
 		return ExportCertificateResult{}, authenticationError(name, err)
 	}
 	defer content.Body.Close()
-	file, err := os.OpenFile(localPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	written, err := writeCertificateExport(cleaned, content.Body)
 	if err != nil {
-		return ExportCertificateResult{}, fmt.Errorf("create local export file %q: %w", localPath, err)
+		return ExportCertificateResult{}, err
 	}
-	written, copyErr := io.Copy(file, content.Body)
+	return ExportCertificateResult{NAS: name, CertID: certID, LocalPath: cleaned, Bytes: written}, nil
+}
+
+// safeExportPath validates and cleans a caller-supplied export destination. The
+// archive holds a private key, so the write must not become an arbitrary-file
+// primitive: parent-directory (..) traversal is rejected, and the caller cannot
+// point the export at an existing file or symlink (see writeCertificateExport's
+// O_EXCL). It returns the cleaned path to write.
+func safeExportPath(localPath string) (string, error) {
+	trimmed := strings.TrimSpace(localPath)
+	if trimmed == "" {
+		return "", fmt.Errorf("a local output path is required")
+	}
+	cleaned := filepath.Clean(trimmed)
+	// After cleaning, any remaining ".." segment means the path escapes its
+	// starting directory; a legitimate export destination never needs to.
+	sep := string(filepath.Separator)
+	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+sep) || strings.Contains(cleaned, sep+".."+sep) || strings.HasSuffix(cleaned, sep+"..") {
+		return "", fmt.Errorf("export path must not traverse parent directories (..): %q", localPath)
+	}
+	return cleaned, nil
+}
+
+// writeCertificateExport streams the archive to path, refusing to overwrite an
+// existing file. O_EXCL removes the arbitrary-OVERWRITE primitive the export
+// would otherwise be (a caller-controlled path with O_TRUNC could clobber any
+// host file the process can write); it also fails when the final path component
+// is an existing symlink, defeating a symlink-swap redirect.
+func writeCertificateExport(path string, body io.Reader) (int64, error) {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return 0, fmt.Errorf("refusing to overwrite existing file %q; choose a new export path", path)
+		}
+		return 0, fmt.Errorf("create local export file %q: %w", path, err)
+	}
+	written, copyErr := io.Copy(file, body)
 	closeErr := file.Close()
 	if copyErr != nil {
-		return ExportCertificateResult{}, fmt.Errorf("write certificate archive to %q: %w", localPath, copyErr)
+		return 0, fmt.Errorf("write certificate archive to %q: %w", path, copyErr)
 	}
 	if closeErr != nil {
-		return ExportCertificateResult{}, fmt.Errorf("finalize certificate archive %q: %w", localPath, closeErr)
+		return 0, fmt.Errorf("finalize certificate archive %q: %w", path, closeErr)
 	}
-	return ExportCertificateResult{NAS: name, CertID: certID, LocalPath: localPath, Bytes: written}, nil
+	return written, nil
 }
 
 // --- helpers ---
@@ -622,6 +727,20 @@ func certMatchesDesired(cert certificate.Certificate, desired certificate.Desire
 		return false
 	}
 	return sameStringSet(cert.SubjectAltNames, desired.SubjectAltNames)
+}
+
+// certValidityMatchesDesired reports whether the installed certificate's
+// validity window equals the imported leaf's. It is the one distinguishing
+// public field beyond identity that CRT.list exposes (valid_from/valid_till);
+// the list carries no serial or DER fingerprint. When either side's window is
+// unparseable (Unix seconds 0), it cannot be compared and is not a match — so a
+// non-current-session import falls through to failing closed rather than
+// reporting an unverifiable success.
+func certValidityMatchesDesired(cert certificate.Certificate, desired certificate.DesiredCertificate) bool {
+	if cert.ValidFromUnix == 0 || cert.ValidTillUnix == 0 || desired.NotBeforeUnix == 0 || desired.NotAfterUnix == 0 {
+		return false
+	}
+	return cert.ValidFromUnix == desired.NotBeforeUnix && cert.ValidTillUnix == desired.NotAfterUnix
 }
 
 func certificateActionSupported(capabilities synology.CertificateCapabilities, action string) bool {
