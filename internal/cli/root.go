@@ -55,6 +55,7 @@ func New(version string) *cobra.Command {
 		newStorageCommand(opts),
 		newSurveillanceCommand(opts),
 		newSystemCommand(opts),
+		newSecurityAdvisorCommand(opts),
 	)
 	return root
 }

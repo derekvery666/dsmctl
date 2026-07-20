@@ -62,8 +62,8 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools() error = %v", err)
 	}
-	if len(tools.Tools) != 156 {
-		t.Fatalf("ListTools() returned %d tools, want 156", len(tools.Tools))
+	if len(tools.Tools) != 159 {
+		t.Fatalf("ListTools() returned %d tools, want 159", len(tools.Tools))
 	}
 	for _, tool := range tools.Tools {
 		if scope, ok := ToolScope(tool.Name); !ok || scope == "" {
@@ -146,6 +146,9 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"get_terminal_snmp_capabilities":      false,
 		"get_terminal_state":                  false,
 		"get_snmp_state":                      false,
+		"get_security_advisor_capabilities":   false,
+		"get_security_advisor_status":         false,
+		"get_security_advisor_schedule":       false,
 	}
 	mutationTools := map[string]bool{
 		"apply_account_plan":                false,
