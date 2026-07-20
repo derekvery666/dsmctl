@@ -3,7 +3,7 @@ id: WI-072
 title: Notification settings module
 status: in_progress
 priority: P2
-owner: "claude (dsm-notification-setup worktree)"
+owner: ""
 depends_on: [WI-006]
 parallel_group: C
 touches:
