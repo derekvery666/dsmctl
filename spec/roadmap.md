@@ -59,6 +59,11 @@ flowchart LR
   WI022 --> WI057["WI-057 Drive node views"]
   WI057 --> WI058["WI-058 Drive node restore"]
   WI022 --> WI059["WI-059 Drive log export"]
+  WI010 --> WI060["WI-060 Structured DSM errors"]
+  WI010 --> WI061["WI-061 Core observability logging"]
+  WI010 --> WI062["WI-062 CI matrix + live-test policy"]
+  WI044 -. "release policy" .-> WI063["WI-063 CLI/MCP schema stability"]
+  WI017 -. "sign the artifacts it ships" .-> WI064["WI-064 Release artifact signing"]
   WI023["WI-023 LAN device discovery"]
 ```
 
@@ -75,7 +80,7 @@ flowchart LR
 | [WI-007](work-items/WI-007-effective-access-explanation.md) | P1 | `done` | D | — | Explain effective share and application access across memberships and inheritance. |
 | WI-008 | P2 | `proposed` | E | product decisions | Encrypted-share keys, WORM, and custom Windows ACL safeguards. |
 | [WI-009](work-items/WI-009-credential-lifecycle.md) | P2 | `done` | D | — | Credential status/removal and trusted-device rotation. |
-| WI-010 | P1 | `proposed` | E | ongoing | Structured DSM errors, observability, CI matrix, packaging, and release policy. |
+| WI-010 | P1 | `proposed` | E | ongoing | **Decomposed** into WI-060 (structured DSM errors), WI-061 (observability logging), WI-062 (CI matrix + live-test policy), WI-063 (CLI/MCP schema stability), and WI-064 (release-artifact signing). Umbrella tracker only; implement the children. |
 | [WI-011](work-items/WI-011-control-panel-time-mutation.md) | P2 | `done` | C | WI-006 | Guarded time zone, display format, and NTP changes. |
 | [WI-012](work-items/WI-012-file-services-smb-nfs.md) | P1 | `done` | C | WI-006 | Guarded global SMB and NFS state and settings. |
 | [WI-013](work-items/WI-013-ssd-cache.md) | P2 | `done` | A | WI-001, WI-002, WI-003 | SSD cache inventory and guarded create/remove (expand/convert modeled, backend-gated). |
@@ -125,6 +130,11 @@ flowchart LR
 | [WI-051](work-items/WI-051-office-admin.md) | P2 | `done` | C | WI-019, WI-022 | Synology Office settings module: info/system-setting/preferences/fonts reads + guarded system and preference writes (package-gated on `Spreadsheet`), CLI + MCP, live-verified; font mutations and per-object settings deferred. |
 | [WI-052](work-items/WI-052-office-font-management.md) | P2 | `done` | C | WI-051 | Guarded Office custom-font name-registry management (add/enable/disable/delete) as a third Office change scope; custom/enabled font read fields; TTF upload deferred. |
 | [WI-049](work-items/WI-049-file-station.md) | P1 | `done` | C | WI-006 | Full read/write FileStation module (core SYNO.FileStation.*), shipped + live-verified end-to-end on DSM 7.3: reads (list/stat/search/dir-size/md5/virtual-folders/permission-check), streaming download+upload binary transport, and the mutation surface (create/rename/copy/move/delete/compress/extract/upload + sharing links) via hash-bound plan/apply, plus favorites and background-task list — across CLI (`file …`) and MCP (114 tools; read-only gateway strips writes + content transfer). Follow-ons shipped + live-verified: Sharing edit/clear_invalid, image Thumb.get (streaming binary read, gateway-stripped), and BackgroundTask.clear_finished; transfer errors now redact _sid/SynoToken. |
+| [WI-060](work-items/WI-060-structured-dsm-errors.md) | P1 | `ready` | E | — | Structured DSM error taxonomy: a closed category set classified from API codes, preserved through wrapping, rendered as documented CLI exit codes and machine-readable MCP `category` fields, with bounded retry of transient reads only and a secret-hygiene test. |
+| [WI-061](work-items/WI-061-core-observability-logging-redaction.md) | P1 | `ready` | E | — | Core opt-in structured logging (`--log-level`/`DSMCTL_LOG_LEVEL`) with a redaction guarantee and per-DSM-call correlation id/timing, for the CLI and stdio MCP; reuses the gateway's redaction/correlation seams without touching its audit store. |
+| [WI-062](work-items/WI-062-ci-matrix-live-test-policy.md) | P1 | `ready` | E | — | CI test matrix (ubuntu + windows unit/request-capture gate), a guard that live-test env vars stay unset so destructive mutations can never run in CI, and an in-repo DSM compatibility evidence record. |
+| [WI-063](work-items/WI-063-cli-mcp-schema-stability-policy.md) | P1 | `proposed` | E | WI-044 | CLI/MCP schema-stability policy (M4): covered-surface set, stable/experimental tiers, deprecation window, changelog discipline, and golden drift guards; blocked on the compatibility-window and breaking-change-signal product decisions. |
+| [WI-064](work-items/WI-064-release-artifact-signing-verification.md) | P2 | `proposed` | E | WI-017 | Sign and verify WI-017's release artifacts: signed SHA256SUMS, DSSE provenance bound to digests, attested SBOM, and an offline-capable `verify-release.sh`; blocked on the signing root-of-trust product decision. |
 
 Parallel groups indicate likely file overlap. Items in different groups may run
 at the same time after checking their `touches` lists. Only one agent should
