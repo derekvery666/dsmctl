@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -101,11 +102,38 @@ type Client struct {
 	preserveSession bool
 	logger          *slog.Logger
 
+	retry retryPolicy
+	// sleep waits for d honoring ctx cancellation. It is a field so tests can
+	// inject a deterministic, non-blocking sleeper instead of the wall clock.
+	sleep func(ctx context.Context, d time.Duration) error
+
 	mu         sync.Mutex
 	target     compatibility.Target
 	apiChecked map[string]bool
 	sid        string
 	synoToken  string
+}
+
+// retryPolicy bounds automatic retry of a read-only call whose failure
+// classifies as transient or rate-limit: at most MaxAttempts tries (including
+// the first), with jittered exponential backoff from BaseDelay, each capped at
+// MaxDelay, and no more than Budget spent sleeping in total.
+type retryPolicy struct {
+	MaxAttempts int
+	BaseDelay   time.Duration
+	MaxDelay    time.Duration
+	Budget      time.Duration
+}
+
+// defaultRetryPolicy is applied to read-only calls. Mutating calls ignore it
+// (they pass readOnly=false and run exactly once).
+func defaultRetryPolicy() retryPolicy {
+	return retryPolicy{
+		MaxAttempts: 3,
+		BaseDelay:   200 * time.Millisecond,
+		MaxDelay:    2 * time.Second,
+		Budget:      8 * time.Second,
+	}
 }
 
 type envelope struct {
@@ -149,6 +177,8 @@ func NewClient(options Options) (*Client, error) {
 		httpClient:      httpClient,
 		preserveSession: options.PreserveSessionOnClose,
 		logger:          options.Logger,
+		retry:           defaultRetryPolicy(),
+		sleep:           sleepWithContext,
 		target:          compatibility.NewTarget(),
 		apiChecked:      make(map[string]bool),
 		sid:             options.SessionID,
@@ -427,7 +457,7 @@ func (c *Client) executeLocked(ctx context.Context, call compatibility.Request) 
 		params.Set("SynoToken", c.synoToken)
 	}
 
-	data, err := c.requestLocked(ctx, info.Path, params, call.API, call.Method)
+	data, err := c.requestWithRetryLocked(ctx, info.Path, params, call.API, call.Method, call.ReadOnly)
 	if isSessionError(err) {
 		c.sid = ""
 		c.synoToken = ""
@@ -445,7 +475,7 @@ func (c *Client) executeLocked(ctx context.Context, call compatibility.Request) 
 		if c.synoToken != "" {
 			params.Set("SynoToken", c.synoToken)
 		}
-		return c.requestLocked(ctx, info.Path, params, call.API, call.Method)
+		return c.requestWithRetryLocked(ctx, info.Path, params, call.API, call.Method, call.ReadOnly)
 	}
 	return data, err
 }
@@ -608,13 +638,28 @@ func (c *Client) requestLocked(ctx context.Context, apiPath string, params url.V
 	response, err := c.httpClient.Do(request)
 	if err != nil {
 		c.logRequest(ctx, api, method, params.Get("version"), apiPath, 0, started)
-		return nil, fmt.Errorf("request %s: %w", endpoint.Redacted(), err)
+		// A caller-driven cancellation or deadline is not a transient DSM
+		// failure and must never be retried; surface it unclassified (Classify
+		// returns unknown) while still wrapping it so errors.Is keeps working.
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("request %s: %w", endpoint.Redacted(), err)
+		}
+		// Any other transport-level failure (timeout, connection reset/refused,
+		// DNS) is a temporary condition worth retrying on a read-only call.
+		return nil, &HTTPError{Endpoint: endpoint.Redacted(), category: CategoryTransient, Cause: err}
 	}
 	defer response.Body.Close()
 	c.logRequest(ctx, api, method, params.Get("version"), apiPath, response.StatusCode, started)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-		return nil, fmt.Errorf("request %s returned HTTP %s", endpoint.Redacted(), response.Status)
+		switch {
+		case response.StatusCode == http.StatusTooManyRequests:
+			return nil, &HTTPError{Endpoint: endpoint.Redacted(), Status: response.StatusCode, StatusText: response.Status, category: CategoryRateLimit}
+		case response.StatusCode >= 500:
+			return nil, &HTTPError{Endpoint: endpoint.Redacted(), Status: response.StatusCode, StatusText: response.Status, category: CategoryTransient}
+		default:
+			return nil, fmt.Errorf("request %s returned HTTP %s", endpoint.Redacted(), response.Status)
+		}
 	}
 
 	decoder := json.NewDecoder(io.LimitReader(response.Body, maxBodySize))
@@ -630,6 +675,89 @@ func (c *Client) requestLocked(ctx context.Context, apiPath string, params url.V
 		return nil, &APIError{API: api, Method: method, Code: code}
 	}
 	return result.Data, nil
+}
+
+// requestWithRetryLocked performs a single requestLocked call and, only when the
+// call site marked itself readOnly, retries a transient or rate-limit HTTP-level
+// failure with bounded, jittered exponential backoff. A mutating call
+// (readOnly=false) is issued exactly once and never auto-retried — DSM POSTs are
+// not idempotent, so eligibility is a property of the call site, not the verb.
+// Retry stops on the first success, the first non-retryable error, the attempt
+// cap, an exhausted time budget, or context cancellation.
+func (c *Client) requestWithRetryLocked(ctx context.Context, apiPath string, params url.Values, api, method string, readOnly bool) (json.RawMessage, error) {
+	if !readOnly || c.retry.MaxAttempts <= 1 {
+		return c.requestLocked(ctx, apiPath, params, api, method)
+	}
+	deadline := time.Now().Add(c.retry.Budget)
+	delay := c.retry.BaseDelay
+	var lastErr error
+	for attempt := 1; ; attempt++ {
+		data, err := c.requestLocked(ctx, apiPath, params, api, method)
+		if err == nil {
+			return data, nil
+		}
+		lastErr = err
+		if !isRetryable(err) || attempt >= c.retry.MaxAttempts {
+			return nil, err
+		}
+		wait := jitterDelay(delay, c.retry.MaxDelay)
+		if remaining := time.Until(deadline); remaining <= 0 {
+			return nil, lastErr
+		} else if wait > remaining {
+			wait = remaining
+		}
+		if sleepErr := c.sleep(ctx, wait); sleepErr != nil {
+			// The context was cancelled or expired during backoff; report that,
+			// not the retryable HTTP error, so the caller sees the cancellation.
+			return nil, sleepErr
+		}
+		if delay < c.retry.MaxDelay {
+			delay *= 2
+		}
+	}
+}
+
+// isRetryable reports whether err is safe to retry automatically: only a
+// transient or rate-limit HTTP-level failure qualifies. Auth, permission,
+// not-found, invalid-input, unsupported, conflict, and unknown never retry.
+func isRetryable(err error) bool {
+	switch Classify(err) {
+	case CategoryTransient, CategoryRateLimit:
+		return true
+	default:
+		return false
+	}
+}
+
+// jitterDelay applies full jitter to base — a uniformly random value in
+// [base/2, base] — capped at maxDelay, so concurrent retriers do not synchronize
+// their back-off.
+func jitterDelay(base, maxDelay time.Duration) time.Duration {
+	if base > maxDelay {
+		base = maxDelay
+	}
+	if base <= 0 {
+		return 0
+	}
+	half := base / 2
+	return half + time.Duration(rand.Int63n(int64(base-half)+1))
+}
+
+// sleepWithContext waits for d or until ctx is done, whichever comes first,
+// returning ctx.Err() when the context ends first. It is the production sleeper;
+// tests inject a deterministic one.
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return ctx.Err()
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // HasSession reports whether this client currently holds a DSM session ID

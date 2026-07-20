@@ -1271,6 +1271,11 @@ type applyDriveTeamFolderPlanOutput struct {
 func New(service *application.Service, version string) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "dsmctl", Version: version}, nil)
 
+	// A single central hook classifies every failed tool result and attaches its
+	// stable DSM error category, so no per-tool handler needs to know the
+	// taxonomy. See categoryErrorMiddleware.
+	server.AddReceivingMiddleware(categoryErrorMiddleware())
+
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_nas",
 		Description: "List configured Synology NAS connection profiles. Passwords are never returned.",

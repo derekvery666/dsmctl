@@ -65,6 +65,41 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("Synology API %s.%s failed with code %d", e.API, e.Method, e.Code)
 }
 
+// HTTPError is a transport- or HTTP-level failure that produced no DSM JSON
+// envelope: a network/transport error (timeout, connection reset/refused) or a
+// non-2xx HTTP status. It carries a stable Category — CategoryTransient or
+// CategoryRateLimit — so Classify and the read-only retry loop can react to a
+// failure that has no DSM application code. Endpoint is already redacted (it is
+// built from url.URL.Redacted, so it never contains a SID or SynoToken), and
+// the type never embeds request parameters or a response body, so a rendered
+// HTTPError carries no secret.
+type HTTPError struct {
+	// Endpoint is the redacted request URL (never contains _sid/SynoToken).
+	Endpoint string
+	// Status is the HTTP status code, or 0 for a transport-level failure.
+	Status int
+	// StatusText is the HTTP status line (e.g. "503 Service Unavailable"); it
+	// is empty for a transport-level failure.
+	StatusText string
+	category   Category
+	// Cause is the underlying transport error for a transport-level failure, so
+	// errors.Is against context.Canceled / a net error still works. It is nil
+	// for a non-2xx status.
+	Cause error
+}
+
+func (e *HTTPError) Error() string {
+	if e.Status != 0 {
+		return fmt.Sprintf("request %s returned HTTP %s", e.Endpoint, e.StatusText)
+	}
+	return fmt.Sprintf("request %s: %v", e.Endpoint, e.Cause)
+}
+
+func (e *HTTPError) Unwrap() error { return e.Cause }
+
+// Category reports the stable classification of this HTTP-level failure.
+func (e *HTTPError) Category() Category { return e.category }
+
 // isSessionError reports a DSM error that means the session is no longer usable:
 // 106 (timeout), 107 (interrupted by a duplicate sign-in elsewhere), or 119
 // (SID missing/invalid). Each triggers a browserless resume attempt.

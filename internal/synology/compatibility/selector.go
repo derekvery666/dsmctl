@@ -21,6 +21,12 @@ type Request struct {
 	// EncryptedParameters names secret JSON fields that DSM's legacy non-TLS
 	// parameter envelope must protect.
 	EncryptedParameters []string
+	// ReadOnly marks a call that is safe to retry automatically on a transient
+	// or rate-limit HTTP failure. It is a property of the CALL SITE, not the
+	// HTTP verb: every DSM call is a POST, so idempotency cannot be inferred
+	// from the method. It must stay false (the default) for any request that
+	// mutates DSM state — a plan/apply or any write is never auto-retried.
+	ReadOnly bool
 }
 
 type Executor interface {

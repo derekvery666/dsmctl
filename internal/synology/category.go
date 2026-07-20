@@ -98,5 +98,9 @@ func Classify(err error) Category {
 	if errors.As(err, &apiErr) {
 		return apiErr.Category()
 	}
+	var httpErr *HTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.Category()
+	}
 	return CategoryUnknown
 }

@@ -28,13 +28,14 @@ with the same category string. Transient DSM failures on read-only calls are
 retried with bounded backoff; mutations are never silently retried. No rendered
 error ever contains a SID, SynoToken, password, or OTP.
 
-> Status (2026-07-20): the taxonomy + CLI exit-code half of this outcome is
-> **shipped**; the two clauses describing *machine-readable MCP structured error
-> content with the category string* and *transient read-only retry with backoff*
-> are the **deferred** follow-on target, not yet implemented
-> (`CategoryTransient`/`CategoryRateLimit` are defined but not yet produced by any
-> classifier, and no MCP error middleware injects the category). See the split
-> Acceptance criteria and the Handoff for the exact boundary.
+> Status (2026-07-20): the full outcome is now implemented. The taxonomy +
+> CLI exit-code half shipped earlier; the deferred follow-on — *machine-readable
+> MCP structured error content with the category string* and *transient/rate-limit
+> HTTP typing with read-only retry* — is now implemented on this branch and ready
+> for review. `CategoryTransient`/`CategoryRateLimit` are now produced by the
+> `HTTPError` classifier, and a single MCP receiving-middleware injects the
+> category on every tool error. See the split Acceptance criteria and the Handoff
+> for the exact boundary.
 
 ## Scope
 
@@ -125,16 +126,28 @@ Core taxonomy + CLI exit codes shipped 2026-07-20 (commit on main):
 - [x] `docs/errors.md` documents the category set and the exit-code table; the
       roadmap row is updated.
 
-Deferred to a follow-on (a coherent second slice; noted in Handoff):
+Deferred follow-on shipped 2026-07-20 (this branch):
 
-- [ ] Each MCP tool error result carries a stable `category` field in structured
-      content — needs a central error-middleware over all ~146 tool handlers, not
-      146 per-tool edits.
-- [ ] HTTP-level transient/rate-limit typing (timeouts, 5xx, resets, 429) and
-      bounded retry of read-only calls with backoff — needs HTTP-error
-      classification in the request path plus call-site retry-eligibility
-      threading (no current DSM app-code maps to transient/rate-limit, so retry
-      is inert until HTTP errors are typed).
+- [x] Each MCP tool error result carries a stable `category` field in structured
+      content — implemented as a single receiving-middleware hook
+      (`internal/mcpserver/error_category.go`, wired once in `New`) that recovers
+      the handler's typed error via the SDK's `CallToolResult.GetError` and
+      classifies it with `synology.Classify`, so all tools gain the field with no
+      per-tool edits. Unit-tested (`error_category_test.go`): the category
+      matches `synology.Classify`, `SessionExpiredError`/OTP map to `auth`, and
+      no SID/token leaks into the serialized result.
+- [x] HTTP-level transient/rate-limit typing (timeouts, 5xx, resets, 429) and
+      bounded retry of read-only calls with backoff — `requestLocked` now emits a
+      typed `HTTPError` (`5xx`/transport → `transient`, `429` → `rate-limit`; a
+      caller cancellation stays unclassified), `Classify` recognizes it, and
+      `requestWithRetryLocked` retries only `transient`/`rate-limit` failures on
+      calls whose site set `compatibility.Request.ReadOnly` (threaded through
+      `executeLocked`), with a fixed attempt cap, a total time budget, full
+      jitter, and an injectable sleeper. Mutations (`ReadOnly` false, the
+      default) are issued exactly once. Unit-tested with a fake transport
+      (`retry_test.go`): read-only retries a 503/429/timeout sequence then
+      succeeds, a mutation does not retry, cancellation and an exhausted budget
+      abort promptly, and the rendered error carries no SID/token.
 
 ## Verification
 
@@ -162,20 +175,33 @@ Deferred to a follow-on (a coherent second slice; noted in Handoff):
 
 ## Handoff
 
-2026-07-20: the taxonomy foundation and CLI exit-code surface shipped
-(`internal/synology/category.go`, `internal/cli/exitcode.go`,
+2026-07-20 (foundation): the taxonomy foundation and CLI exit-code surface
+shipped (`internal/synology/category.go`, `internal/cli/exitcode.go`,
 `cmd/dsmctl/main.go`, `docs/errors.md`, with `category_test.go` and
-`exitcode_test.go`). Two pieces remain, deliberately split into a follow-on
-because each needs a design decision rather than more of the same wiring:
+`exitcode_test.go`).
 
-1. **MCP structured `category` field.** The SDK turns a handler's returned Go
-   error into an error result with just the message. Surfacing the category on
-   every tool needs one central wrapper around `mcp.AddTool` (or an interceptor)
-   so all ~146 tools gain the field uniformly — not 146 edits. `synology.Classify`
-   is ready to supply the value.
-2. **Transient retry.** No DSM app-code currently classifies as `transient` or
-   `rate-limit`; those only arise from HTTP-level failures (timeout, 5xx, reset,
-   429) that the request path does not yet type. The retry loop is only
-   meaningful once `requestLocked` classifies those into `CategoryTransient` /
-   `CategoryRateLimit`, and the retry must be gated on a call-site read-only flag
-   (never the HTTP verb — all DSM calls are POST). Use an injectable clock.
+2026-07-20 (follow-on, this branch — ready for review): both remaining pieces
+are implemented.
+
+1. **MCP structured `category` field.** Chosen interception point is the SDK's
+   `Server.AddReceivingMiddleware`, not a wrapper around `mcp.AddTool`. The SDK's
+   typed handler converts a returned Go error into a `CallToolResult` and stashes
+   the original error on it (retrievable with `CallToolResult.GetError`), so a
+   single receiving-middleware hook (`internal/mcpserver/error_category.go`,
+   registered once in `New`) recovers that typed error, runs `synology.Classify`,
+   and sets `StructuredContent` to `{category, message}`. This required **zero**
+   per-tool edits. The client performs no output-schema validation of an error
+   result's structured content, so attaching the payload there is safe.
+2. **Transient/rate-limit typing + read-only retry.** `requestLocked` now returns
+   a typed `HTTPError` (`internal/synology/errors.go`) for HTTP-level failures —
+   `5xx`/transport errors → `CategoryTransient`, `429` → `CategoryRateLimit`, and
+   a caller cancellation is left unclassified so it is never retried — and
+   `Classify` recognizes it. Retry eligibility is threaded from the call site via
+   the new `compatibility.Request.ReadOnly` field through `executeLocked` into
+   `requestWithRetryLocked`, which retries only `transient`/`rate-limit` failures
+   with a fixed attempt cap, a total time budget, and full jitter, using an
+   injectable `Client.sleep` (defaults to `sleepWithContext`) so tests stay
+   deterministic. The systeminfo bootstrap read opts in (`ReadOnly: true`) as a
+   representative live call site; other read operations can opt in the same
+   mechanical way — this is the only remaining incremental work, and it is safe
+   by default (any request that does not set `ReadOnly` is never auto-retried).

@@ -60,9 +60,10 @@ func coreVariant(name string, version, priority int, fields fieldAliases) compat
 		Match:    compatibility.APIVersion(APIName, version),
 		Execute: func(ctx context.Context, executor compatibility.Executor, _ Input) (Info, error) {
 			data, err := executor.Execute(ctx, compatibility.Request{
-				API:     APIName,
-				Version: version,
-				Method:  "info",
+				API:      APIName,
+				Version:  version,
+				Method:   "info",
+				ReadOnly: true,
 			})
 			if err != nil {
 				return Info{}, fmt.Errorf("call %s.info v%d: %w", APIName, version, err)

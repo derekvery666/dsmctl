@@ -29,6 +29,14 @@ unsupported; `105/108/402/407` → permission; `106/107/119` → auth (session);
 `400/401/403/404/406` → auth (login / two-step). A `SessionExpiredError` and an
 `OTPRequiredError` both classify as `auth`.
 
+DSM answers most failures with an application code inside a 2xx envelope, but a
+call can also fail below that layer with no code at all. Those HTTP-level
+failures are typed too: an HTTP `429` classifies as `rate-limit`; a `5xx` status
+and any transport error (timeout, connection reset/refused) classify as
+`transient`. A caller-driven context cancellation is deliberately left
+`unknown` so it is never mistaken for a retryable condition. Other non-2xx
+statuses (for example a bare `4xx`) stay `unknown`.
+
 ## CLI exit codes
 
 `dsmctl` exits with a category-specific code so a script can react without
@@ -48,17 +56,37 @@ when one is confidently classified (for example `Error (auth): …`).
 | 8 | transient |
 | 9 | unsupported |
 
+## MCP structured error category
+
+Every MCP tool error result carries the same category as a machine-readable
+field, so a model or client can branch without parsing the prose. A failed
+`tools/call` returns `isError: true` with structured content shaped like:
+
+```json
+{ "category": "auth", "message": "the DSM session for NAS \"lab\" has ended; sign in again with 'dsmctl auth login --nas lab'" }
+```
+
+The category is derived from the handler's typed Go error via
+`synology.Classify` — not by string-matching the message — through a single
+receiving-middleware hook, so all tools gain the field uniformly with no
+per-tool wiring. `SessionExpiredError` and OTP guidance still classify as `auth`.
+
+## Read-only retry
+
+A DSM call that a read-only call site marks retry-eligible and that fails with a
+`transient` or `rate-limit` HTTP-level error is retried automatically with
+bounded, jittered exponential backoff (a fixed attempt cap and a total time
+budget), honoring context cancellation. Eligibility is a property of the call
+site, never the HTTP verb: every DSM call is a POST, so a plan/apply or any other
+mutation is issued exactly once and is never auto-retried.
+
 ## Secret hygiene
 
 A rendered DSM error never contains a SID, SynoToken, password, or OTP: the
-`APIError` message is API/method/code only, and binary-transfer errors mask the
-`_sid` / `SynoToken` query parameters (`url.URL.Redacted` masks only userinfo, so
-the transport redacts those explicitly — see the FileStation transfer notes).
-
-## Not yet surfaced
-
-A machine-readable `category` field on every MCP tool error, and automatic
-bounded retry of transient/rate-limit read-only calls, are a planned follow-on
-(see [WI-060](../spec/work-items/WI-060-structured-dsm-errors.md)): the MCP field
-needs a single error-middleware over all tool handlers, and retry needs the
-request path to first classify HTTP-level timeouts/5xx/429 as transient.
+`APIError` message is API/method/code only; an `HTTPError` renders only the
+redacted endpoint and HTTP status (never the request parameters or body); and
+binary-transfer errors mask the `_sid` / `SynoToken` query parameters
+(`url.URL.Redacted` masks only userinfo, so the transport redacts those
+explicitly — see the FileStation transfer notes). The MCP category hook forwards
+that already-redacted message and adds only the fixed category enum, so it
+introduces no new secret surface.
