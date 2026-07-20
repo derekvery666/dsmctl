@@ -966,6 +966,11 @@ type planPackageInstallInput struct {
 	QuickInstall    *bool `json:"quick_install,omitempty" jsonschema:"Quick install with defaults (no configuration wizard); defaults to true"`
 }
 
+type planPackageUpdateInput struct {
+	NAS       string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	PackageID string `json:"package_id" jsonschema:"Installed package identifier with an available update (see get_package_available with updates_only)"`
+}
+
 type planPackageInstallOutput struct {
 	Plan application.PackageInstallPlan `json:"plan" jsonschema:"Resolved install intent (dependencies first) bound to an approval hash"`
 }
@@ -2612,6 +2617,19 @@ func New(service *application.Service, version string) *mcp.Server {
 			quickInstall = *input.QuickInstall
 		}
 		plan, err := service.PlanPackageInstall(ctx, input.NAS, input.PackageID, input.VolumePath, runAfterInstall, quickInstall)
+		if err != nil {
+			return nil, planPackageInstallOutput{}, err
+		}
+		return nil, planPackageInstallOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_package_update",
+		Title:       "Plan a guarded package upgrade",
+		Description: "Resolve upgrading one installed package to the version offered by the online package server and return a hash-bound plan (apply it with apply_package_install_plan). Missing new dependencies install first; the apply confirms the new version in the inventory. Upgrades have no supported downgrade path, so plans are always high risk. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planPackageUpdateInput) (*mcp.CallToolResult, planPackageInstallOutput, error) {
+		plan, err := service.PlanPackageUpdate(ctx, input.NAS, input.PackageID)
 		if err != nil {
 			return nil, planPackageInstallOutput{}, err
 		}

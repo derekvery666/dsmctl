@@ -122,6 +122,42 @@ func TestPackageInstallPlanResolvesDependenciesAndHash(t *testing.T) {
 		t.Fatalf("already-installed error = %v", err)
 	}
 
+	// Update mode: the installed target upgrades to the offered version.
+	updater := testPackageClient()
+	updater.packages = append(updater.packages, packagecenter.Package{ID: "SurveillanceStation", Version: "9.2.0", Status: packagecenter.StatusRunning, Volume: "/volume1"})
+	updater.catalog = synology.PackageCatalog{Packages: []packagecenter.AvailablePackage{
+		{ID: "SurveillanceStation", Name: "Surveillance Station", Version: "9.2.3", DownloadLink: "https://example/ss.spk", Installed: true, UpdateAvailable: true},
+	}}
+	updatePlan, err := planPackageInstallOrUpdateWithClient(context.Background(), "lab", updater, "SurveillanceStation", "", true, true, true)
+	if err != nil {
+		t.Fatalf("update plan error = %v", err)
+	}
+	if !updatePlan.Update || updatePlan.InstalledVersion != "9.2.0" || updatePlan.VolumePath != "/volume1" || len(updatePlan.Steps) != 1 {
+		t.Fatalf("update plan = %#v", updatePlan)
+	}
+	foundNoRollback := false
+	for _, warning := range updatePlan.Warnings {
+		if strings.Contains(warning, "downgrade") {
+			foundNoRollback = true
+		}
+	}
+	if !foundNoRollback {
+		t.Fatalf("update warnings = %#v", updatePlan.Warnings)
+	}
+	// Already at the offered version → rejected.
+	upToDate := testPackageClient()
+	upToDate.packages = append(upToDate.packages, packagecenter.Package{ID: "SurveillanceStation", Version: "9.2.3", Status: packagecenter.StatusRunning})
+	upToDate.catalog = synology.PackageCatalog{Packages: []packagecenter.AvailablePackage{
+		{ID: "SurveillanceStation", Version: "9.2.3", DownloadLink: "https://example/ss.spk", Installed: true},
+	}}
+	if _, err := planPackageInstallOrUpdateWithClient(context.Background(), "lab", upToDate, "SurveillanceStation", "", true, true, true); err == nil || !strings.Contains(err.Error(), "already at the offered version") {
+		t.Fatalf("up-to-date error = %v", err)
+	}
+	// Updating something not installed → rejected.
+	if _, err := planPackageInstallOrUpdateWithClient(context.Background(), "lab", testPackageClient(), "SurveillanceStation", "", true, true, true); err == nil || !strings.Contains(err.Error(), "not installed") {
+		t.Fatalf("not-installed error = %v", err)
+	}
+
 	// A required dependency that is neither installed nor offered is a hard
 	// precheck error naming both packages.
 	missingDep := testPackageClient()

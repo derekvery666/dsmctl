@@ -97,6 +97,8 @@ type PackageInstallPlan struct {
 	Version         string               `json:"version" jsonschema:"Offered target version to install"`
 	VolumePath      string               `json:"volume_path" jsonschema:"Target install volume path"`
 	RunAfterInstall bool                 `json:"run_after_install" jsonschema:"Whether the packages start after install"`
+	Update          bool                 `json:"update,omitempty" jsonschema:"Whether this plan upgrades an installed package instead of installing a new one"`
+	InstalledVersion string              `json:"installed_version,omitempty" jsonschema:"Version installed when the upgrade was planned"`
 	Dependencies    []string             `json:"dependencies,omitempty" jsonschema:"Missing dependency packages that will be installed first, in order"`
 	Steps           []PackageInstallStep `json:"steps" jsonschema:"Ordered install steps: missing dependencies first, target last"`
 	Risk            string               `json:"risk" jsonschema:"Plan risk level"`
@@ -149,15 +151,26 @@ func (s *Service) PlanPackageInstall(ctx context.Context, requestedNAS, packageI
 }
 
 func planPackageInstallWithClient(ctx context.Context, nas string, client packageClient, packageID, volumePath string, runAfterInstall, quickInstall bool) (PackageInstallPlan, error) {
+	return planPackageInstallOrUpdateWithClient(ctx, nas, client, packageID, volumePath, runAfterInstall, quickInstall, false)
+}
+
+func planPackageInstallOrUpdateWithClient(ctx context.Context, nas string, client packageClient, packageID, volumePath string, runAfterInstall, quickInstall, update bool) (PackageInstallPlan, error) {
 	state, err := client.PackageState(ctx)
 	if err != nil {
 		return PackageInstallPlan{}, authenticationError(nas, err)
 	}
 	installed := make(map[string]bool, len(state.Packages))
+	installedVersion, installedVolume := "", ""
 	for _, pkg := range state.Packages {
 		installed[pkg.ID] = true
+		if pkg.ID == packageID {
+			installedVersion, installedVolume = pkg.Version, pkg.Volume
+		}
 	}
-	if installed[packageID] {
+	if update && installedVersion == "" {
+		return PackageInstallPlan{}, fmt.Errorf("package %q is not installed; use install instead of update", packageID)
+	}
+	if !update && installed[packageID] {
 		return PackageInstallPlan{}, fmt.Errorf("package %q is already installed", packageID)
 	}
 	catalog, err := client.PackageCatalog(ctx)
@@ -167,6 +180,21 @@ func planPackageInstallWithClient(ctx context.Context, nas string, client packag
 	offeredByID := make(map[string]*packagecenter.AvailablePackage, len(catalog.Packages))
 	for i := range catalog.Packages {
 		offeredByID[catalog.Packages[i].ID] = &catalog.Packages[i]
+	}
+	if update {
+		target, ok := offeredByID[packageID]
+		if !ok {
+			return PackageInstallPlan{}, fmt.Errorf("package %q is not offered by the online package server", packageID)
+		}
+		if !target.UpdateAvailable || target.Version == installedVersion {
+			return PackageInstallPlan{}, fmt.Errorf("package %q is already at the offered version %s", packageID, installedVersion)
+		}
+		// The target must not be skipped as already-installed while its
+		// missing dependencies still resolve deps-first.
+		installed[packageID] = false
+		if volumePath == "" {
+			volumePath = installedVolume
+		}
 	}
 
 	// Resolve the dependency closure (deps-first) from the catalog deppkgs, so
@@ -179,8 +207,12 @@ func planPackageInstallWithClient(ctx context.Context, nas string, client packag
 
 	plan := PackageInstallPlan{
 		APIVersion: packageInstallAPIVersion, NAS: nas, PackageID: packageID, VolumePath: volumePath, RunAfterInstall: runAfterInstall,
+		Update: update, InstalledVersion: installedVersion,
 		Risk:     "high",
 		Warnings: []string{"installing downloads and runs third-party software on the NAS"},
+	}
+	if update {
+		plan.Warnings = append(plan.Warnings, "package upgrades have no supported downgrade path; the previous version cannot be restored")
 	}
 	target := offeredByID[packageID]
 	plan.Name, plan.Version = target.Name, target.Version
@@ -199,7 +231,11 @@ func planPackageInstallWithClient(ctx context.Context, nas string, client packag
 			plan.Warnings = append(plan.Warnings, fmt.Sprintf("%s is a beta version", pkg.ID))
 		}
 	}
-	plan.Summary = append(plan.Summary, fmt.Sprintf("install %s %s to %s", target.ID, target.Version, volumePath))
+	if update {
+		plan.Summary = append(plan.Summary, fmt.Sprintf("upgrade %s from %s to %s", target.ID, installedVersion, target.Version))
+	} else {
+		plan.Summary = append(plan.Summary, fmt.Sprintf("install %s %s to %s", target.ID, target.Version, volumePath))
+	}
 	if len(plan.Dependencies) > 0 {
 		plan.Warnings = append(plan.Warnings, fmt.Sprintf("%s requires %d dependency package(s) that will be installed first: %s", packageID, len(plan.Dependencies), strings.Join(plan.Dependencies, ", ")))
 	}
@@ -253,6 +289,29 @@ func resolveInstallOrder(targetID string, offered map[string]*packagecenter.Avai
 	return order, nil
 }
 
+// PlanPackageUpdate plans upgrading one installed package to the offered
+// version. It reuses the install plan machinery: same hash-bound contract,
+// same dependency resolution, and the apply confirms the new version in the
+// inventory instead of mere presence.
+func (s *Service) PlanPackageUpdate(ctx context.Context, requestedNAS, packageID string) (PackageInstallPlan, error) {
+	if strings.TrimSpace(packageID) == "" {
+		return PackageInstallPlan{}, fmt.Errorf("update requires a package id")
+	}
+	name, client, err := s.packageClient(ctx, requestedNAS)
+	if err != nil {
+		return PackageInstallPlan{}, err
+	}
+	plan, err := planPackageInstallOrUpdateWithClient(ctx, name, client, packageID, "", true, true, true)
+	if err != nil {
+		return PackageInstallPlan{}, err
+	}
+	plan.ProfileRevision, err = s.profileRevision(ctx, name)
+	if err == nil {
+		plan.Hash, err = packageInstallPlanHash(plan)
+	}
+	return plan, err
+}
+
 func (s *Service) ApplyPackageInstallPlan(ctx context.Context, plan PackageInstallPlan, approvalHash string) (PackageInstallApplyResult, error) {
 	if strings.TrimSpace(approvalHash) == "" || approvalHash != plan.Hash {
 		return PackageInstallApplyResult{}, fmt.Errorf("approval hash does not match the install plan")
@@ -287,9 +346,17 @@ func (s *Service) ApplyPackageInstallPlan(ctx context.Context, plan PackageInsta
 	// dependency aborts before the target is attempted.
 	results := make([]synology.PackageInstallResult, 0, len(plan.Steps))
 	for _, step := range plan.Steps {
+		// An upgrade target is already present, so its confirmation is the
+		// exact new version; fresh installs (and new dependencies) confirm by
+		// presence.
+		expectVersion := ""
+		if plan.Update && step.PackageID == plan.PackageID {
+			expectVersion = step.Version
+		}
 		result, err := client.PackageInstall(ctx, synology.PackageInstallInput{
 			Name: step.PackageID, URL: step.DownloadLink, Checksum: step.Checksum, Filesize: step.Size,
 			Beta: step.Beta, QuickInstall: step.QuickInstall, VolumePath: plan.VolumePath, RunAfterInstall: plan.RunAfterInstall,
+			ExpectVersion: expectVersion,
 		})
 		if err != nil {
 			return PackageInstallApplyResult{NAS: plan.NAS, PlanHash: plan.Hash, Results: results}, authenticationError(plan.NAS, fmt.Errorf("install %s: %w", step.PackageID, err))

@@ -140,13 +140,15 @@ packages take minutes per step. MCP: `plan_package_install` and
 to true). The read-only gateway strips the plan/apply pair, and the remote
 gateway's high-risk approval flow applies.
 
-## Deferred operations
+Upgrades reuse the same contract. `package update <id>` plans upgrading one
+installed package to the offered version (new dependencies resolve first, the
+volume defaults to the installed location) and `--approve <hash>` runs it;
+apply confirms the **new version** in the inventory rather than mere
+presence. Upgrades have no supported downgrade path, so update plans are
+always high risk. MCP: `plan_package_update`, applied through
+`apply_package_install_plan`.
 
-- `update`/`upgrade` apply (installing a newer version over an installed
-  package) is modeled but **not implemented**: a package upgrade has no
-  supported downgrade path, so it stays deferred until it ships as its own
-  guarded, explicitly authorized operation. `package available --updates`
-  covers the read side.
+## Deferred operations
 
 Writing the **trust level**, **beta channel**, and **default install volume** is
 also not supported: trust level has no DSM write endpoint, and the beta channel

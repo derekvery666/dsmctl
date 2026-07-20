@@ -1,7 +1,7 @@
 ---
 id: WI-029
 title: Guarded Package Center online install and update
-status: in_progress
+status: done
 priority: P2
 owner: ""
 depends_on: [WI-019]
@@ -65,12 +65,19 @@ Implemented (MCP parity, 2026-07-20):
   remote authorization and single-use high-risk approval checks as every other
   apply (install plans are always high risk).
 
-Deferred (this WI stays in_progress until done):
+Implemented (update/upgrade apply, 2026-07-20):
 
-- Update / upgrade **apply** (`SYNO.Core.Package.Installation` `install`/`upgrade`
-  of the newer version over an installed package). A package upgrade is not
-  cleanly reversible (no supported downgrade), so it stays deferred until it
-  ships as its own guarded, explicitly authorized operation.
+- Guarded upgrade through the same install plan machinery: `PlanPackageUpdate`
+  requires the package installed with an offered newer version, resolves any
+  new dependencies deps-first, defaults the volume to the installed location,
+  and always plans high risk with an explicit no-downgrade warning. Apply
+  reuses the install path but confirms the **new version** in the inventory
+  (`ExpectVersion`), not mere presence. CLI `package update <id>` (plan by
+  default, `--approve` to run); MCP `plan_package_update` +
+  `apply_package_install_plan`; read-only gateway strips the plan.
+- Per the standing policy, the upgrade apply is implemented guarded but was
+  **not executed against the lab** (upgrades cannot be rolled back); the plan
+  path was live-verified resolving UniversalViewer 1.4.0-0712 → 1.5.0-0831.
 
 ## Design constraints
 
@@ -101,8 +108,9 @@ Deferred (this WI stays in_progress until done):
       running); the already-installed guard then rejects a re-install.
 - [x] Update **check**: catalog cross-references the inventory and flags
       installed/update-available; live-verified via `package available --updates`.
-- [ ] Update/upgrade **apply** implemented (guarded; not auto-run — upgrades are
-      not cleanly reversible).
+- [x] Update/upgrade **apply** implemented (guarded; not auto-run — upgrades are
+      not cleanly reversible). Plan path live-verified; version-confirming
+      postcondition unit-tested.
 - [x] MCP parity for catalog/install with read-only gateway exclusion (plus
       profile-revision-bound hashes and remote high-risk authorization on
       install-apply).
