@@ -1,40 +1,25 @@
 package cli
 
 import (
-	"context"
-	"fmt"
-
 	"github.com/ychiu1211/dsmctl/internal/application"
 	"github.com/ychiu1211/dsmctl/internal/config"
 	"github.com/ychiu1211/dsmctl/internal/credentials"
 	"github.com/ychiu1211/dsmctl/internal/runtime"
 )
 
-// credentialResolver resolves the account password from the profile's
-// environment variable (for example DSMCTL_PASSWORD_LAB). The runtime prefers a
-// stored web-login session and only reaches this resolver when no session
-// exists or a seeded session can no longer be resumed, so it acts as an
-// automatic, non-interactive fallback: dsmctl re-authenticates with the
-// environment password instead of forcing a browser sign-in. When no password
-// is available it declines with a message pointing at both recovery paths.
-type credentialResolver struct {
-	env *credentials.Environment
-}
-
-func (r credentialResolver) Password(ctx context.Context, profileName string, profile config.Profile) (string, error) {
-	password, err := r.env.Password(ctx, profileName, profile)
-	if err == nil {
-		return password, nil
-	}
-	varName, _ := r.env.Status(profileName, profile)
-	return "", fmt.Errorf("not signed in to NAS %q and no password available; run 'dsmctl auth login --nas %s' or set %s", profileName, profileName, varName)
-}
-
 func loadService(opts *options) (*application.Service, error) {
 	cfg, err := config.NewStore(opts.configPath).Load()
 	if err != nil {
 		return nil, err
 	}
+	// The SecureStore is the runtime's password resolver. It resolves the account
+	// password keyring-first — including one stored by 'dsmctl provision' — and
+	// falls back to the profile's password environment variable, so a provisioned
+	// NAS is usable by every command without a separate 'dsmctl auth login'. It
+	// declines with a message pointing at both recovery paths when neither is
+	// available. The runtime still prefers a resumable web-login session and only
+	// consults this resolver when no session exists or a seeded one can no longer
+	// be resumed.
 	secrets := credentials.NewSecureStore()
 	managerOptions := []runtime.Option{
 		runtime.WithDeviceStore(secrets),
@@ -43,11 +28,7 @@ func loadService(opts *options) (*application.Service, error) {
 	if logger := buildLogger(opts.logLevel); logger != nil {
 		managerOptions = append(managerOptions, runtime.WithLogger(logger))
 	}
-	manager := runtime.NewManager(
-		cfg,
-		credentialResolver{env: credentials.NewEnvironment()},
-		managerOptions...,
-	)
+	manager := runtime.NewManager(cfg, secrets, managerOptions...)
 	return application.NewService(cfg, manager,
 		application.WithCredentialStore(secrets),
 		application.WithDiscoveryStore(application.DiscoveryStorePath(opts.configPath)),

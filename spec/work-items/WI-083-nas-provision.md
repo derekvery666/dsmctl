@@ -52,6 +52,8 @@ on a DS918+ (DSM 7.3.1-86009).
 - `credentials.GeneratePassword` (crypto/rand, ≥16, unambiguous alphabet), keyring-only
   `RevealPassword`, and a `mem:` `MemoryReferenceResolver` so a generated secret flows to a
   request builder by reference, never as a plan/argument/log value.
+- Runtime password resolution is keyring-first (`SecureStore.Password`, environment fallback),
+  so a provisioned password authenticates every `dsmctl` command, not only reveal / `--finish-only`.
 - Flexible NAS identity in config: `Profile.Identity{Serial,MAC,MACs,Model}` + ordered
   `Profile.Endpoints[]`, backward compatible (legacy `url` synthesizes an endpoint).
 
@@ -62,10 +64,6 @@ on a DS918+ (DSM 7.3.1-86009).
 - Serial-keyed credential storage (survives profile rename) — deferred; credentials stay
   keyed by profile name, which already survives IP/DDNS change.
 - `dsmctl auth open` SSO session-injecting proxy — deferred.
-- Runtime auto-login from the keyring-stored password for ordinary commands — today the runtime
-  consults a web-login session or the password env var, so a provisioned password powers
-  `reveal-password`/`--finish-only` but not yet `dsmctl system info`; wiring the runtime to
-  `SecureStore.Password` is a follow-up.
 - Runtime endpoint failover / serial verification / findhost self-heal — the config model is in
   place but the resolver is not yet wired.
 - DSM (`.pat`) install as a `dsmctl` subcommand — the recovery `webman/install.cgi` flow is
@@ -95,6 +93,8 @@ on a DS918+ (DSM 7.3.1-86009).
       and **refuses** a bare pty, a pipe, and a redirect (three vectors, exit 1, no value emitted).
 - [x] `dsmctl provision <name> --finish-only` completes the wizard on an existing admin using the
       stored password.
+- [x] `dsmctl system info --nas <name>` authenticates with the provisioned keyring password
+      (keyring-first runtime resolution; live-verified on the DS918+).
 - [ ] No registered MCP tool name contains `reveal` or `password` (guard test — pending).
 - [ ] Old config files round-trip; the endpoint resolver honors identity/failover (pending Phase 3).
 
@@ -119,8 +119,6 @@ on a DS918+ (DSM 7.3.1-86009).
 
 ## Handoff
 
-Shipped and merged to main (commit adds NAS provisioning). Deferred, in priority order:
-(1) wire the runtime password resolver to `SecureStore.Password` so a provisioned credential
-powers ordinary `dsmctl` commands; (2) Phase 3 endpoint resolver + serial verify + findhost
-self-heal; (3) `dsmctl auth open` SSO handoff; (4) MCP no-password guard test; (5) a `dsmctl`
-subcommand for the recovery `.pat` install; (6) serial-keyed credential migration.
+Shipped and merged to main. Deferred, in priority order: (1) Phase 3 endpoint resolver + serial
+verify + findhost self-heal; (2) `dsmctl auth open` SSO handoff; (3) MCP no-password guard test;
+(4) a `dsmctl` subcommand for the recovery `.pat` install; (5) serial-keyed credential migration.
