@@ -186,10 +186,11 @@ module.
       below). (Bindings are inline in `CRT.list`, so no separate `services`
       read/`SYNO.Core.Certificate.Service` call is needed — that API's `list` is
       code 103 on the lab; the per-cert `services[]` array is authoritative.)
-- [ ] A decoder test injects a `key`/`private_key` field into a `CRT.list`
+- [x] A decoder test injects a `key`/`private_key` field into a `CRT.list`
       response fixture and asserts it is dropped, upgrading the no-key guarantee
-      from structural to test-enforced (currently only asserted by a comment in
-      `operation_test.go`).
+      from structural to test-enforced (`TestDecodeDropsInjectedKeyMaterial` in
+      `operations/certificate/decode_test.go` re-encodes the whole decoded model
+      and asserts no injected canary or key-bearing field survives).
 - [x] Slice A live verification on the DSM 7.3 lab: read the two installed
       certificates (self-signed default `synology` serving 6 services incl. the
       DSM desktop; renewable Let's Encrypt QuickConnect cert), confirmed the
@@ -198,24 +199,42 @@ module.
 - [x] Capability report lists the certificate read operation with stable name,
       backend, API, and version; a NAS without `SYNO.Core.Certificate.CRT`
       reports it `(not supported)` and fails closed.
-- [ ] Pre-apply local validation: import plan rejects a key/cert mismatch, an
+- [x] Pre-apply local validation: import plan rejects a key/cert mismatch, an
       expired leaf, and (for a DSM-service binding) a leaf whose SAN does not
-      cover the connection host — proven by unit tests over fixture PEMs.
-- [ ] Slice B import via guarded hash-bound plan/apply: private key supplied by
+      cover the connection host — proven by unit tests over generated fixture
+      PEMs (`domain/certificate/pem_test.go`; the plan rejects expiry + SAN,
+      and the key/cert-match check runs at apply pre-request — the earliest
+      point the key bytes exist, still before the NAS is touched — since the
+      secrets contract forbids resolving the key at plan time:
+      `TestApplyCertificateImportRejectsMismatchedKey`).
+- [x] Slice B import via guarded hash-bound plan/apply: private key supplied by
       `credential_ref: env:NAME`, absent from plan/hash/result/logs
-      (request-capture + log-scrub tests); apply merges into fresh state,
-      rejects stale state, and postcondition-re-reads the new fingerprint.
-      Classified high risk; `plan_/apply_certificate_*` excluded from the
+      (`TestDoCertificateImportKeyRidesOnlyMultipartBody` proves the key rides
+      only the multipart body — never the URL/query/headers;
+      `TestCertificatePlanExcludesPrivateKey` and
+      `TestApplyCertificateImportResolvesKeyRepinsAndHidesKey` prove the plan,
+      hash, and result carry no key value — only the ref NAME; the DSM client
+      logs request metadata only, never a parameter value); apply merges into
+      fresh state, rejects stale state (`TestCertificatePlanStaleRejection`), and
+      postcondition-re-reads the certificate's public identity. Classified high
+      risk; `plan_certificate_change`/`apply_certificate_plan` excluded from the
       read-only gateway.
-- [ ] Slice B set-default, service-bind, and delete via plan/apply with
-      postcondition re-read; deleting or replacing the certificate that serves
-      the current dsmctl session requires an explicit acknowledgement and the
-      verify step re-pins to the known new leaf fingerprint.
-- [ ] Export writes the archive to a local file only, returns no key bytes over
-      MCP, redacts session tokens from transfer errors, and is stripped from the
-      read-only gateway.
-- [ ] Let's Encrypt issuance/renewal is documented as an out-of-scope follow-on
-      with the ACME-challenge reason recorded.
+- [x] Slice B set-default, service-bind, and delete via plan/apply with
+      postcondition re-read (`TestApplyCertificateSetDefaultPostcondition`,
+      `TestApplyCertificateBindPostcondition`,
+      `TestApplyCertificateDeletePostcondition`); deleting or replacing the
+      certificate that serves the current dsmctl session requires an explicit
+      acknowledgement (`TestPlanCertificateImportRequiresCurrentSessionAck`) and
+      the verify step re-pins to the known new leaf fingerprint
+      (`RepinLeafFingerprint`/`TestRepinTLSConfig`); a broken handshake is
+      reported as a lockout (`TestApplyCertificateLockoutReportedNotSuccess`).
+- [x] Export writes the archive to a local file only, returns no key bytes over
+      MCP, redacts session tokens from transfer errors
+      (`TestDoCertificateExportRedactsSessionTokens`), and is stripped from the
+      read-only gateway (`get_certificate_export` in the read-only strip list and
+      `read_only_test.go`).
+- [x] Let's Encrypt issuance/renewal is documented as an out-of-scope follow-on
+      with the ACME-challenge reason recorded (Non-goals, above; `docs/certificate.md`).
 - [ ] Slice B live verification on the DSM 7.3 lab is performed **only** against
       a throwaway, self-issued test certificate that is not bound to the DSM
       service, with a full revert — the DSM-serving cert is never replaced during
@@ -255,3 +274,55 @@ module.
 - Certificate management was explicitly listed as a non-goal of the External
   Access module ([WI-041](WI-041-external-access.md)); this WI is that deferred
   surface. No file overlap beyond the shared facade and MCP server registration.
+
+## Handoff
+
+- **State.** Slice A (read-only) shipped earlier. **Slice B (guarded writes) is
+  implemented and unit-test-green** but **not live-verified** — no certificate
+  was imported/replaced/deleted/bound/exported against the lab NAS in this
+  session (per the standing rule that replacing the DSM-serving cert can lock the
+  session out). `go build ./...`, `go vet ./...`, and `go test ./... -count=1`
+  all pass.
+- **Files added:** `internal/domain/certificate/mutation.go` (write intents,
+  desired-cert public fingerprint, precondition), `.../pem.go` (offline
+  key/cert-match, chain, expiry, SAN-coverage validators),
+  `internal/synology/operations/certificate/mutation.go` (isolated
+  `WIRE-UNVERIFIED` wire names + write-capability selectors),
+  `internal/synology/certificate_mutation.go` (multipart import mirroring the
+  WI-049 transport, set-default/bind/delete JSON writes, streaming export,
+  `RepinLeafFingerprint`), `internal/application/certificate_mutation.go`
+  (plan/apply mirroring `file_station_mutation.go`, export), plus test files in
+  each package. **Files changed:** `domain/certificate/model.go` (capability
+  flags), `synology/certificate.go` (capability discovery),
+  `application/certificate.go` (write methods on the local client interface),
+  `cli/certificate.go` (plan/apply/export commands + capability rows),
+  `mcpserver/server.go` (three tools), `mcpserver/read_only.go` (strip list),
+  `mcpserver/server_test.go`+`read_only_test.go` (counts/strip assertions),
+  `docs/certificate.md`.
+- **WIRE-UNVERIFIED (must confirm with a throwaway `DSMCTL_DUMP` probe before any
+  live write is trusted), all isolated in
+  `operations/certificate/mutation.go`:** the CRT `import`/`set`/`delete`/
+  `export` method names; the import multipart field names `key`/`cert`/
+  `inter_cert` (+ `id`/`desc`/`as_default`); whether import posts to `entry.cgi`
+  or a dedicated cgi; the CRT `delete` `ids` array shape and `set` `as_default`
+  keying; and the `SYNO.Core.Certificate.Service` `set` method + `settings`
+  array `{service,id}` shape.
+- **Remaining before this can be trusted:** (1) live wire-verification of the
+  names above; (2) a throwaway self-issued cert live plan→apply→revert NOT bound
+  to any DSM service, then a scoped current-session test only with explicit
+  authorization; (3) confirm DSM's `import` success payload actually returns the
+  new cert `id` (`decodeImportedCertID` guesses `id`/`certificate.id` and falls
+  back to the replace id).
+- **Judgement calls / limitations.** (a) The key/cert-match validator runs at
+  **apply** pre-request rather than at plan time, because the secrets contract
+  forbids resolving the key at plan time; plan-time validation covers the
+  public-only checks (expiry, chain, SAN). (b) DSM's `CRT.list` returns no DER
+  fingerprint, so the import postcondition verifies the certificate's **public
+  identity** (subject CN + issuer CN + SAN set), not a DER-fingerprint equality;
+  full DER re-verification would require `export` (which extracts the key) and is
+  left to live follow-up. (c) `certificateServesCurrentSession` decides the
+  current-session flag from the default flag and DSM-desktop service binding; a
+  pinned-fingerprint DER comparison is a live-verification refinement (the plan
+  context already carries the pinned fingerprint). (d) The private key is
+  resolved into a `[]byte` and zeroized after import; the intermediate Go
+  `string` from `ResolveSecret` cannot be wiped but its lifetime is minimized.

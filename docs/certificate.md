@@ -5,12 +5,14 @@ surface: the installed certificates, their public metadata, and which DSM
 services and packages each one serves. It is the first module of the
 security/networking greenfield program (see [gap-inventory](../spec/gap-inventory.md)).
 
-This slice is **read-only**. The guarded writes — import a cert + private key,
-set the default, bind a service, delete — are modeled in
-[WI-065](../spec/work-items/WI-065-certificate.md) but deferred: replacing or
-deleting the certificate the DSM desktop presents can break admin TLS,
-including the connection dsmctl itself rides, so each write needs explicit
-per-operation live authorization before it ships.
+Reads are complemented by a set of **guarded, hash-bound writes** — import a
+cert + private key, set the default, bind a service, delete — plus a
+key-extracting **export**. Every write is high risk: replacing or deleting the
+certificate the DSM desktop presents can break admin TLS, including the
+connection dsmctl itself rides. The write wire names are implemented to the
+[WI-065](../spec/work-items/WI-065-certificate.md) best-knowledge shape and are
+marked `WIRE-UNVERIFIED` in code; they still require a live `DSMCTL_DUMP` probe
+and a throwaway-cert live apply before they can be trusted against a real NAS.
 
 ## Reads
 
@@ -46,12 +48,49 @@ MCP tools: `get_certificate_capabilities`, `get_certificates`.
 Certificate management is DSM core (not a package), so the operation selects on
 the advertised API/version alone and fails closed when the API is absent.
 
-## Deferred (guarded writes)
+## Guarded writes (plan/apply, hash-bound)
 
-`SYNO.Core.Certificate.CRT` exposes `set` (set default / bind services /
-description), `delete`, and `renew` — all verified present on the lab but
-**not** wired, because they change the live DSM certificate. `import` and
-`export` are a separate multipart flow (private key via `credential_ref`).
-Let's Encrypt issuance (`SYNO.Core.Certificate.LetsEncrypt`) is a non-goal —
-it drives an external ACME challenge, not a settings write. See WI-065 for the
-full write plan.
+Every write follows the plan → approve → apply contract and is classified high
+risk. `plan_*` reads current state and returns a hash-bound plan; `apply_*`
+re-reads fresh state, rejects a stale plan, performs the op, and
+postcondition-re-reads the certificate store.
+
+```console
+# import a bring-your-own certificate (leaf + key + optional chain)
+DSMCTL_TLS_KEY=... # the private-key PEM in an env var
+dsmctl certificate plan -f import.json -o plan.json
+dsmctl certificate apply -f plan.json --approve <hash>
+dsmctl certificate export --id <cert-id> -o bundle.p12   # WARNING: extracts the private key
+```
+
+- **Private keys are secrets.** The imported key is supplied by
+  `key_credential_ref: env:NAME` and resolved to bytes **only at apply time**,
+  streamed as a multipart part, and zeroized. It never enters the plan file, the
+  approval hash, the result, or any log line — the plan records only the key
+  reference's NAME plus the leaf's parsed public fields (subject, SAN, issuer,
+  serial, validity, and the SHA-256 of the DER).
+- **Pre-apply local validation** rejects a key/cert mismatch, an expired or
+  not-yet-valid leaf, a broken intermediate chain, and (for a DSM-service
+  binding) a leaf whose SAN does not cover the connection host — before the NAS
+  is touched.
+- **Current-session protection.** Replacing/deleting/rebinding the certificate
+  that serves the current dsmctl session requires `acknowledge_current_session`.
+  For an import, apply re-pins to the new leaf's known fingerprint before the
+  post-apply re-read; a broken, unrecoverable handshake is reported as a lockout,
+  not a success.
+- **Export** writes the archive (which contains the private key) to a
+  caller-named local file only — no key bytes are returned over MCP — and is
+  stripped from the read-only remote gateway.
+
+CLI: `certificate plan`, `certificate apply`, `certificate export`.
+MCP tools: `plan_certificate_change`, `apply_certificate_plan`,
+`get_certificate_export` — all excluded from the read-only gateway.
+
+Wire names (`import`/`set`/`delete`/`export` methods, the `key`/`cert`/
+`inter_cert` multipart fields, and the `SYNO.Core.Certificate.Service` `set`
+binding) are the best-knowledge shape and are marked `WIRE-UNVERIFIED` in code;
+confirm with a throwaway `DSMCTL_DUMP` probe before shipping.
+
+Let's Encrypt issuance/renewal (`SYNO.Core.Certificate.LetsEncrypt`) is a
+non-goal — it drives an external ACME challenge, not a settings write. Self-
+signed generation, CSR export, and KMIP are likewise out of scope. See WI-065.

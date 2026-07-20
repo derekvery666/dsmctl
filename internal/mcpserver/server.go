@@ -11,6 +11,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/application"
 	"github.com/ychiu1211/dsmctl/internal/config"
 	"github.com/ychiu1211/dsmctl/internal/domain/access"
+	"github.com/ychiu1211/dsmctl/internal/domain/certificate"
 	"github.com/ychiu1211/dsmctl/internal/domain/controlpanel"
 	"github.com/ychiu1211/dsmctl/internal/domain/discovery"
 	"github.com/ychiu1211/dsmctl/internal/domain/downloadstation"
@@ -20,8 +21,8 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/domain/ftpservices"
 	"github.com/ychiu1211/dsmctl/internal/domain/identity"
 	"github.com/ychiu1211/dsmctl/internal/domain/nfsexport"
-	"github.com/ychiu1211/dsmctl/internal/domain/packagecenter"
 	"github.com/ychiu1211/dsmctl/internal/domain/office"
+	"github.com/ychiu1211/dsmctl/internal/domain/packagecenter"
 	"github.com/ychiu1211/dsmctl/internal/domain/photos"
 	"github.com/ychiu1211/dsmctl/internal/domain/resmon"
 	"github.com/ychiu1211/dsmctl/internal/domain/rsyncservice"
@@ -204,7 +205,7 @@ type planExternalAccessDDNSChangeOutput struct {
 
 type applyExternalAccessDDNSPlanInput struct {
 	Plan         application.ExternalAccessDDNSPlan `json:"plan" jsonschema:"Approved plan produced by plan_external_access_ddns_change"`
-	ApprovalHash string                            `json:"approval_hash" jsonschema:"Exact SHA-256 approval hash from the plan"`
+	ApprovalHash string                             `json:"approval_hash" jsonschema:"Exact SHA-256 approval hash from the plan"`
 }
 
 type applyExternalAccessDDNSPlanOutput struct {
@@ -1023,7 +1024,7 @@ type getPackageAvailableInput struct {
 }
 
 type getPackageAvailableOutput struct {
-	NAS      string                          `json:"nas" jsonschema:"NAS profile used for the request"`
+	NAS      string                           `json:"nas" jsonschema:"NAS profile used for the request"`
 	Packages []packagecenter.AvailablePackage `json:"packages" jsonschema:"Packages offered by the online package server, cross-referenced with the installed inventory"`
 }
 
@@ -1096,6 +1097,34 @@ type getCertificateCapabilitiesOutput struct {
 	NAS          string                           `json:"nas" jsonschema:"NAS profile used for the request"`
 	Capabilities synology.CertificateCapabilities `json:"capabilities" jsonschema:"Certificate operations currently exposed by dsmctl"`
 	Report       synology.CompatibilityReport     `json:"report" jsonschema:"Discovered APIs and selected certificate backend"`
+}
+
+type planCertificateChangeInput struct {
+	NAS     string                    `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request certificate.ChangeRequest `json:"request" jsonschema:"Certificate import, set_default, bind_service, or delete intent. The private key is referenced by env:NAME and resolved only at apply time"`
+}
+
+type planCertificateChangeOutput struct {
+	Plan application.CertificatePlan `json:"plan" jsonschema:"Validated high-risk certificate plan including the approval hash and observed-state precondition; carries no private-key material"`
+}
+
+type applyCertificatePlanInput struct {
+	Plan         application.CertificatePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_certificate_change"`
+	ApprovalHash string                      `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
+}
+
+type applyCertificatePlanOutput struct {
+	Result application.CertificateApplyResult `json:"result" jsonschema:"Certificate mutation result after postcondition verification; carries no private-key material"`
+}
+
+type exportCertificateInput struct {
+	NAS       string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	CertID    string `json:"cert_id" jsonschema:"Certificate id to export"`
+	LocalPath string `json:"local_path" jsonschema:"Local file path on the dsmctl host to write the archive to (contains the private key)"`
+}
+
+type exportCertificateOutput struct {
+	Result application.ExportCertificateResult `json:"result" jsonschema:"Local file the archive was written to and its size; no key bytes are returned"`
 }
 
 type getDriveAdminCapabilitiesOutput struct {
@@ -1249,7 +1278,7 @@ type planDriveRestoreOutput struct {
 
 type applyDriveRestorePlanInput struct {
 	Plan         application.DriveNodeRestorePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_drive_restore"`
-	ApprovalHash string                          `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved restore plan"`
+	ApprovalHash string                           `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved restore plan"`
 }
 
 type applyDriveRestorePlanOutput struct {
@@ -2993,6 +3022,45 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getCertificatesOutput{}, err
 		}
 		return nil, getCertificatesOutput{NAS: result.NAS, Certificates: result.Certificates}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_certificate_change",
+		Title:       "Plan a certificate change",
+		Description: "Validate a high-risk certificate change (import a bring-your-own bundle, set the default certificate, bind a service, or delete a certificate), read the current certificate store, and return a hash-bound approval plan. The private key is supplied by a credential reference (env:NAME) and resolved to bytes only at apply time; it never enters the plan, the hash, the result, or any log. Import parses the leaf locally and rejects an expired leaf, a broken chain, or (for a DSM-service binding) a leaf that does not cover the connection host. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planCertificateChangeInput) (*mcp.CallToolResult, planCertificateChangeOutput, error) {
+		plan, err := service.PlanCertificateChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planCertificateChangeOutput{}, err
+		}
+		return nil, planCertificateChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_certificate_plan",
+		Title:       "Apply an approved certificate plan",
+		Description: "Apply an unmodified certificate plan only when its approval hash and observed-state precondition still match, then verify DSM by re-reading the certificate store. Every certificate write is high risk: replacing or deleting the certificate that serves the current dsmctl session requires acknowledge_current_session in the plan, and dsmctl re-pins to the new leaf's fingerprint for the post-apply re-read. For an import, the private key is resolved from its env:NAME reference only now, validated against the leaf, streamed as a multipart part, and zeroized; it is never returned.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyCertificatePlanInput) (*mcp.CallToolResult, applyCertificatePlanOutput, error) {
+		result, err := service.ApplyCertificatePlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyCertificatePlanOutput{}, err
+		}
+		return nil, applyCertificatePlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_certificate_export",
+		Title:       "Export a certificate archive to a local file",
+		Description: "Download the archive DSM produces for a certificate to a local file on the dsmctl host. WARNING: the archive CONTAINS the private key. No key bytes are returned over MCP — only the local path and size. This tool does not change the NAS but extracts secret material, so it is stripped from the read-only remote gateway.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input exportCertificateInput) (*mcp.CallToolResult, exportCertificateOutput, error) {
+		result, err := service.ExportCertificate(ctx, input.NAS, input.CertID, input.LocalPath)
+		if err != nil {
+			return nil, exportCertificateOutput{}, err
+		}
+		return nil, exportCertificateOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
