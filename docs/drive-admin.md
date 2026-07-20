@@ -50,8 +50,11 @@ dsmctl drive admin log list --nas office --username alice --keyword report --fro
 - `status` returns the Drive service status as reported by the package
   (lowercased, for example `enabled`) plus the package evidence observed with
   this exact call.
-- `connections` lists active Drive client sessions with the user, device,
-  client type, and address fields Drive reports.
+- `connections` lists active Drive client sessions with the fields the Drive
+  server actually reports (WI-053): the session id (the target for a guarded
+  kick), device name, client type, address, status, client version, location,
+  device UUID, relay flag, and login/last-auth times. Sessions are not
+  attributed to an account name by the API.
 - `team-folders` lists shared folders from the admin team-folder view: the
   name, whether each is enabled as a Drive team folder, Drive's share status,
   the share type, and — for enabled team folders — the versioning settings
@@ -133,9 +136,27 @@ and returns an explicit not-yet-confirmed error instead of a false success.
 MCP: `plan_drive_team_folder_change` and `apply_drive_team_folder_plan`; the
 read-only gateway strips both.
 
+## Connections (guarded kick)
+
+Disconnect one client session through plan/apply, targeted by the session id
+from the connections read:
+
+```console
+dsmctl drive admin connections kick --session <session_id> --nas office -o kick.plan.json
+dsmctl drive admin connections apply -f kick.plan.json --approve <hash>
+```
+
+The plan binds to the observed connection entry (a session that reconnected
+invalidates it), and apply verifies the session left the list. The kicked
+client must authenticate again to resume syncing; files already synced stay
+on the device, and dsmctl never sends Drive's remote data-wipe companion
+field. The delete request shape is verified against the Drive server source;
+the surrounding contract is live-verified (see WI-053 for the limits). MCP:
+`plan_drive_connection_kick` / `apply_drive_connection_kick_plan`.
+
 ## Deferred operations
 
-Connection disconnection, index management, the end-user file API
+Index management, the end-user file API
 (`SYNO.SynologyDrive.Files`), sharing links, labels, watermark/download
 restrictions (Advanced Features), node locking, and ShareSync are out of
 scope for this slice.

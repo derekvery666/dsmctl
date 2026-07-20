@@ -55,6 +55,164 @@ type driveAdminClient interface {
 	DriveDBUsage(context.Context) (synology.DriveDBUsage, error)
 	DriveTopAccessFiles(context.Context, synology.DriveTopAccessQuery) (synology.DriveTopAccessFiles, error)
 	DriveActivation(context.Context) (synology.DriveActivation, error)
+	ApplyDriveConnectionKick(context.Context, driveadmin.ConnectionKick) (synology.DriveConnectionMutationResult, error)
+}
+
+const driveConnectionKickAPIVersion = "dsmctl.io/v1alpha1"
+
+type DriveConnectionKickPlan struct {
+	APIVersion          string                      `json:"api_version" jsonschema:"Plan schema version"`
+	NAS                 string                      `json:"nas" jsonschema:"NAS profile selected during planning"`
+	ProfileRevision     uint64                      `json:"profile_revision,omitempty" jsonschema:"Persistent gateway profile revision selected during planning"`
+	Request             driveadmin.ConnectionKick   `json:"request" jsonschema:"Session disconnect intent"`
+	Observed            driveadmin.Connection       `json:"observed" jsonschema:"Connection entry observed during planning"`
+	ObservedFingerprint string                      `json:"observed_fingerprint" jsonschema:"SHA-256 hash of the observed connection entry"`
+	Risk                string                      `json:"risk" jsonschema:"Plan risk level: medium"`
+	Warnings            []string                    `json:"warnings" jsonschema:"Disconnect-impact warnings"`
+	Summary             []string                    `json:"summary" jsonschema:"Human-readable operations the plan will perform"`
+	Hash                string                      `json:"hash" jsonschema:"SHA-256 approval hash covering intent and observed entry"`
+}
+
+type DriveConnectionKickApplyResult struct {
+	NAS      string                                 `json:"nas" jsonschema:"NAS profile used for apply"`
+	PlanHash string                                 `json:"plan_hash" jsonschema:"Approved plan hash"`
+	Applied  bool                                   `json:"applied" jsonschema:"Whether DSM accepted the disconnect and the session left the list"`
+	Result   synology.DriveConnectionMutationResult `json:"result" jsonschema:"Selected DSM mutation backend"`
+}
+
+func (s *Service) PlanDriveConnectionKick(ctx context.Context, requestedNAS string, request driveadmin.ConnectionKick) (DriveConnectionKickPlan, error) {
+	if strings.TrimSpace(request.SessionID) == "" {
+		return DriveConnectionKickPlan{}, fmt.Errorf("connection kick requires the session_id listed by the connections read")
+	}
+	name, client, err := s.driveAdminClient(ctx, requestedNAS)
+	if err != nil {
+		return DriveConnectionKickPlan{}, err
+	}
+	plan, err := planDriveConnectionKickWithClient(ctx, name, client, request)
+	if err != nil {
+		return DriveConnectionKickPlan{}, err
+	}
+	plan.ProfileRevision, err = s.profileRevision(ctx, name)
+	if err == nil {
+		plan.Hash, err = driveConnectionKickPlanHash(plan)
+	}
+	return plan, err
+}
+
+func (s *Service) ApplyDriveConnectionKickPlan(ctx context.Context, plan DriveConnectionKickPlan, approvalHash string) (DriveConnectionKickApplyResult, error) {
+	if strings.TrimSpace(approvalHash) == "" || approvalHash != plan.Hash {
+		return DriveConnectionKickApplyResult{}, fmt.Errorf("approval hash does not match the connection kick plan")
+	}
+	if plan.APIVersion != driveConnectionKickAPIVersion || strings.TrimSpace(plan.NAS) == "" {
+		return DriveConnectionKickApplyResult{}, fmt.Errorf("invalid connection kick plan metadata")
+	}
+	expectedHash, err := driveConnectionKickPlanHash(plan)
+	if err != nil {
+		return DriveConnectionKickApplyResult{}, err
+	}
+	if expectedHash != plan.Hash {
+		return DriveConnectionKickApplyResult{}, fmt.Errorf("connection kick plan contents were modified after planning")
+	}
+	if err := s.authorizeRemoteApply(ctx, plan.NAS, plan.ProfileRevision, plan.Hash, plan.Risk); err != nil {
+		return DriveConnectionKickApplyResult{}, err
+	}
+	if err := s.verifyProfileRevision(ctx, plan.NAS, plan.ProfileRevision); err != nil {
+		return DriveConnectionKickApplyResult{}, err
+	}
+	name, client, err := s.driveAdminClient(ctx, plan.NAS)
+	if err != nil {
+		return DriveConnectionKickApplyResult{}, err
+	}
+	if name != plan.NAS {
+		return DriveConnectionKickApplyResult{}, fmt.Errorf("connection kick plan NAS %q resolved to different profile %q", plan.NAS, name)
+	}
+	return applyDriveConnectionKickPlanWithClient(ctx, client, plan)
+}
+
+func applyDriveConnectionKickPlanWithClient(ctx context.Context, client driveAdminClient, plan DriveConnectionKickPlan) (DriveConnectionKickApplyResult, error) {
+	current, err := planDriveConnectionKickWithClient(ctx, plan.NAS, client, plan.Request)
+	if err != nil {
+		return DriveConnectionKickApplyResult{}, fmt.Errorf("connection kick plan precondition no longer holds: %w", err)
+	}
+	current.ProfileRevision = plan.ProfileRevision
+	current.Hash, err = driveConnectionKickPlanHash(current)
+	if err != nil {
+		return DriveConnectionKickApplyResult{}, err
+	}
+	if current.ObservedFingerprint != plan.ObservedFingerprint || current.Hash != plan.Hash {
+		return DriveConnectionKickApplyResult{}, fmt.Errorf("connection kick plan is stale; create a new plan")
+	}
+	result, err := client.ApplyDriveConnectionKick(ctx, plan.Request)
+	if err != nil {
+		return DriveConnectionKickApplyResult{}, authenticationError(plan.NAS, err)
+	}
+	// The delete answers an empty success, so the re-read is the authority.
+	for attempt := 0; attempt < driveTeamFolderVerifyAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return DriveConnectionKickApplyResult{}, ctx.Err()
+			case <-time.After(driveTeamFolderVerifyDelay):
+			}
+		}
+		connections, err := client.DriveAdminConnections(ctx)
+		if err != nil {
+			return DriveConnectionKickApplyResult{}, fmt.Errorf("verify connection kick: %w", err)
+		}
+		if _, found := findDriveConnection(connections, plan.Request.SessionID); !found {
+			return DriveConnectionKickApplyResult{NAS: plan.NAS, PlanHash: plan.Hash, Applied: true, Result: result}, nil
+		}
+	}
+	return DriveConnectionKickApplyResult{}, fmt.Errorf("Drive did not confirm the disconnect (the session is still listed); re-check with the connections read")
+}
+
+func planDriveConnectionKickWithClient(ctx context.Context, nas string, client driveAdminClient, request driveadmin.ConnectionKick) (DriveConnectionKickPlan, error) {
+	capabilities, _, err := client.DriveAdminCapabilities(ctx)
+	if err != nil {
+		return DriveConnectionKickPlan{}, authenticationError(nas, err)
+	}
+	if !capabilities.ConnectionsRead {
+		return DriveConnectionKickPlan{}, fmt.Errorf("NAS %q does not expose a verified Drive connection read backend", nas)
+	}
+	if !capabilities.ConnectionsKick {
+		return DriveConnectionKickPlan{}, fmt.Errorf("NAS %q does not expose a verified Drive connection kick backend", nas)
+	}
+	connections, err := client.DriveAdminConnections(ctx)
+	if err != nil {
+		return DriveConnectionKickPlan{}, authenticationError(nas, err)
+	}
+	observed, found := findDriveConnection(connections, request.SessionID)
+	if !found {
+		return DriveConnectionKickPlan{}, fmt.Errorf("session %q is not in the Drive connection list; list sessions with the connections read first", request.SessionID)
+	}
+	plan := DriveConnectionKickPlan{APIVersion: driveConnectionKickAPIVersion, NAS: nas, Request: request, Observed: observed}
+	plan.ObservedFingerprint, err = hashJSON(plan.Observed)
+	if err != nil {
+		return DriveConnectionKickPlan{}, err
+	}
+	plan.Risk = "medium"
+	plan.Summary = []string{fmt.Sprintf("disconnect Drive session %s (%s, %s, %s)",
+		request.SessionID, valueOrNone(observed.DeviceName), valueOrNone(observed.ClientType), valueOrNone(observed.Address))}
+	plan.Warnings = []string{"the client loses its session and must authenticate again to resume syncing; files already synced stay on the device"}
+	plan.Hash, err = driveConnectionKickPlanHash(plan)
+	if err != nil {
+		return DriveConnectionKickPlan{}, err
+	}
+	return plan, nil
+}
+
+func driveConnectionKickPlanHash(plan DriveConnectionKickPlan) (string, error) {
+	plan.Hash = ""
+	return hashJSON(plan)
+}
+
+func findDriveConnection(connections synology.DriveAdminConnections, sessionID string) (driveadmin.Connection, bool) {
+	for _, connection := range connections.Connections {
+		if connection.SessionID == sessionID {
+			return connection, true
+		}
+	}
+	return driveadmin.Connection{}, false
 }
 
 type DriveConnectionSummaryResult struct {

@@ -13,9 +13,10 @@ import (
 // mutation is staged as pending and takes effect on a later team-folder read,
 // so postcondition polling and DSM's silent-skip behavior are testable.
 type fakeDriveAdminClient struct {
-	caps      synology.DriveAdminCapabilities
-	folders   []driveadmin.TeamFolder
-	mutations int
+	caps        synology.DriveAdminCapabilities
+	folders     []driveadmin.TeamFolder
+	connections []driveadmin.Connection
+	mutations   int
 	// silentSkip mimics the Share.set handler ignoring an ineligible share:
 	// the call succeeds but nothing changes.
 	silentSkip bool
@@ -26,10 +27,6 @@ type fakeDriveAdminClient struct {
 
 func (c *fakeDriveAdminClient) DriveAdminStatus(context.Context) (synology.DriveAdminStatus, error) {
 	return synology.DriveAdminStatus{}, nil
-}
-
-func (c *fakeDriveAdminClient) DriveAdminConnections(context.Context) (synology.DriveAdminConnections, error) {
-	return synology.DriveAdminConnections{}, nil
 }
 
 func (c *fakeDriveAdminClient) DriveAdminLog(context.Context, synology.DriveAdminLogQuery) (synology.DriveAdminLog, error) {
@@ -58,6 +55,23 @@ func (c *fakeDriveAdminClient) DriveTopAccessFiles(context.Context, synology.Dri
 
 func (c *fakeDriveAdminClient) DriveActivation(context.Context) (synology.DriveActivation, error) {
 	return synology.DriveActivation{}, nil
+}
+
+func (c *fakeDriveAdminClient) DriveAdminConnections(_ context.Context) (synology.DriveAdminConnections, error) {
+	return synology.DriveAdminConnections{Total: len(c.connections), Connections: append([]driveadmin.Connection(nil), c.connections...)}, nil
+}
+
+func (c *fakeDriveAdminClient) ApplyDriveConnectionKick(_ context.Context, kick driveadmin.ConnectionKick) (synology.DriveConnectionMutationResult, error) {
+	c.mutations++
+	if !c.silentSkip {
+		for index, connection := range c.connections {
+			if connection.SessionID == kick.SessionID {
+				c.connections = append(c.connections[:index], c.connections[index+1:]...)
+				break
+			}
+		}
+	}
+	return synology.DriveConnectionMutationResult{Backend: "fake", API: "fake", Version: 2, Method: "delete"}, nil
 }
 
 func (c *fakeDriveAdminClient) ApplyDriveServerConfigChange(context.Context, driveadmin.ServerConfigChange) (synology.DriveConfigMutationResult, error) {
@@ -299,6 +313,61 @@ func TestDriveTeamFolderApplyRejectsStalePlan(t *testing.T) {
 	enabled.folders[0].Enabled = true
 	if _, err := applyDriveTeamFolderPlanWithClient(context.Background(), enabled, plan); err == nil || !strings.Contains(err.Error(), "precondition") {
 		t.Fatalf("precondition apply error = %v", err)
+	}
+}
+
+func TestDriveConnectionKickPlanApply(t *testing.T) {
+	withoutTeamFolderVerifyDelay(t)
+	client := driveTeamFolderTestClient()
+	client.caps.ConnectionsRead = true
+	client.caps.ConnectionsKick = true
+	client.connections = []driveadmin.Connection{
+		{SessionID: "sess-1", DeviceName: "ALICE-NB", ClientType: "synology drive client", Address: "10.0.0.5"},
+		{SessionID: "sess-2", DeviceName: "BOB-NB", ClientType: "synology drive client", Address: "10.0.0.9"},
+	}
+	request := driveadmin.ConnectionKick{SessionID: "sess-2"}
+	plan, err := planDriveConnectionKickWithClient(context.Background(), "lab", client, request)
+	if err != nil {
+		t.Fatalf("planDriveConnectionKickWithClient() error = %v", err)
+	}
+	if plan.Risk != "medium" || plan.Observed.SessionID != "sess-2" || plan.Hash == "" {
+		t.Fatalf("plan = %#v", plan)
+	}
+
+	// A session that reconnected from another address invalidates the plan.
+	stale := driveTeamFolderTestClient()
+	stale.caps.ConnectionsRead = true
+	stale.caps.ConnectionsKick = true
+	stale.connections = []driveadmin.Connection{{SessionID: "sess-2", DeviceName: "BOB-NB", Address: "10.0.0.77"}}
+	if _, err := applyDriveConnectionKickPlanWithClient(context.Background(), stale, plan); err == nil || !strings.Contains(err.Error(), "stale") {
+		t.Fatalf("stale apply error = %v", err)
+	}
+	if stale.mutations != 0 {
+		t.Fatal("stale plan reached mutation")
+	}
+
+	result, err := applyDriveConnectionKickPlanWithClient(context.Background(), client, plan)
+	if err != nil {
+		t.Fatalf("applyDriveConnectionKickPlanWithClient() error = %v", err)
+	}
+	if !result.Applied || client.mutations != 1 || len(client.connections) != 1 || client.connections[0].SessionID != "sess-1" {
+		t.Fatalf("result = %#v connections = %#v", result, client.connections)
+	}
+
+	// A vanished session is a plan-time error, not a mutation.
+	if _, err := planDriveConnectionKickWithClient(context.Background(), "lab", client, request); err == nil || !strings.Contains(err.Error(), "not in the Drive connection list") {
+		t.Fatalf("missing session error = %v", err)
+	}
+
+	// A kick DSM silently ignored surfaces as not confirmed.
+	client.connections = append(client.connections, driveadmin.Connection{SessionID: "sess-3"})
+	skipPlan, err := planDriveConnectionKickWithClient(context.Background(), "lab", client, driveadmin.ConnectionKick{SessionID: "sess-3"})
+	if err != nil {
+		t.Fatalf("plan error = %v", err)
+	}
+	client.silentSkip = true
+	if _, err := applyDriveConnectionKickPlanWithClient(context.Background(), client, skipPlan); err == nil || !strings.Contains(err.Error(), "did not confirm") {
+		t.Fatalf("silent skip error = %v", err)
 	}
 }
 

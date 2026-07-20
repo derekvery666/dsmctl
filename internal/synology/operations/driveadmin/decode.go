@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/ychiu1211/dsmctl/internal/domain/driveadmin"
@@ -30,6 +31,11 @@ func decodeServiceStatus(data json.RawMessage) (driveadmin.ServiceStatus, error)
 	return driveadmin.ServiceStatus{Status: strings.ToLower(status)}, nil
 }
 
+// decodeConnections reads Connection.list. Field names follow the Drive
+// server source (handlers/connection/list.cpp): client_name is the device,
+// client_ip the address, and client_session_id identifies the session for a
+// guarded kick; login_time arrives as a stringified int64. Sessions carry no
+// account name. Legacy aliases are kept as fallbacks.
 func decodeConnections(data json.RawMessage) (driveadmin.Connections, error) {
 	root, err := decodeObject(data, "Drive connection list")
 	if err != nil {
@@ -41,11 +47,23 @@ func decodeConnections(data json.RawMessage) (driveadmin.Connections, error) {
 	}
 	result := driveadmin.Connections{Connections: make([]driveadmin.Connection, 0, len(items))}
 	for _, item := range items {
+		canWipe, _ := boolValue(item, "client_can_wipe")
+		isRelay, _ := boolValue(item, "client_is_relay")
 		result.Connections = append(result.Connections, driveadmin.Connection{
-			User:       stringValue(item, "username", "user", "owner"),
-			DeviceName: stringValue(item, "device_name", "computer_name", "hostname", "device"),
-			ClientType: strings.ToLower(stringValue(item, "client_type", "type", "platform")),
-			Address:    stringValue(item, "address", "ip", "ip_address"),
+			User:         stringValue(item, "username", "user", "owner"),
+			DeviceName:   stringValue(item, "client_name", "device_name", "computer_name", "hostname", "device"),
+			ClientType:   strings.ToLower(stringValue(item, "client_type", "type", "platform")),
+			Address:      stringValue(item, "client_ip", "address", "ip", "ip_address"),
+			SessionID:    stringValue(item, "client_session_id"),
+			ClientID:     stringValue(item, "client_id"),
+			Status:       strings.ToLower(stringValue(item, "client_status")),
+			Version:      stringValue(item, "client_version"),
+			Location:     stringValue(item, "client_location"),
+			DeviceUUID:   stringValue(item, "device_uuid"),
+			IsRelay:      isRelay,
+			CanWipe:      canWipe,
+			LoginUnix:    int64Value(item, "login_time"),
+			LastAuthUnix: int64Value(item, "last_auth_time"),
 		})
 	}
 	result.Total = intValue(root, "total")
@@ -302,6 +320,12 @@ func int64Value(values map[string]any, keys ...string) int64 {
 			}
 		case float64:
 			return int64(typed)
+		case string:
+			// Drive stringifies some int64 fields (login_time in the
+			// connection list); "-" and other markers parse to nothing.
+			if parsed, err := strconv.ParseInt(strings.TrimSpace(typed), 10, 64); err == nil {
+				return parsed
+			}
 		}
 	}
 	return 0

@@ -26,12 +26,29 @@ type ServiceStatus struct {
 	Package PackageEvidence `json:"package" jsonschema:"Installed package evidence observed with this read"`
 }
 
-// Connection is one active Drive client connection.
+// Connection is one active Drive client connection. Field names follow the
+// Drive server's connection enumeration (handlers/connection/list.cpp);
+// sessions are not attributed to an account name by the API.
 type Connection struct {
-	User       string `json:"user,omitempty" jsonschema:"Account name of the connected user"`
-	DeviceName string `json:"device_name,omitempty" jsonschema:"Client device or computer name"`
-	ClientType string `json:"client_type,omitempty" jsonschema:"Client type as reported by Drive, for example a desktop, mobile, or web session"`
-	Address    string `json:"address,omitempty" jsonschema:"Client IP address"`
+	User         string `json:"user,omitempty" jsonschema:"Account name when reported; Drive's session enumeration usually omits it"`
+	DeviceName   string `json:"device_name,omitempty" jsonschema:"Client device or computer name"`
+	ClientType   string `json:"client_type,omitempty" jsonschema:"Client type as reported by Drive, for example a desktop, mobile, or ShareSync session"`
+	Address      string `json:"address,omitempty" jsonschema:"Client IP address"`
+	SessionID    string `json:"session_id,omitempty" jsonschema:"Drive client session identifier; the target for a guarded kick"`
+	ClientID     string `json:"client_id,omitempty" jsonschema:"Drive client identifier"`
+	Status       string `json:"status,omitempty" jsonschema:"Connection status as reported by Drive"`
+	Version      string `json:"version,omitempty" jsonschema:"Client software version"`
+	Location     string `json:"location,omitempty" jsonschema:"Client location as reported by Drive"`
+	DeviceUUID   string `json:"device_uuid,omitempty" jsonschema:"Stable device identifier"`
+	IsRelay      bool   `json:"is_relay,omitempty" jsonschema:"Whether the connection goes through a QuickConnect relay"`
+	CanWipe      bool   `json:"can_wipe,omitempty" jsonschema:"Whether the client supports remote data wipe (not exposed by dsmctl)"`
+	LoginUnix    int64  `json:"login_unix,omitempty" jsonschema:"Unix time the session logged in"`
+	LastAuthUnix int64  `json:"last_auth_unix,omitempty" jsonschema:"Unix time of the last authentication"`
+}
+
+// ConnectionKick is the guarded disconnect intent for one client session.
+type ConnectionKick struct {
+	SessionID string `json:"session_id" jsonschema:"Drive client session identifier exactly as listed by the connections read"`
 }
 
 // Connections is a point-in-time view of active Drive client connections.
@@ -206,6 +223,7 @@ type Capabilities struct {
 	ConfigRead      bool            `json:"config_read" jsonschema:"Whether the Drive server database configuration can be read"`
 	ConfigSet       bool            `json:"config_set" jsonschema:"Whether guarded Drive server database configuration changes are available"`
 	ConnectionSummaryRead bool      `json:"connection_summary_read" jsonschema:"Whether the connection-count summary can be read"`
+	ConnectionsKick bool            `json:"connections_kick" jsonschema:"Whether a guarded client-session disconnect is available"`
 	DBUsageRead     bool            `json:"db_usage_read" jsonschema:"Whether the cached database usage can be read"`
 	DashboardRead   bool            `json:"dashboard_read" jsonschema:"Whether the top-accessed-files ranking can be read"`
 	ActivationRead  bool            `json:"activation_read" jsonschema:"Whether the package activation state can be read"`

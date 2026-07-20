@@ -1071,6 +1071,24 @@ type getDriveActivationOutput struct {
 	Activation synology.DriveActivation `json:"activation" jsonschema:"Drive package activation state"`
 }
 
+type planDriveConnectionKickInput struct {
+	NAS       string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	SessionID string `json:"session_id" jsonschema:"Drive client session identifier exactly as listed by get_drive_admin_connections"`
+}
+
+type planDriveConnectionKickOutput struct {
+	Plan application.DriveConnectionKickPlan `json:"plan" jsonschema:"Validated plan bound to the observed connection entry and approval hash"`
+}
+
+type applyDriveConnectionKickPlanInput struct {
+	Plan         application.DriveConnectionKickPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_drive_connection_kick"`
+	ApprovalHash string                              `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved kick plan"`
+}
+
+type applyDriveConnectionKickPlanOutput struct {
+	Result application.DriveConnectionKickApplyResult `json:"result" jsonschema:"Disconnect result after stale-state and postcondition checks"`
+}
+
 type planDriveTeamFolderChangeInput struct {
 	NAS     string                      `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 	Request driveadmin.TeamFolderChange `json:"request" jsonschema:"Team-folder intent: enable, disable, or set_versioning for one shared folder"`
@@ -2839,6 +2857,32 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getDriveActivationOutput{}, err
 		}
 		return nil, getDriveActivationOutput{NAS: result.NAS, Activation: result.Activation}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_drive_connection_kick",
+		Title:       "Plan a Drive client disconnect",
+		Description: "Validate a disconnect of one Synology Drive client session (by the session_id listed in get_drive_admin_connections) and return an approval plan bound to the observed connection. The client must authenticate again to resume syncing; synced files stay on the device. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planDriveConnectionKickInput) (*mcp.CallToolResult, planDriveConnectionKickOutput, error) {
+		plan, err := service.PlanDriveConnectionKick(ctx, input.NAS, driveadmin.ConnectionKick{SessionID: input.SessionID})
+		if err != nil {
+			return nil, planDriveConnectionKickOutput{}, err
+		}
+		return nil, planDriveConnectionKickOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_drive_connection_kick_plan",
+		Title:       "Apply an approved Drive client disconnect",
+		Description: "Disconnect the client session in an unmodified kick plan only while its approval hash and the observed connection still match, then verify the session left the connection list with bounded retries.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyDriveConnectionKickPlanInput) (*mcp.CallToolResult, applyDriveConnectionKickPlanOutput, error) {
+		result, err := service.ApplyDriveConnectionKickPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyDriveConnectionKickPlanOutput{}, err
+		}
+		return nil, applyDriveConnectionKickPlanOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

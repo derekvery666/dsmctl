@@ -339,7 +339,7 @@ func newDriveAdminConnectionsCommand(opts *options) *cobra.Command {
 	var jsonOutput bool
 	command := &cobra.Command{
 		Use:   "connections",
-		Short: "List active Drive client connections",
+		Short: "List active Drive client connections and disconnect them through plan/apply",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			service, err := loadService(opts.configPath)
@@ -358,6 +358,61 @@ func newDriveAdminConnectionsCommand(opts *options) *cobra.Command {
 		},
 	}
 	command.Flags().BoolVar(&jsonOutput, "json", false, "output structured JSON")
+	command.AddCommand(newDriveAdminConnectionsKickCommand(opts), newDriveAdminConnectionsApplyCommand(opts))
+	return command
+}
+
+func newDriveAdminConnectionsKickCommand(opts *options) *cobra.Command {
+	var sessionID, outputPath string
+	command := &cobra.Command{
+		Use:   "kick",
+		Short: "Validate a session disconnect and emit an approval plan",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			plan, err := service.PlanDriveConnectionKick(cmd.Context(), opts.nas, driveadmin.ConnectionKick{SessionID: sessionID})
+			if err != nil {
+				return err
+			}
+			return encodeJSONOutput(cmd, outputPath, plan)
+		},
+	}
+	command.Flags().StringVar(&sessionID, "session", "", "session_id exactly as listed by drive admin connections")
+	command.Flags().StringVarP(&outputPath, "output", "o", "-", "plan JSON file, or - for stdout")
+	_ = command.MarkFlagRequired("session")
+	return command
+}
+
+func newDriveAdminConnectionsApplyCommand(opts *options) *cobra.Command {
+	var inputPath, approvalHash string
+	command := &cobra.Command{
+		Use:   "apply",
+		Short: "Apply a connection kick plan after hash and stale-state validation",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var plan application.DriveConnectionKickPlan
+			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
+				return fmt.Errorf("read connection kick plan: %w", err)
+			}
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.ApplyDriveConnectionKickPlan(cmd.Context(), plan, approvalHash)
+			if err != nil {
+				return err
+			}
+			return encodeIndentedJSON(cmd.OutOrStdout(), result)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "connection kick plan JSON file, or - for stdin")
+	command.Flags().StringVar(&approvalHash, "approve", "", "exact SHA-256 hash printed by the kick plan")
+	_ = command.MarkFlagRequired("approve")
 	return command
 }
 
@@ -555,11 +610,12 @@ func writeDriveAdminConnections(cmd *cobra.Command, result application.DriveAdmi
 		fmt.Fprintln(writer, "No active Drive connections.")
 		return writer.Flush()
 	}
-	fmt.Fprintln(writer, "\nUSER\tDEVICE\tTYPE\tADDRESS")
+	fmt.Fprintln(writer, "\nSESSION\tDEVICE\tTYPE\tADDRESS\tSTATUS\tVERSION\tLOGIN")
 	for _, connection := range result.Connections.Connections {
-		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n",
-			valueOrDash(connection.User), valueOrDash(connection.DeviceName),
-			valueOrDash(connection.ClientType), valueOrDash(connection.Address))
+		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			valueOrDash(connection.SessionID), valueOrDash(connection.DeviceName),
+			valueOrDash(connection.ClientType), valueOrDash(connection.Address),
+			valueOrDash(connection.Status), valueOrDash(connection.Version), formatUnixTime(connection.LoginUnix))
 	}
 	return writer.Flush()
 }

@@ -52,6 +52,7 @@ flowchart LR
   WI031 -. "plan/apply + package gating pattern" .-> WI050
   WI022 --> WI051["WI-051 Synology Office settings"]
   WI022 --> WI052["WI-052 Drive observability reads"]
+  WI052 --> WI053["WI-053 Drive connection kick"]
   WI023["WI-023 LAN device discovery"]
 ```
 
@@ -108,6 +109,7 @@ flowchart LR
 | [WI-047](work-items/WI-047-admin-ui-workflow-redesign.md) | P1 | `done` | G | WI-045, WI-046 | Redesign authenticated pages around resource lists, state-aware actions, and guided workflows. |
 | [WI-048](work-items/WI-048-mcp-oauth-url-login.md) | P0 | `done` | G | WI-045 | Add standards-based MCP OAuth URL login while retaining manual client tokens. |
 | [WI-050](work-items/WI-050-drive-team-folder-write.md) | P1 | `done` | C | WI-022, WI-031 | Guarded Drive team-folder enable/disable and versioning via `SYNO.SynologyDrive.Share` set, replacing the WI-022 fail-closed stub; CLI + MCP. |
+| [WI-053](work-items/WI-053-drive-connection-kick.md) | P2 | `done` | C | WI-022, WI-052 | Guarded Drive client-session disconnect (Connection.delete v2) plus source-true connection fields incl. session id; CLI + MCP. |
 | [WI-052](work-items/WI-052-drive-observability-reads.md) | P2 | `done` | C | WI-022 | Drive Admin observability reads: connection summary, cached DB usage, top accessed files, and package activation state; CLI + MCP, live-verified. |
 | [WI-051](work-items/WI-051-office-admin.md) | P2 | `done` | C | WI-019, WI-022 | Synology Office settings module: info/system-setting/preferences/fonts reads + guarded system and preference writes (package-gated on `Spreadsheet`), CLI + MCP, live-verified; font mutations and per-object settings deferred. |
 | [WI-049](work-items/WI-049-file-station.md) | P1 | `in_progress` | C | WI-006 | Full read/write FileStation module (core SYNO.FileStation.*), shipped + live-verified end-to-end on DSM 7.3: reads (list/stat/search/dir-size/md5/virtual-folders/permission-check), streaming download+upload binary transport, and the mutation surface (create/rename/copy/move/delete/compress/extract/upload + sharing links) via hash-bound plan/apply, plus favorites and background-task list — across CLI (`file …`) and MCP (114 tools; read-only gateway strips writes + content transfer). Optional follow-ons: Sharing.edit/clear_invalid, Thumb, BackgroundTask.clear_finished. |

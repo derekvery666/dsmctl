@@ -40,6 +40,7 @@ const (
 	LogCapabilityName               = "drive.admin.log.read"
 	TeamFoldersSetCapabilityName    = "drive.admin.teamfolders.set"
 	ConnectionSummaryCapabilityName = "drive.admin.connections.summary.read"
+	ConnectionKickCapabilityName    = "drive.admin.connections.kick"
 	DBUsageCapabilityName           = "drive.admin.dbusage.read"
 	DashboardCapabilityName         = "drive.admin.dashboard.read"
 	ActivationCapabilityName        = "drive.admin.activation.read"
@@ -249,6 +250,44 @@ var connectionSummaryOperation = compatibility.Operation[Input, driveadmin.Conne
 	},
 }
 
+// ConnectionKickInput disconnects one client session by its session id.
+type ConnectionKickInput struct {
+	SessionID string
+}
+
+// ConnectionMutationResult records the selected backend for one kick.
+type ConnectionMutationResult struct {
+	Backend string `json:"backend" jsonschema:"Selected DSM compatibility backend"`
+	API     string `json:"api" jsonschema:"DSM WebAPI used for the change"`
+	Version int    `json:"version" jsonschema:"DSM WebAPI version used for the change"`
+	Method  string `json:"method" jsonschema:"DSM WebAPI method used for the change"`
+}
+
+// connectionKickOperation removes one client session. Source-verified
+// (handlers/connection/delete.cpp): the client_sess_id parameter is a JSON
+// array of session ids; dsmctl sends exactly one and never sends the
+// data_wipe companion (remote wipe stays out of scope). The handler answers
+// an empty success, so callers verify by re-reading the connection list.
+var connectionKickOperation = compatibility.Operation[ConnectionKickInput, ConnectionMutationResult]{
+	Name: ConnectionKickCapabilityName,
+	Variants: []compatibility.Variant[ConnectionKickInput, ConnectionMutationResult]{
+		{
+			Name: "drive-connection-v2", API: ConnectionAPIName, Version: 2, Priority: 10,
+			Match: compatibility.All(compatibility.APIVersion(ConnectionAPIName, 2), baselinePackage),
+			Execute: func(ctx context.Context, executor compatibility.Executor, input ConnectionKickInput) (ConnectionMutationResult, error) {
+				_, err := executor.Execute(ctx, compatibility.Request{
+					API: ConnectionAPIName, Version: 2, Method: "delete",
+					JSONParameters: map[string]any{"client_sess_id": []string{input.SessionID}},
+				})
+				if err != nil {
+					return ConnectionMutationResult{}, fmt.Errorf("call %s.delete v2: %w", ConnectionAPIName, err)
+				}
+				return ConnectionMutationResult{}, nil
+			},
+		},
+	},
+}
+
 var dbUsageOperation = compatibility.Operation[Input, driveadmin.DBUsage]{
 	Name: DBUsageCapabilityName,
 	Variants: []compatibility.Variant[Input, driveadmin.DBUsage]{
@@ -383,6 +422,19 @@ func ExecuteTeamFoldersSet(ctx context.Context, target compatibility.Target, exe
 func SelectConnectionSummary(target compatibility.Target) (compatibility.Selection, error) {
 	_, selection, err := connectionSummaryOperation.Select(target)
 	return selection, err
+}
+
+func SelectConnectionKick(target compatibility.Target) (compatibility.Selection, error) {
+	_, selection, err := connectionKickOperation.Select(target)
+	return selection, err
+}
+
+func ExecuteConnectionKick(ctx context.Context, target compatibility.Target, executor compatibility.Executor, input ConnectionKickInput) (ConnectionMutationResult, compatibility.Selection, error) {
+	result, selection, err := connectionKickOperation.Run(ctx, target, executor, input)
+	if err == nil {
+		result.Backend, result.API, result.Version, result.Method = selection.Backend, selection.API, selection.Version, "delete"
+	}
+	return result, selection, err
 }
 
 func SelectDBUsage(target compatibility.Target) (compatibility.Selection, error) {

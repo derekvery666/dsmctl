@@ -22,6 +22,9 @@ type DriveConfigMutationResult = driveops.ConfigMutationResult
 type DriveTeamFolderChange = driveadmin.TeamFolderChange
 type DriveTeamFolderMutationResult = driveops.TeamFolderMutationResult
 type DriveConnectionSummary = driveadmin.ConnectionSummary
+type DriveConnection = driveadmin.Connection
+type DriveConnectionKick = driveadmin.ConnectionKick
+type DriveConnectionMutationResult = driveops.ConnectionMutationResult
 type DriveDBUsage = driveadmin.DBUsage
 type DriveTopAccessQuery = driveadmin.TopAccessQuery
 type DriveTopAccessFiles = driveadmin.TopAccessFiles
@@ -114,6 +117,23 @@ func (c *Client) DriveAdminLog(ctx context.Context, query DriveAdminLogQuery) (D
 	}
 	c.target.AddCapability(driveops.LogCapabilityName)
 	return log, nil
+}
+
+// ApplyDriveConnectionKick disconnects one client session by its session id.
+// The delete call answers an empty success, so the caller verifies the
+// postcondition by re-reading the connection list.
+func (c *Client) ApplyDriveConnectionKick(ctx context.Context, kick DriveConnectionKick) (DriveConnectionMutationResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, driveops.APINames()...); err != nil {
+		return DriveConnectionMutationResult{}, fmt.Errorf("prepare Drive Admin mutation target: %w", err)
+	}
+	result, _, err := driveops.ExecuteConnectionKick(ctx, c.target, lockedExecutor{client: c}, driveops.ConnectionKickInput{SessionID: kick.SessionID})
+	if err != nil {
+		return DriveConnectionMutationResult{}, fmt.Errorf("apply Drive connection kick: %w", err)
+	}
+	return result, nil
 }
 
 // DriveConnectionSummary reads the Admin Console overview connection counters.
@@ -315,6 +335,7 @@ func (c *Client) DriveAdminCapabilities(ctx context.Context) (DriveAdminCapabili
 		supported       *bool
 	}{
 		{driveops.SelectConnectionSummary, driveops.ConnectionSummaryCapabilityName, &capabilities.ConnectionSummaryRead},
+		{driveops.SelectConnectionKick, driveops.ConnectionKickCapabilityName, &capabilities.ConnectionsKick},
 		{driveops.SelectDBUsage, driveops.DBUsageCapabilityName, &capabilities.DBUsageRead},
 		{driveops.SelectDashboard, driveops.DashboardCapabilityName, &capabilities.DashboardRead},
 		{driveops.SelectActivation, driveops.ActivationCapabilityName, &capabilities.ActivationRead},

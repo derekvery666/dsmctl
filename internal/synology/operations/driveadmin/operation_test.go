@@ -198,11 +198,17 @@ func TestExecuteStatusRejectsUnknownShape(t *testing.T) {
 }
 
 func TestExecuteConnectionsDecodesItems(t *testing.T) {
+	// Item shape from the Drive server source (handlers/connection/list.cpp):
+	// client_* field names, login_time stringified; legacy aliases stay as
+	// fallbacks for older payloads.
 	executor := &capturingExecutor{response: json.RawMessage(`{
 		"total": 2,
 		"items": [
-			{"username": "alice", "device_name": "ALICE-NB", "client_type": "Desktop", "address": "10.0.0.5"},
-			{"user": "bob", "ip": "10.0.0.9"}
+			{"client_id": "cid-1", "client_session_id": "sess-1", "client_ip": "10.0.0.5", "client_name": "ALICE-NB",
+			 "login_time": "1784000000", "client_status": "Online", "client_type": "Synology Drive Client",
+			 "client_is_relay": false, "client_version": "3.5.1", "client_can_wipe": true,
+			 "client_location": "TW", "device_uuid": "uuid-1", "last_auth_time": 1784000100},
+			{"user": "bob", "ip": "10.0.0.9", "device_name": "BOB-NB"}
 		]
 	}`)}
 	connections, _, err := ExecuteConnections(context.Background(), driveTarget("4.0.3-27892", true), executor)
@@ -216,11 +222,37 @@ func TestExecuteConnectionsDecodesItems(t *testing.T) {
 		t.Fatalf("connections = %#v", connections)
 	}
 	first, second := connections.Connections[0], connections.Connections[1]
-	if first.User != "alice" || first.DeviceName != "ALICE-NB" || first.ClientType != "desktop" || first.Address != "10.0.0.5" {
+	if first.SessionID != "sess-1" || first.ClientID != "cid-1" || first.DeviceName != "ALICE-NB" ||
+		first.ClientType != "synology drive client" || first.Address != "10.0.0.5" ||
+		first.LoginUnix != 1784000000 || first.LastAuthUnix != 1784000100 ||
+		first.Status != "online" || first.Version != "3.5.1" || !first.CanWipe || first.IsRelay {
 		t.Fatalf("first = %#v", first)
 	}
-	if second.User != "bob" || second.Address != "10.0.0.9" {
+	if second.User != "bob" || second.Address != "10.0.0.9" || second.DeviceName != "BOB-NB" || second.SessionID != "" {
 		t.Fatalf("second = %#v", second)
+	}
+}
+
+func TestExecuteConnectionKickRequestShape(t *testing.T) {
+	executor := &capturingExecutor{response: json.RawMessage(`{}`)}
+	result, _, err := ExecuteConnectionKick(context.Background(), driveTarget("4.0.3-27892", true), executor, ConnectionKickInput{SessionID: "sess-9"})
+	if err != nil {
+		t.Fatalf("ExecuteConnectionKick() error = %v", err)
+	}
+	if executor.request.API != ConnectionAPIName || executor.request.Version != 2 || executor.request.Method != "delete" {
+		t.Fatalf("request = %#v", executor.request)
+	}
+	// Source-verified (handlers/connection/delete.cpp): client_sess_id is an
+	// array; exactly one id is sent, and data_wipe is never sent.
+	ids, ok := executor.request.JSONParameters["client_sess_id"].([]string)
+	if !ok || len(ids) != 1 || ids[0] != "sess-9" {
+		t.Fatalf("client_sess_id = %#v", executor.request.JSONParameters["client_sess_id"])
+	}
+	if _, present := executor.request.JSONParameters["data_wipe"]; present {
+		t.Fatalf("data_wipe must not be sent: %#v", executor.request.JSONParameters)
+	}
+	if result.Method != "delete" || result.Version != 2 {
+		t.Fatalf("result = %#v", result)
 	}
 }
 
