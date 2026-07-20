@@ -131,7 +131,12 @@ func remotePolicyMiddleware(service *application.Service, auditor remotepolicy.A
 			if err != nil {
 				outcome = "failure"
 			}
-			if callResult, ok := result.(*mcp.CallToolResult); ok && callResult.IsError {
+			// A dispatch to an unknown/removed tool returns a typed-nil
+			// *mcp.CallToolResult boxed in the result interface (ok is true,
+			// callResult is nil), so the nil check is required before IsError —
+			// without it a remote tools/call for any unregistered name panics
+			// this middleware, crashing the gateway process.
+			if callResult, ok := result.(*mcp.CallToolResult); ok && callResult != nil && callResult.IsError {
 				outcome = "failure"
 			}
 			if err == nil && outcome == "success" && strings.HasPrefix(params.Name, "plan_") {
@@ -149,7 +154,7 @@ func recordPendingApproval(ctx context.Context, target any, principal remotepoli
 		return
 	}
 	callResult, ok := result.(*mcp.CallToolResult)
-	if !ok || callResult.IsError || callResult.StructuredContent == nil {
+	if !ok || callResult == nil || callResult.IsError || callResult.StructuredContent == nil {
 		return
 	}
 	encoded, err := json.Marshal(callResult.StructuredContent)

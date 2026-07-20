@@ -119,3 +119,32 @@ func TestEveryRemoteTargetedToolRejectsOmittedNAS(t *testing.T) {
 		}
 	}
 }
+
+// TestRemotePolicyMiddlewareToleratesTypedNilResult is a regression test for a
+// remote denial-of-service: a tools/call for an unknown or removed tool makes
+// the go-sdk return a typed-nil *mcp.CallToolResult boxed in the result
+// interface (the assertion succeeds but the pointer is nil). The policy
+// middleware must nil-check before dereferencing IsError — the panic would run
+// in a bare goroutine with no recover and crash the entire gateway process,
+// reachable by any principal holding a valid read token.
+func TestRemotePolicyMiddlewareToleratesTypedNilResult(t *testing.T) {
+	service := &application.Service{}
+	principal := remotepolicy.Principal{
+		TokenID: "reader",
+		Scopes:  map[string]struct{}{remotepolicy.ScopeRead: {}},
+		NAS:     map[string]struct{}{},
+	}
+	remoteContext := remotepolicy.WithPrincipal(context.Background(), principal)
+	next := func(context.Context, string, mcp.Request) (mcp.Result, error) {
+		// The typed-nil the SDK produces for an unknown-tool dispatch.
+		var typedNil *mcp.CallToolResult
+		return typedNil, nil
+	}
+	// get_auth_status is read-scoped and targetless, so it reaches next; the
+	// fake next stands in for the unknown-tool typed-nil result.
+	handler := remotePolicyMiddleware(service, nil)(next)
+	request := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Name: "get_auth_status", Arguments: json.RawMessage(`{}`)}}
+	if _, err := handler(remoteContext, "tools/call", request); err != nil {
+		t.Fatalf("unexpected error (must not panic): %v", err)
+	}
+}
