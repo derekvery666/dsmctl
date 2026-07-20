@@ -1087,6 +1087,32 @@ type getDriveUsersOutput struct {
 	Privileges synology.DrivePrivilegeList `json:"privileges" jsonschema:"Accounts with their Drive privilege state"`
 }
 
+type getDriveFilesInput struct {
+	NAS            string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	TeamFolder     string `json:"team_folder,omitempty" jsonschema:"Team folder (shared-folder name) to browse; empty browses the signed-in account's My Drive"`
+	Pattern        string `json:"pattern,omitempty" jsonschema:"Substring filter on the node name"`
+	Recursive      bool   `json:"recursive,omitempty" jsonschema:"Search the whole view instead of one directory level"`
+	ExcludeRemoved bool   `json:"exclude_removed,omitempty" jsonschema:"Hide removed entries (included by default — this is the rescue view)"`
+	Limit          int    `json:"limit,omitempty" jsonschema:"Maximum nodes to return; defaults to 100, maximum 1000"`
+	Offset         int    `json:"offset,omitempty" jsonschema:"Nodes to skip for pagination"`
+}
+
+type getDriveFilesOutput struct {
+	NAS   string              `json:"nas" jsonschema:"NAS profile used for the request"`
+	Nodes synology.DriveNodes `json:"nodes" jsonschema:"Drive view contents, including removed entries unless excluded"`
+}
+
+type getDriveFileVersionsInput struct {
+	NAS        string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	TeamFolder string `json:"team_folder,omitempty" jsonschema:"Team folder (shared-folder name); empty targets the signed-in account's My Drive"`
+	Path       string `json:"path" jsonschema:"Node path inside the Drive view, as returned by get_drive_files"`
+}
+
+type getDriveFileVersionsOutput struct {
+	NAS      string                     `json:"nas" jsonschema:"NAS profile used for the request"`
+	Versions synology.DriveNodeVersions `json:"versions" jsonschema:"Stored version history for the node"`
+}
+
 type planDriveConnectionKickInput struct {
 	NAS       string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 	SessionID string `json:"session_id" jsonschema:"Drive client session identifier exactly as listed by get_drive_admin_connections"`
@@ -2899,6 +2925,35 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getDriveUsersOutput{}, err
 		}
 		return nil, getDriveUsersOutput{NAS: result.NAS, Privileges: result.Privileges}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_drive_files",
+		Title:       "Browse a Drive view (rescue perspective)",
+		Description: "Browse one Synology Drive view — a team folder or the signed-in account's My Drive — including removed entries by default, with each node's path, size, version count, and modification time. This is the admin rescue perspective for finding deleted files; it never changes anything.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDriveFilesInput) (*mcp.CallToolResult, getDriveFilesOutput, error) {
+		result, err := service.GetDriveNodes(ctx, input.NAS, synology.DriveNodeQuery{
+			TeamFolder: input.TeamFolder, Pattern: input.Pattern, Recursive: input.Recursive,
+			ExcludeRemoved: input.ExcludeRemoved, Limit: input.Limit, Offset: input.Offset,
+		})
+		if err != nil {
+			return nil, getDriveFilesOutput{}, err
+		}
+		return nil, getDriveFilesOutput{NAS: result.NAS, Nodes: result.Nodes}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_drive_file_versions",
+		Title:       "List a Drive node's version history",
+		Description: "List the stored versions of one file in a Synology Drive view (team folder or My Drive): when each version was stored and modified, its size, content hash, and which client stored it. This tool never restores or changes anything.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDriveFileVersionsInput) (*mcp.CallToolResult, getDriveFileVersionsOutput, error) {
+		result, err := service.GetDriveNodeVersions(ctx, input.NAS, synology.DriveNodeVersionQuery{TeamFolder: input.TeamFolder, Path: input.Path})
+		if err != nil {
+			return nil, getDriveFileVersionsOutput{}, err
+		}
+		return nil, getDriveFileVersionsOutput{NAS: result.NAS, Versions: result.Versions}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

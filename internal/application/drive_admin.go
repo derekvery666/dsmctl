@@ -57,6 +57,59 @@ type driveAdminClient interface {
 	DriveActivation(context.Context) (synology.DriveActivation, error)
 	ApplyDriveConnectionKick(context.Context, driveadmin.ConnectionKick) (synology.DriveConnectionMutationResult, error)
 	DrivePrivileges(context.Context, synology.DrivePrivilegeQuery) (synology.DrivePrivilegeList, error)
+	DriveNodes(context.Context, synology.DriveNodeQuery) (synology.DriveNodes, error)
+	DriveNodeVersions(context.Context, synology.DriveNodeVersionQuery) (synology.DriveNodeVersions, error)
+}
+
+const (
+	driveNodeDefaultLimit = 100
+	driveNodeMaxLimit     = 1000
+)
+
+type DriveNodesResult struct {
+	NAS   string             `json:"nas" jsonschema:"NAS profile used for the request"`
+	Nodes synology.DriveNodes `json:"nodes" jsonschema:"Drive view contents, including removed entries unless excluded"`
+}
+
+type DriveNodeVersionsResult struct {
+	NAS      string                     `json:"nas" jsonschema:"NAS profile used for the request"`
+	Versions synology.DriveNodeVersions `json:"versions" jsonschema:"Stored version history for the node"`
+}
+
+func (s *Service) GetDriveNodes(ctx context.Context, requestedNAS string, query synology.DriveNodeQuery) (DriveNodesResult, error) {
+	if query.Limit < 0 || query.Offset < 0 {
+		return DriveNodesResult{}, fmt.Errorf("node paging values cannot be negative")
+	}
+	if query.Limit == 0 {
+		query.Limit = driveNodeDefaultLimit
+	}
+	if query.Limit > driveNodeMaxLimit {
+		return DriveNodesResult{}, fmt.Errorf("node limit %d exceeds the maximum %d", query.Limit, driveNodeMaxLimit)
+	}
+	name, client, err := s.driveAdminClient(ctx, requestedNAS)
+	if err != nil {
+		return DriveNodesResult{}, err
+	}
+	nodes, err := client.DriveNodes(ctx, query)
+	if err != nil {
+		return DriveNodesResult{}, authenticationError(name, err)
+	}
+	return DriveNodesResult{NAS: name, Nodes: nodes}, nil
+}
+
+func (s *Service) GetDriveNodeVersions(ctx context.Context, requestedNAS string, query synology.DriveNodeVersionQuery) (DriveNodeVersionsResult, error) {
+	if strings.TrimSpace(query.Path) == "" {
+		return DriveNodeVersionsResult{}, fmt.Errorf("node versions require the path listed by the files read")
+	}
+	name, client, err := s.driveAdminClient(ctx, requestedNAS)
+	if err != nil {
+		return DriveNodeVersionsResult{}, err
+	}
+	versions, err := client.DriveNodeVersions(ctx, query)
+	if err != nil {
+		return DriveNodeVersionsResult{}, authenticationError(name, err)
+	}
+	return DriveNodeVersionsResult{NAS: name, Versions: versions}, nil
 }
 
 type DrivePrivilegesResult struct {

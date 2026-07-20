@@ -412,6 +412,82 @@ func TestExecutePrivilegeListRequestShapeAndDecode(t *testing.T) {
 	}
 }
 
+func TestExecuteNodesRequestShapeAndDecode(t *testing.T) {
+	// Response shape captured live from Drive 4.0.3 (WI-056): node_id is a
+	// string, file_type 1 is a folder, and removed entries stay listed.
+	executor := &capturingExecutor{response: json.RawMessage(`{
+		"total": 2,
+		"items": [
+			{"absolute_path":"/Drive/.viminfo","file_type":0,"is_removed":false,"mtime":1776070434,"name":".viminfo",
+			 "node_id":"5","path":"/.viminfo","permanent_link":"17ouRPut2VIV","v_file_size":802,"ver_cnt":1},
+			{"absolute_path":"/Drive/old","file_type":1,"is_removed":true,"mtime":1784477561,"name":"old",
+			 "node_id":"21","path":"/old","permanent_link":"197exHvuLt","v_file_size":0,"ver_cnt":1}
+		]
+	}`)}
+	nodes, _, err := ExecuteNodes(context.Background(), driveTarget("4.0.3-27892", true), executor,
+		driveadmin.NodeQuery{TeamFolder: "projects", Pattern: "o", Recursive: true, Limit: 100})
+	if err != nil {
+		t.Fatalf("ExecuteNodes() error = %v", err)
+	}
+	parameters := executor.request.JSONParameters
+	// Verified live: a team folder is targeted as @<shared-folder-name>, and
+	// list_removed defaults on (this is the rescue view).
+	if executor.request.Method != "list" || parameters["target"] != "@projects" || parameters["list_removed"] != true ||
+		parameters["pattern"] != "o" || parameters["recursive"] != true {
+		t.Fatalf("request = %#v", executor.request)
+	}
+	if nodes.Total != 2 || len(nodes.Items) != 2 {
+		t.Fatalf("nodes = %#v", nodes)
+	}
+	if nodes.Items[0].IsFolder || nodes.Items[0].SizeBytes != 802 || nodes.Items[0].NodeID != "5" {
+		t.Fatalf("first = %#v", nodes.Items[0])
+	}
+	if !nodes.Items[1].IsFolder || !nodes.Items[1].IsRemoved {
+		t.Fatalf("second = %#v", nodes.Items[1])
+	}
+
+	// The My Drive view is target "user", and excluded removals flip the flag.
+	executor = &capturingExecutor{response: json.RawMessage(`{"items":[],"total":0}`)}
+	if _, _, err := ExecuteNodes(context.Background(), driveTarget("4.0.3-27892", true), executor,
+		driveadmin.NodeQuery{ExcludeRemoved: true, Limit: 100}); err != nil {
+		t.Fatalf("ExecuteNodes(user) error = %v", err)
+	}
+	parameters = executor.request.JSONParameters
+	if parameters["target"] != "user" || parameters["list_removed"] != false {
+		t.Fatalf("user view request = %#v", parameters)
+	}
+}
+
+func TestExecuteNodeVersionsDecodes(t *testing.T) {
+	// Response shape captured live from Drive 4.0.3 (WI-056).
+	executor := &capturingExecutor{response: json.RawMessage(`{
+		"disable_download": false, "disable_restore": false, "is_locked": false, "is_removed": false,
+		"items": [{"create_time":1776070439,"hash":"6e49df46c155b48fc3929f580c457f26","modify_time":1776070434,
+		           "node_id":5,"path":"/.viminfo","size":802,"sync_id":10,"version_updater":"localhost"}],
+		"permanent_id": "945174744739651589", "permanent_link": "17ouRPut2VIV"
+	}`)}
+	versions, _, err := ExecuteNodeVersions(context.Background(), driveTarget("4.0.3-27892", true), executor,
+		driveadmin.NodeVersionQuery{Path: "/.viminfo"})
+	if err != nil {
+		t.Fatalf("ExecuteNodeVersions() error = %v", err)
+	}
+	if executor.request.Method != "list_version" || executor.request.JSONParameters["target"] != "user" || executor.request.JSONParameters["path"] != "/.viminfo" {
+		t.Fatalf("request = %#v", executor.request)
+	}
+	if versions.Path != "/.viminfo" || versions.IsRemoved || versions.RestoreBlocked || len(versions.Versions) != 1 {
+		t.Fatalf("versions = %#v", versions)
+	}
+	entry := versions.Versions[0]
+	if entry.CreatedUnix != 1776070439 || entry.SizeBytes != 802 || entry.Hash == "" || entry.VersionUpdater != "localhost" {
+		t.Fatalf("entry = %#v", entry)
+	}
+
+	if _, _, err := ExecuteNodeVersions(context.Background(), driveTarget("4.0.3-27892", true),
+		&capturingExecutor{response: json.RawMessage(`{"history": 1}`)}, driveadmin.NodeVersionQuery{Path: "/x"}); err == nil || !strings.Contains(err.Error(), "no version array") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestObservabilityDecodersRejectUnknownShapes(t *testing.T) {
 	target := driveTarget("4.0.3-27892", true)
 	if _, _, err := ExecuteConnectionSummary(context.Background(), target, &capturingExecutor{response: json.RawMessage(`{"counts":{}}`)}); err == nil || !strings.Contains(err.Error(), "no summary object") {

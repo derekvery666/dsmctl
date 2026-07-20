@@ -31,6 +31,10 @@ type DriveTopAccessFiles = driveadmin.TopAccessFiles
 type DriveActivation = driveadmin.Activation
 type DrivePrivilegeList = driveadmin.PrivilegeList
 type DrivePrivilegeQuery = driveadmin.PrivilegeQuery
+type DriveNodeQuery = driveadmin.NodeQuery
+type DriveNodes = driveadmin.Nodes
+type DriveNodeVersionQuery = driveadmin.NodeVersionQuery
+type DriveNodeVersions = driveadmin.NodeVersions
 
 // driveAdminEvidenceLocked reports the installed SynologyDrive package as
 // observed by the catalog refresh that ran in preparePackageScopedTargetLocked.
@@ -119,6 +123,39 @@ func (c *Client) DriveAdminLog(ctx context.Context, query DriveAdminLogQuery) (D
 	}
 	c.target.AddCapability(driveops.LogCapabilityName)
 	return log, nil
+}
+
+// DriveNodes browses one Drive view (My Drive or a team folder), including
+// removed entries — the Admin Console's rescue perspective.
+func (c *Client) DriveNodes(ctx context.Context, query DriveNodeQuery) (DriveNodes, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, driveops.APINames()...); err != nil {
+		return DriveNodes{}, fmt.Errorf("prepare Drive Admin target: %w", err)
+	}
+	nodes, _, err := driveops.ExecuteNodes(ctx, c.target, lockedExecutor{client: c}, query)
+	if err != nil {
+		return DriveNodes{}, driveAdminReadError("nodes", c.driveAdminEvidenceLocked(), err)
+	}
+	c.target.AddCapability(driveops.NodesReadCapabilityName)
+	return nodes, nil
+}
+
+// DriveNodeVersions lists one node's stored version history.
+func (c *Client) DriveNodeVersions(ctx context.Context, query DriveNodeVersionQuery) (DriveNodeVersions, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, driveops.APINames()...); err != nil {
+		return DriveNodeVersions{}, fmt.Errorf("prepare Drive Admin target: %w", err)
+	}
+	versions, _, err := driveops.ExecuteNodeVersions(ctx, c.target, lockedExecutor{client: c}, query)
+	if err != nil {
+		return DriveNodeVersions{}, driveAdminReadError("node versions", c.driveAdminEvidenceLocked(), err)
+	}
+	c.target.AddCapability(driveops.NodeVersionsReadCapabilityName)
+	return versions, nil
 }
 
 // DrivePrivileges lists accounts with their Drive privilege state.
@@ -358,6 +395,8 @@ func (c *Client) DriveAdminCapabilities(ctx context.Context) (DriveAdminCapabili
 		{driveops.SelectDashboard, driveops.DashboardCapabilityName, &capabilities.DashboardRead},
 		{driveops.SelectActivation, driveops.ActivationCapabilityName, &capabilities.ActivationRead},
 		{driveops.SelectPrivilegeList, driveops.PrivilegeReadCapabilityName, &capabilities.PrivilegeRead},
+		{driveops.SelectNodes, driveops.NodesReadCapabilityName, &capabilities.NodesRead},
+		{driveops.SelectNodeVersions, driveops.NodeVersionsReadCapabilityName, &capabilities.NodeVersionsRead},
 	}
 	for _, extended := range extendedSelectors {
 		selection, err := extended.selectOperation(c.target)

@@ -32,6 +32,7 @@ const (
 	LogAPIName        = "SYNO.SynologyDrive.Log"
 	DBUsageAPIName    = "SYNO.SynologyDrive.DBUsage"
 	PrivilegeAPIName  = "SYNO.SynologyDrive.Privilege"
+	NodeAPIName       = "SYNO.SynologyDrive.Node"
 	DashboardAPIName  = "SYNO.SynologyDrive.Dashboard"
 	ActivationAPIName = "SYNO.SynologyDrive.Activation"
 
@@ -46,7 +47,19 @@ const (
 	DashboardCapabilityName         = "drive.admin.dashboard.read"
 	ActivationCapabilityName        = "drive.admin.activation.read"
 	PrivilegeReadCapabilityName     = "drive.admin.privilege.read"
+	NodesReadCapabilityName         = "drive.admin.nodes.read"
+	NodeVersionsReadCapabilityName  = "drive.admin.nodeversions.read"
 )
+
+// nodeTarget maps the stable query model to Drive's target parameter:
+// verified live on Drive 4.0.3, "user" is the calling account's My Drive and
+// "@<shared-folder-name>" is a team folder view.
+func nodeTarget(teamFolder string) string {
+	if teamFolder == "" {
+		return "user"
+	}
+	return "@" + teamFolder
+}
 
 // baselinePackage gates every variant on the verified Drive 3+/4 Admin Console
 // API family. The exclusive maximum is unbounded; a future Drive release with a
@@ -361,6 +374,82 @@ var privilegeListOperation = compatibility.Operation[driveadmin.PrivilegeQuery, 
 	},
 }
 
+var nodeListOperation = compatibility.Operation[driveadmin.NodeQuery, driveadmin.Nodes]{
+	Name: NodesReadCapabilityName,
+	Variants: []compatibility.Variant[driveadmin.NodeQuery, driveadmin.Nodes]{
+		{
+			Name: "drive-node-v1", API: NodeAPIName, Version: 1, Priority: 10,
+			Match: compatibility.All(compatibility.APIVersion(NodeAPIName, 1), baselinePackage),
+			Execute: func(ctx context.Context, executor compatibility.Executor, query driveadmin.NodeQuery) (driveadmin.Nodes, error) {
+				parameters := map[string]any{
+					"target": nodeTarget(query.TeamFolder),
+					"offset": query.Offset, "limit": query.Limit,
+					"list_removed": !query.ExcludeRemoved,
+				}
+				if query.Pattern != "" {
+					parameters["pattern"] = query.Pattern
+				}
+				if query.Recursive {
+					parameters["recursive"] = true
+				}
+				data, err := executor.Execute(ctx, compatibility.Request{
+					API: NodeAPIName, Version: 1, Method: "list", JSONParameters: parameters,
+				})
+				if err != nil {
+					return driveadmin.Nodes{}, fmt.Errorf("call %s.list v1: %w", NodeAPIName, err)
+				}
+				return decodeNodes(data)
+			},
+		},
+	},
+}
+
+var nodeVersionsOperation = compatibility.Operation[driveadmin.NodeVersionQuery, driveadmin.NodeVersions]{
+	Name: NodeVersionsReadCapabilityName,
+	Variants: []compatibility.Variant[driveadmin.NodeVersionQuery, driveadmin.NodeVersions]{
+		{
+			Name: "drive-node-v1", API: NodeAPIName, Version: 1, Priority: 10,
+			Match: compatibility.All(compatibility.APIVersion(NodeAPIName, 1), baselinePackage),
+			Execute: func(ctx context.Context, executor compatibility.Executor, query driveadmin.NodeVersionQuery) (driveadmin.NodeVersions, error) {
+				data, err := executor.Execute(ctx, compatibility.Request{
+					API: NodeAPIName, Version: 1, Method: "list_version",
+					JSONParameters: map[string]any{
+						"target": nodeTarget(query.TeamFolder),
+						"path":   query.Path,
+					},
+				})
+				if err != nil {
+					return driveadmin.NodeVersions{}, fmt.Errorf("call %s.list_version v1: %w", NodeAPIName, err)
+				}
+				versions, err := decodeNodeVersions(data)
+				if err != nil {
+					return driveadmin.NodeVersions{}, err
+				}
+				versions.Path = query.Path
+				return versions, nil
+			},
+		},
+	},
+}
+
+func SelectNodes(target compatibility.Target) (compatibility.Selection, error) {
+	_, selection, err := nodeListOperation.Select(target)
+	return selection, err
+}
+
+func SelectNodeVersions(target compatibility.Target) (compatibility.Selection, error) {
+	_, selection, err := nodeVersionsOperation.Select(target)
+	return selection, err
+}
+
+func ExecuteNodes(ctx context.Context, target compatibility.Target, executor compatibility.Executor, query driveadmin.NodeQuery) (driveadmin.Nodes, compatibility.Selection, error) {
+	return nodeListOperation.Run(ctx, target, executor, query)
+}
+
+func ExecuteNodeVersions(ctx context.Context, target compatibility.Target, executor compatibility.Executor, query driveadmin.NodeVersionQuery) (driveadmin.NodeVersions, compatibility.Selection, error) {
+	return nodeVersionsOperation.Run(ctx, target, executor, query)
+}
+
 // Drive's own Privilege.set is deliberately not exposed. Live verification
 // on Drive 4.0.3 showed the DSM application privilege
 // (SYNO.SDS.Drive.Application, managed by the account module) is the real
@@ -388,7 +477,7 @@ var activationOperation = compatibility.Operation[Input, driveadmin.Activation]{
 // APINames lists every DSM API this module may use, so the facade can discover
 // them in one call before selecting variants.
 func APINames() []string {
-	return []string{StatusAPIName, ConnectionAPIName, ShareAPIName, LogAPIName, ConfigAPIName, DBUsageAPIName, DashboardAPIName, ActivationAPIName, PrivilegeAPIName}
+	return []string{StatusAPIName, ConnectionAPIName, ShareAPIName, LogAPIName, ConfigAPIName, DBUsageAPIName, DashboardAPIName, ActivationAPIName, PrivilegeAPIName, NodeAPIName}
 }
 
 func SelectStatus(target compatibility.Target) (compatibility.Selection, error) {

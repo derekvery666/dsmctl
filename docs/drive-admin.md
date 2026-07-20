@@ -98,6 +98,13 @@ dsmctl drive admin activation --nas office
   account from this view immediately (live-verified). Drive's own
   `Privilege.set` is deliberately not exposed: a Drive-side disable does not
   stick while the application privilege still allows the account.
+- `files` browses one Drive view — a team folder (`--team-folder`) or your My
+  Drive — **including removed entries** (the rescue perspective; hide them
+  with `--exclude-removed`), with per-node size, version count, and
+  modification time. `file-versions --path <path>` lists a node's stored
+  versions (time, size, content hash, storing client). Together they answer
+  "what got deleted and which version do I want back"; the restore write is a
+  planned follow-up (WI-056 defers `Node.Restore`).
 - `activation` reports whether the package completed its online activation
   (registration against the NAS serial). An unactivated Drive still serves
   clients — verified live — so this is informational; performing the

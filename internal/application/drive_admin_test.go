@@ -62,6 +62,14 @@ func (c *fakeDriveAdminClient) DriveAdminConnections(_ context.Context) (synolog
 	return synology.DriveAdminConnections{Total: len(c.connections), Connections: append([]driveadmin.Connection(nil), c.connections...)}, nil
 }
 
+func (c *fakeDriveAdminClient) DriveNodes(context.Context, synology.DriveNodeQuery) (synology.DriveNodes, error) {
+	return synology.DriveNodes{}, nil
+}
+
+func (c *fakeDriveAdminClient) DriveNodeVersions(context.Context, synology.DriveNodeVersionQuery) (synology.DriveNodeVersions, error) {
+	return synology.DriveNodeVersions{}, nil
+}
+
 func (c *fakeDriveAdminClient) DrivePrivileges(context.Context, synology.DrivePrivilegeQuery) (synology.DrivePrivilegeList, error) {
 	return synology.DrivePrivilegeList{Total: len(c.privileges), Users: append([]driveadmin.PrivilegedUser(nil), c.privileges...)}, nil
 }

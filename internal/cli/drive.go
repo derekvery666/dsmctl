@@ -141,7 +141,106 @@ func newDriveAdminCommand(opts *options) *cobra.Command {
 		newDriveAdminTopFilesCommand(opts),
 		newDriveAdminActivationCommand(opts),
 		newDriveAdminUsersCommand(opts),
+		newDriveAdminFilesCommand(opts),
+		newDriveAdminFileVersionsCommand(opts),
 	)
+	return command
+}
+
+func newDriveAdminFilesCommand(opts *options) *cobra.Command {
+	var jsonOutput, recursive, excludeRemoved bool
+	var teamFolder, pattern string
+	var limit, offset int
+	command := &cobra.Command{
+		Use:   "files",
+		Short: "Browse a Drive view (My Drive or a team folder), including removed entries",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.GetDriveNodes(cmd.Context(), opts.nas, synology.DriveNodeQuery{
+				TeamFolder: teamFolder, Pattern: pattern, Recursive: recursive,
+				ExcludeRemoved: excludeRemoved, Limit: limit, Offset: offset,
+			})
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return encodeIndentedJSON(cmd.OutOrStdout(), result)
+			}
+			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+			fmt.Fprintf(writer, "NAS:\t%s\n", result.NAS)
+			fmt.Fprintf(writer, "Total:\t%d\n", result.Nodes.Total)
+			if len(result.Nodes.Items) == 0 {
+				fmt.Fprintln(writer, "No nodes in this view.")
+				return writer.Flush()
+			}
+			fmt.Fprintln(writer, "\nPATH\tKIND\tREMOVED\tSIZE\tVERSIONS\tMODIFIED")
+			for _, node := range result.Nodes.Items {
+				kind := "file"
+				if node.IsFolder {
+					kind = "folder"
+				}
+				fmt.Fprintf(writer, "%s\t%s\t%s\t%d\t%d\t%s\n",
+					valueOrDash(node.Path), kind, yesNo(node.IsRemoved), node.SizeBytes, node.VersionCount, formatUnixTime(node.ModifiedUnix))
+			}
+			return writer.Flush()
+		},
+	}
+	command.Flags().BoolVar(&jsonOutput, "json", false, "output structured JSON")
+	command.Flags().StringVar(&teamFolder, "team-folder", "", "team folder (shared-folder name); empty browses your My Drive")
+	command.Flags().StringVar(&pattern, "pattern", "", "substring filter on the node name")
+	command.Flags().BoolVar(&recursive, "recursive", false, "search the whole view instead of one level")
+	command.Flags().BoolVar(&excludeRemoved, "exclude-removed", false, "hide removed entries")
+	command.Flags().IntVar(&limit, "limit", 100, "maximum nodes to return")
+	command.Flags().IntVar(&offset, "offset", 0, "nodes to skip for pagination")
+	return command
+}
+
+func newDriveAdminFileVersionsCommand(opts *options) *cobra.Command {
+	var jsonOutput bool
+	var teamFolder, path string
+	command := &cobra.Command{
+		Use:   "file-versions",
+		Short: "List a node's stored version history",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.GetDriveNodeVersions(cmd.Context(), opts.nas, synology.DriveNodeVersionQuery{TeamFolder: teamFolder, Path: path})
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return encodeIndentedJSON(cmd.OutOrStdout(), result)
+			}
+			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+			fmt.Fprintf(writer, "NAS:\t%s\n", result.NAS)
+			fmt.Fprintf(writer, "Path:\t%s\n", result.Versions.Path)
+			fmt.Fprintf(writer, "Removed:\t%s\n", yesNo(result.Versions.IsRemoved))
+			if len(result.Versions.Versions) == 0 {
+				fmt.Fprintln(writer, "No stored versions.")
+				return writer.Flush()
+			}
+			fmt.Fprintln(writer, "\nSTORED\tMODIFIED\tSIZE\tUPDATER\tHASH")
+			for _, version := range result.Versions.Versions {
+				fmt.Fprintf(writer, "%s\t%s\t%d\t%s\t%s\n",
+					formatUnixTime(version.CreatedUnix), formatUnixTime(version.ModifiedUnix),
+					version.SizeBytes, valueOrDash(version.VersionUpdater), valueOrDash(version.Hash))
+			}
+			return writer.Flush()
+		},
+	}
+	command.Flags().BoolVar(&jsonOutput, "json", false, "output structured JSON")
+	command.Flags().StringVar(&teamFolder, "team-folder", "", "team folder (shared-folder name); empty targets your My Drive")
+	command.Flags().StringVar(&path, "path", "", "node path inside the Drive view (see drive admin files)")
+	_ = command.MarkFlagRequired("path")
 	return command
 }
 

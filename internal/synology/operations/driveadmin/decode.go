@@ -212,6 +212,80 @@ func decodeTopAccessFiles(data json.RawMessage) (driveadmin.TopAccessFiles, erro
 	return result, nil
 }
 
+// decodeNodes reads Node.list. Verified live on Drive 4.0.3: items carry
+// name, path, absolute_path, a stringified node_id, file_type (1 = folder),
+// is_removed, v_file_size, ver_cnt, mtime, and permanent_link.
+func decodeNodes(data json.RawMessage) (driveadmin.Nodes, error) {
+	root, err := decodeObject(data, "Drive node list")
+	if err != nil {
+		return driveadmin.Nodes{}, err
+	}
+	items, ok := objectList(root, "items", "nodes", "data")
+	if !ok {
+		return driveadmin.Nodes{}, fmt.Errorf("decode Drive node list: no node array among %s", availableKeys(root))
+	}
+	result := driveadmin.Nodes{Items: make([]driveadmin.Node, 0, len(items))}
+	for index, item := range items {
+		name := stringValue(item, "name")
+		if name == "" {
+			return driveadmin.Nodes{}, fmt.Errorf("decode Drive node %d: no name field among %s", index, availableKeys(item))
+		}
+		removed, _ := boolValue(item, "is_removed")
+		encrypted, _ := boolValue(item, "is_encrypted")
+		locked, _ := boolValue(item, "is_locked")
+		result.Items = append(result.Items, driveadmin.Node{
+			Name:          name,
+			Path:          stringValue(item, "path"),
+			NodeID:        stringValue(item, "node_id"),
+			IsFolder:      intValue(item, "file_type") == 1,
+			IsRemoved:     removed,
+			IsEncrypted:   encrypted,
+			IsLocked:      locked,
+			SizeBytes:     int64Value(item, "v_file_size", "size"),
+			VersionCount:  intValue(item, "ver_cnt"),
+			ModifiedUnix:  int64Value(item, "mtime"),
+			PermanentLink: stringValue(item, "permanent_link"),
+		})
+	}
+	result.Total = intValue(root, "total")
+	if result.Total == 0 {
+		result.Total = len(result.Items)
+	}
+	return result, nil
+}
+
+// decodeNodeVersions reads Node.list_version. Verified live on Drive 4.0.3:
+// the envelope carries is_removed/disable_restore plus items with
+// create_time, modify_time, size, hash, and version_updater.
+func decodeNodeVersions(data json.RawMessage) (driveadmin.NodeVersions, error) {
+	root, err := decodeObject(data, "Drive node versions")
+	if err != nil {
+		return driveadmin.NodeVersions{}, err
+	}
+	items, ok := objectList(root, "items", "versions", "data")
+	if !ok {
+		return driveadmin.NodeVersions{}, fmt.Errorf("decode Drive node versions: no version array among %s", availableKeys(root))
+	}
+	removed, _ := boolValue(root, "is_removed")
+	restoreBlocked, _ := boolValue(root, "disable_restore")
+	result := driveadmin.NodeVersions{
+		IsRemoved:      removed,
+		RestoreBlocked: restoreBlocked,
+		PermanentLink:  stringValue(root, "permanent_link"),
+		Versions:       make([]driveadmin.NodeVersion, 0, len(items)),
+	}
+	for _, item := range items {
+		result.Versions = append(result.Versions, driveadmin.NodeVersion{
+			CreatedUnix:    int64Value(item, "create_time"),
+			ModifiedUnix:   int64Value(item, "modify_time"),
+			SizeBytes:      int64Value(item, "size"),
+			Hash:           stringValue(item, "hash"),
+			VersionUpdater: stringValue(item, "version_updater"),
+		})
+	}
+	return result, nil
+}
+
 // decodePrivilegeList reads Privilege.list with the additional fields.
 // Verified live on Drive 4.0.3: users carry name, enabled, and status
 // (normal, disabled, or home_disabled).

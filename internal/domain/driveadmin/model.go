@@ -82,6 +82,64 @@ type TeamFolders struct {
 	TeamFolders []TeamFolder `json:"team_folders" jsonschema:"Team folders reported by the Drive Admin Console"`
 }
 
+// NodeQuery selects one Drive view to browse: a team folder by shared-folder
+// name, or the calling account's My Drive when TeamFolder is empty. The node
+// view is Drive's admin/rescue perspective and includes removed entries by
+// default.
+type NodeQuery struct {
+	TeamFolder     string `json:"team_folder,omitempty" jsonschema:"Team folder (shared-folder name) to browse; empty browses the calling account's My Drive"`
+	Pattern        string `json:"pattern,omitempty" jsonschema:"Substring filter on the node name, applied by Drive"`
+	Recursive      bool   `json:"recursive,omitempty" jsonschema:"Search the whole view instead of one directory level"`
+	ExcludeRemoved bool   `json:"exclude_removed,omitempty" jsonschema:"Hide removed entries (they are included by default — this is the rescue view)"`
+	Limit          int    `json:"limit,omitempty" jsonschema:"Maximum nodes to return; defaults to a bounded page size"`
+	Offset         int    `json:"offset,omitempty" jsonschema:"Nodes to skip for pagination"`
+}
+
+// Node is one file or folder in a Drive view, including removed entries.
+type Node struct {
+	Name          string `json:"name" jsonschema:"Node name"`
+	Path          string `json:"path,omitempty" jsonschema:"Path inside the Drive view"`
+	NodeID        string `json:"node_id,omitempty" jsonschema:"Drive node identifier"`
+	IsFolder      bool   `json:"is_folder" jsonschema:"Whether the node is a folder"`
+	IsRemoved     bool   `json:"is_removed" jsonschema:"Whether the node is deleted in the Drive view (restorable while versions remain)"`
+	IsEncrypted   bool   `json:"is_encrypted,omitempty" jsonschema:"Whether the node is encrypted"`
+	IsLocked      bool   `json:"is_locked,omitempty" jsonschema:"Whether the node is locked"`
+	SizeBytes     int64  `json:"size_bytes,omitempty" jsonschema:"Current version size in bytes"`
+	VersionCount  int    `json:"version_count,omitempty" jsonschema:"Stored version count"`
+	ModifiedUnix  int64  `json:"modified_unix,omitempty" jsonschema:"Unix time of the last modification"`
+	PermanentLink string `json:"permanent_link,omitempty" jsonschema:"Drive permanent link identifier"`
+}
+
+// Nodes is one page of a Drive view.
+type Nodes struct {
+	Total int    `json:"total" jsonschema:"Total nodes matching the query"`
+	Items []Node `json:"items" jsonschema:"Nodes in the requested page"`
+}
+
+// NodeVersionQuery selects one node's version history.
+type NodeVersionQuery struct {
+	TeamFolder string `json:"team_folder,omitempty" jsonschema:"Team folder (shared-folder name); empty targets the calling account's My Drive"`
+	Path       string `json:"path" jsonschema:"Node path inside the Drive view, as returned by the files read"`
+}
+
+// NodeVersion is one stored version of a node.
+type NodeVersion struct {
+	CreatedUnix    int64  `json:"created_unix,omitempty" jsonschema:"Unix time the version was stored"`
+	ModifiedUnix   int64  `json:"modified_unix,omitempty" jsonschema:"Unix time of the content modification"`
+	SizeBytes      int64  `json:"size_bytes,omitempty" jsonschema:"Version size in bytes"`
+	Hash           string `json:"hash,omitempty" jsonschema:"Content hash Drive stores for the version"`
+	VersionUpdater string `json:"version_updater,omitempty" jsonschema:"Client or host that stored the version"`
+}
+
+// NodeVersions is one node's version history from the Drive view.
+type NodeVersions struct {
+	Path           string        `json:"path" jsonschema:"Node path the history belongs to"`
+	IsRemoved      bool          `json:"is_removed" jsonschema:"Whether the node is currently deleted in the Drive view"`
+	RestoreBlocked bool          `json:"restore_blocked,omitempty" jsonschema:"Whether Drive reports restoring is disabled for this view"`
+	PermanentLink  string        `json:"permanent_link,omitempty" jsonschema:"Drive permanent link identifier"`
+	Versions       []NodeVersion `json:"versions" jsonschema:"Stored versions, as reported by Drive"`
+}
+
 // PrivilegedUser is one account row from the Admin Console user view: the
 // Drive privilege flag plus DSM account context. Status reflects the DSM
 // account and home service (normal, disabled, or home_disabled), not the
@@ -250,4 +308,6 @@ type Capabilities struct {
 	DashboardRead   bool            `json:"dashboard_read" jsonschema:"Whether the top-accessed-files ranking can be read"`
 	ActivationRead  bool            `json:"activation_read" jsonschema:"Whether the package activation state can be read"`
 	PrivilegeRead   bool            `json:"privilege_read" jsonschema:"Whether the per-user Drive privilege view can be listed; granting or revoking access goes through the account module's application privilege"`
+	NodesRead       bool            `json:"nodes_read" jsonschema:"Whether Drive views (team folders and My Drive, including removed entries) can be browsed"`
+	NodeVersionsRead bool           `json:"node_versions_read" jsonschema:"Whether a node's stored version history can be listed"`
 }
