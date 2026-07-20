@@ -7,6 +7,7 @@ import (
 
 	"github.com/ychiu1211/dsmctl/internal/domain/packagecenter"
 	"github.com/ychiu1211/dsmctl/internal/synology"
+	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
 )
 
 const packageCenterAPIVersion = "dsmctl.io/v1alpha1"
@@ -95,6 +96,8 @@ type PackageInstallPlan struct {
 	PackageID       string               `json:"package_id" jsonschema:"Target package identifier to install"`
 	Name            string               `json:"name" jsonschema:"Human-readable target package name"`
 	Version         string               `json:"version" jsonschema:"Offered target version to install"`
+	Update          bool                 `json:"update,omitempty" jsonschema:"Whether this plan updates an installed package instead of installing a new one"`
+	FromVersion     string               `json:"from_version,omitempty" jsonschema:"Installed version the update plan binds to (update plans only)"`
 	VolumePath      string               `json:"volume_path" jsonschema:"Target install volume path"`
 	RunAfterInstall bool                 `json:"run_after_install" jsonschema:"Whether the packages start after install"`
 	Dependencies    []string             `json:"dependencies,omitempty" jsonschema:"Missing dependency packages that will be installed first, in order"`
@@ -164,10 +167,7 @@ func planPackageInstallWithClient(ctx context.Context, nas string, client packag
 	if err != nil {
 		return PackageInstallPlan{}, authenticationError(nas, err)
 	}
-	offeredByID := make(map[string]*packagecenter.AvailablePackage, len(catalog.Packages))
-	for i := range catalog.Packages {
-		offeredByID[catalog.Packages[i].ID] = &catalog.Packages[i]
-	}
+	offeredByID := catalogByID(catalog)
 
 	// Resolve the dependency closure (deps-first) from the catalog deppkgs, so
 	// missing dependencies are installed before the target — this is the precheck
@@ -208,6 +208,141 @@ func planPackageInstallWithClient(ctx context.Context, nas string, client packag
 		return PackageInstallPlan{}, err
 	}
 	return plan, nil
+}
+
+// PlanPackageUpdate resolves an update of an installed package to the version
+// offered by the online catalog. The plan binds to the installed version, so a
+// package that changes between plan and apply is rejected as stale.
+func (s *Service) PlanPackageUpdate(ctx context.Context, requestedNAS, packageID string) (PackageInstallPlan, error) {
+	if strings.TrimSpace(packageID) == "" {
+		return PackageInstallPlan{}, fmt.Errorf("update requires a package id")
+	}
+	name, client, err := s.packageClient(ctx, requestedNAS)
+	if err != nil {
+		return PackageInstallPlan{}, err
+	}
+	plan, err := planPackageUpdateWithClient(ctx, name, client, packageID)
+	if err != nil {
+		return PackageInstallPlan{}, err
+	}
+	plan.ProfileRevision, err = s.profileRevision(ctx, name)
+	if err == nil {
+		plan.Hash, err = packageInstallPlanHash(plan)
+	}
+	return plan, err
+}
+
+func planPackageUpdateWithClient(ctx context.Context, nas string, client packageClient, packageID string) (PackageInstallPlan, error) {
+	state, err := client.PackageState(ctx)
+	if err != nil {
+		return PackageInstallPlan{}, authenticationError(nas, err)
+	}
+	installed := make(map[string]bool, len(state.Packages))
+	var current *packagecenter.Package
+	for i := range state.Packages {
+		installed[state.Packages[i].ID] = true
+		if state.Packages[i].ID == packageID {
+			current = &state.Packages[i]
+		}
+	}
+	if current == nil {
+		return PackageInstallPlan{}, fmt.Errorf("package %q is not installed; use install instead", packageID)
+	}
+	catalog, err := client.PackageCatalog(ctx)
+	if err != nil {
+		return PackageInstallPlan{}, authenticationError(nas, err)
+	}
+	offeredByID := catalogByID(catalog)
+	target, offered := offeredByID[packageID]
+	if !offered {
+		return PackageInstallPlan{}, fmt.Errorf("package %q is not offered by the online package server", packageID)
+	}
+	if target.Version == current.Version {
+		return PackageInstallPlan{}, fmt.Errorf("package %q is already at the offered version %s", packageID, current.Version)
+	}
+	// The catalog's update flag only means "differs": a NAS can ship a newer
+	// build than the public repository offers (seen live with File Station).
+	// Never plan a downgrade.
+	installedVersion := compatibility.ParsePackageVersion(current.Version)
+	offeredVersion := compatibility.ParsePackageVersion(target.Version)
+	if offeredVersion.Compare(installedVersion) <= 0 {
+		return PackageInstallPlan{}, fmt.Errorf("the offered %s %s is not newer than the installed %s; refusing to downgrade", packageID, target.Version, current.Version)
+	}
+
+	// Resolve missing NEW dependencies of the offered version (deps-first). The
+	// target itself is installed, so lift it from the installed set to include
+	// it as the final step.
+	dependencyBase := make(map[string]bool, len(installed))
+	for id := range installed {
+		dependencyBase[id] = true
+	}
+	delete(dependencyBase, packageID)
+	ordered, err := resolveInstallOrder(packageID, offeredByID, dependencyBase)
+	if err != nil {
+		return PackageInstallPlan{}, err
+	}
+
+	plan := PackageInstallPlan{
+		APIVersion: packageInstallAPIVersion, NAS: nas, PackageID: packageID,
+		Update: true, FromVersion: current.Version,
+		VolumePath: current.Volume, RunAfterInstall: current.Running,
+		Risk: "high",
+		Warnings: []string{
+			"updating downloads and runs third-party software on the NAS",
+			"a package update cannot be downgraded afterwards",
+		},
+	}
+	plan.Name, plan.Version = target.Name, target.Version
+	for _, pkg := range ordered {
+		isDep := pkg.ID != packageID
+		plan.Steps = append(plan.Steps, PackageInstallStep{
+			PackageID: pkg.ID, Name: pkg.Name, Version: pkg.Version, Size: pkg.Size,
+			DownloadLink: pkg.DownloadLink, Checksum: pkg.Checksum,
+			Beta: pkg.Beta, QuickInstall: true, Dependency: isDep,
+		})
+		if isDep {
+			plan.Dependencies = append(plan.Dependencies, pkg.ID)
+			plan.Summary = append(plan.Summary, fmt.Sprintf("install new dependency %s %s", pkg.ID, pkg.Version))
+		}
+		if pkg.Beta {
+			plan.Warnings = append(plan.Warnings, fmt.Sprintf("%s is a beta version", pkg.ID))
+		}
+	}
+	plan.Summary = append(plan.Summary, fmt.Sprintf("update %s from %s to %s", target.ID, current.Version, target.Version))
+	if len(plan.Dependencies) > 0 {
+		plan.Warnings = append(plan.Warnings, fmt.Sprintf("%s requires %d new dependency package(s) that will be installed first: %s", packageID, len(plan.Dependencies), strings.Join(plan.Dependencies, ", ")))
+	}
+	plan.Hash, err = packageInstallPlanHash(plan)
+	if err != nil {
+		return PackageInstallPlan{}, err
+	}
+	return plan, nil
+}
+
+// catalogByID indexes the online catalog by package id. The catalog can offer
+// the same package twice (a stable and a beta build); prefer the stable entry,
+// and among builds of the same channel prefer the higher version, so a beta
+// row can never shadow the stable offer.
+func catalogByID(catalog synology.PackageCatalog) map[string]*packagecenter.AvailablePackage {
+	offered := make(map[string]*packagecenter.AvailablePackage, len(catalog.Packages))
+	for i := range catalog.Packages {
+		candidate := &catalog.Packages[i]
+		existing, ok := offered[candidate.ID]
+		if !ok {
+			offered[candidate.ID] = candidate
+			continue
+		}
+		if existing.Beta != candidate.Beta {
+			if existing.Beta {
+				offered[candidate.ID] = candidate
+			}
+			continue
+		}
+		if compatibility.ParsePackageVersion(candidate.Version).Compare(compatibility.ParsePackageVersion(existing.Version)) > 0 {
+			offered[candidate.ID] = candidate
+		}
+	}
+	return offered
 }
 
 // resolveInstallOrder returns the target and its missing dependencies in
@@ -283,13 +418,25 @@ func (s *Service) ApplyPackageInstallPlan(ctx context.Context, plan PackageInsta
 	if name != plan.NAS {
 		return PackageInstallApplyResult{}, fmt.Errorf("install plan NAS %q resolved to different profile %q", plan.NAS, name)
 	}
+	if plan.Update {
+		if err := verifyPackageUpdatePrecondition(ctx, plan, client); err != nil {
+			return PackageInstallApplyResult{}, err
+		}
+	}
 	// Install each step in order (dependencies first, target last). A failed
 	// dependency aborts before the target is attempted.
 	results := make([]synology.PackageInstallResult, 0, len(plan.Steps))
 	for _, step := range plan.Steps {
+		expectVersion := ""
+		if plan.Update && step.PackageID == plan.PackageID {
+			// The update target is already present; completion means the
+			// inventory reports the offered version.
+			expectVersion = step.Version
+		}
 		result, err := client.PackageInstall(ctx, synology.PackageInstallInput{
 			Name: step.PackageID, URL: step.DownloadLink, Checksum: step.Checksum, Filesize: step.Size,
 			Beta: step.Beta, QuickInstall: step.QuickInstall, VolumePath: plan.VolumePath, RunAfterInstall: plan.RunAfterInstall,
+			ExpectVersion: expectVersion,
 		})
 		if err != nil {
 			return PackageInstallApplyResult{NAS: plan.NAS, PlanHash: plan.Hash, Results: results}, authenticationError(plan.NAS, fmt.Errorf("install %s: %w", step.PackageID, err))
@@ -302,6 +449,33 @@ func (s *Service) ApplyPackageInstallPlan(ctx context.Context, plan PackageInsta
 func packageInstallPlanHash(plan PackageInstallPlan) (string, error) {
 	plan.Hash = ""
 	return hashJSON(plan)
+}
+
+// verifyPackageUpdatePrecondition rejects an update plan whose target changed
+// after planning: the plan binds to the installed version it observed, so a
+// package that was already updated or removed in between is stale.
+func verifyPackageUpdatePrecondition(ctx context.Context, plan PackageInstallPlan, client packageClient) error {
+	if strings.TrimSpace(plan.FromVersion) == "" {
+		return fmt.Errorf("update plan is missing the installed version it binds to")
+	}
+	state, err := client.PackageState(ctx)
+	if err != nil {
+		return authenticationError(plan.NAS, err)
+	}
+	currentVersion := ""
+	for _, pkg := range state.Packages {
+		if pkg.ID == plan.PackageID {
+			currentVersion = pkg.Version
+			break
+		}
+	}
+	if currentVersion == "" {
+		return fmt.Errorf("package %q is no longer installed; the update plan is stale", plan.PackageID)
+	}
+	if currentVersion != plan.FromVersion {
+		return fmt.Errorf("package %q is now %s, not the planned %s; create a new plan", plan.PackageID, currentVersion, plan.FromVersion)
+	}
+	return nil
 }
 
 func (s *Service) GetPackageState(ctx context.Context, requestedNAS string) (PackageStateResult, error) {

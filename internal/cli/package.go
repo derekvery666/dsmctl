@@ -21,6 +21,7 @@ func newPackageCommand(opts *options) *cobra.Command {
 		newPackageInventoryCommand(opts),
 		newPackageAvailableCommand(opts),
 		newPackageInstallCommand(opts),
+		newPackageUpdateCommand(opts),
 		newPackageSettingsCommand(opts),
 		newPackagePlanCommand(opts),
 		newPackageApplyCommand(opts),
@@ -61,6 +62,37 @@ func newPackageInstallCommand(opts *options) *cobra.Command {
 	command.Flags().BoolVar(&quick, "quick", true, "quick install with defaults (no configuration wizard)")
 	command.Flags().StringVar(&approvalHash, "approve", "", "exact SHA-256 hash printed by the install plan to execute the install")
 	_ = command.MarkFlagRequired("volume")
+	return command
+}
+
+func newPackageUpdateCommand(opts *options) *cobra.Command {
+	var approvalHash string
+	command := &cobra.Command{
+		Use:   "update <package-id>",
+		Short: "Update an installed package to the offered version (plan by default; --approve to run)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			plan, err := service.PlanPackageUpdate(cmd.Context(), opts.nas, args[0])
+			if err != nil {
+				return err
+			}
+			if approvalHash == "" {
+				// Plan only: show what would happen and the approval hash.
+				return encodeIndentedJSON(cmd.OutOrStdout(), plan)
+			}
+			result, err := service.ApplyPackageInstallPlan(cmd.Context(), plan, approvalHash)
+			if err != nil {
+				return err
+			}
+			return encodeIndentedJSON(cmd.OutOrStdout(), result)
+		},
+	}
+	command.Flags().StringVar(&approvalHash, "approve", "", "exact SHA-256 hash printed by the update plan to execute the update")
 	return command
 }
 

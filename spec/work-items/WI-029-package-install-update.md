@@ -1,7 +1,7 @@
 ---
 id: WI-029
 title: Guarded Package Center online install and update
-status: in_progress
+status: done
 priority: P2
 owner: ""
 depends_on: [WI-019]
@@ -65,12 +65,18 @@ Implemented (MCP parity, 2026-07-20):
   remote authorization and single-use high-risk approval checks as every other
   apply (install plans are always high risk).
 
-Deferred (this WI stays in_progress until done):
+Implemented (update apply, 2026-07-20):
 
-- Update / upgrade **apply** (`SYNO.Core.Package.Installation` `install`/`upgrade`
-  of the newer version over an installed package). A package upgrade is not
-  cleanly reversible (no supported downgrade), so it stays deferred until it
-  ships as its own guarded, explicitly authorized operation.
+- Guarded update through the shared install machinery: `PlanPackageUpdate`
+  binds to the installed version (apply re-reads the inventory and rejects a
+  changed/removed package), refuses a repository build that is not newer than
+  the installed one (File Station on DSM 7.3 ships 1.4.3-2210 while the repo
+  offers 1.4.3-1610 — a version difference is not permission to downgrade),
+  prefers the stable catalog row over a beta of the same package, resolves
+  new dependencies deps-first, and completes when the inventory reports the
+  offered version. CLI `package update <id> [--approve]`; MCP
+  `plan_package_update` + the shared `apply_package_install_plan`; the
+  `packagecenter.update` capability now selects the Installation backend.
 
 ## Design constraints
 
@@ -101,8 +107,10 @@ Deferred (this WI stays in_progress until done):
       running); the already-installed guard then rejects a re-install.
 - [x] Update **check**: catalog cross-references the inventory and flags
       installed/update-available; live-verified via `package available --updates`.
-- [ ] Update/upgrade **apply** implemented (guarded; not auto-run — upgrades are
-      not cleanly reversible).
+- [x] Update/upgrade **apply** implemented (guarded, version-bound, downgrade
+      refused); live-verified updating PHP 8.2 8.2.28-0107 -> 8.2.30-0170 on
+      the DSM 7.3 lab, with the up-to-date and downgrade guards confirmed
+      live afterwards.
 - [x] MCP parity for catalog/install with read-only gateway exclusion (plus
       profile-revision-bound hashes and remote high-risk authorization on
       install-apply).

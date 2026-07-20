@@ -34,6 +34,7 @@ func NewReadOnly(service *application.Service, version string) *mcp.Server {
 		"plan_office_change",
 		"plan_package_change",
 		"plan_package_install",
+		"plan_package_update",
 		"plan_photos_change",
 		"plan_resource_recording_change",
 		"plan_rsync_service_change",

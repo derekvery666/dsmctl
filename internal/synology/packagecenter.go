@@ -162,6 +162,11 @@ type PackageInstallInput struct {
 	QuickInstall    bool
 	VolumePath      string
 	RunAfterInstall bool
+	// ExpectVersion, when set, makes the inventory confirmation require this
+	// exact installed version. An update targets a package that is already in
+	// the inventory, so plain presence would confirm instantly against the old
+	// version.
+	ExpectVersion string
 }
 
 // PackageInstallResult reports the outcome of a completed install.
@@ -214,7 +219,7 @@ func (c *Client) PackageInstall(ctx context.Context, input PackageInstallInput) 
 			return result, fmt.Errorf("verify install of %s: %w", input.Name, invErr)
 		}
 		for _, pkg := range state.Packages {
-			if pkg.ID == input.Name {
+			if pkg.ID == input.Name && (input.ExpectVersion == "" || pkg.Version == input.ExpectVersion) {
 				result.Installed = true
 				result.Version = pkg.Version
 				break
@@ -224,6 +229,9 @@ func (c *Client) PackageInstall(ctx context.Context, input PackageInstallInput) 
 			return result, nil
 		}
 		if time.Now().After(deadline) {
+			if input.ExpectVersion != "" {
+				return result, fmt.Errorf("install of %s did not reach version %s in the inventory within the timeout", input.Name, input.ExpectVersion)
+			}
 			return result, fmt.Errorf("install of %s did not appear in the inventory within the timeout", input.Name)
 		}
 		if err := sleepContext(ctx, 5*time.Second); err != nil {

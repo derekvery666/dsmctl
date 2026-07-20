@@ -970,8 +970,13 @@ type planPackageInstallOutput struct {
 	Plan application.PackageInstallPlan `json:"plan" jsonschema:"Resolved install intent (dependencies first) bound to an approval hash"`
 }
 
+type planPackageUpdateInput struct {
+	NAS       string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	PackageID string `json:"package_id" jsonschema:"Stable DSM package identifier of an installed package with an available update"`
+}
+
 type applyPackageInstallPlanInput struct {
-	Plan         application.PackageInstallPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_package_install"`
+	Plan         application.PackageInstallPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_package_install or plan_package_update"`
 	ApprovalHash string                         `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved install plan"`
 }
 
@@ -2495,7 +2500,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "plan_package_change",
 		Title:       "Plan a Package Center change",
-		Description: "Validate a patch-only global-settings change or a package lifecycle action (start, stop, uninstall) and return an approval plan bound to the observed settings or package state. Uninstall is refused when DSM reports the package is not removable; update is deferred and rejected, and online installs go through plan_package_install instead. This tool never mutates DSM.",
+		Description: "Validate a patch-only global-settings change or a package lifecycle action (start, stop, uninstall) and return an approval plan bound to the observed settings or package state. Uninstall is refused when DSM reports the package is not removable; online installs go through plan_package_install and updates through plan_package_update instead. This tool never mutates DSM.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planPackageChangeInput) (*mcp.CallToolResult, planPackageChangeOutput, error) {
 		plan, err := service.PlanPackageChange(ctx, input.NAS, input.Request)
@@ -2562,9 +2567,22 @@ func New(service *application.Service, version string) *mcp.Server {
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_package_update",
+		Title:       "Plan a guarded package update",
+		Description: "Resolve an installed package against the online catalog and return a hash-bound update plan bound to the currently installed version: new dependencies are listed as ordered steps before the target, a package that is not installed or already at the offered version is rejected, and the plan is always high risk because an update downloads and runs third-party software and cannot be downgraded. Apply it with apply_package_install_plan. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planPackageUpdateInput) (*mcp.CallToolResult, planPackageInstallOutput, error) {
+		plan, err := service.PlanPackageUpdate(ctx, input.NAS, input.PackageID)
+		if err != nil {
+			return nil, planPackageInstallOutput{}, err
+		}
+		return nil, planPackageInstallOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "apply_package_install_plan",
-		Title:       "Apply an approved package install plan",
-		Description: "Install the packages in an unmodified install plan (dependencies first, target last) only with its exact approval hash. DSM downloads each package from the online server and runs it; completion is confirmed against the installed-package inventory, and large packages can take minutes per step.",
+		Title:       "Apply an approved package install or update plan",
+		Description: "Install the packages in an unmodified install or update plan (dependencies first, target last) only with its exact approval hash. An update plan is additionally rejected when the installed version no longer matches the version it was planned against. DSM downloads each package from the online server and runs it; completion is confirmed against the installed-package inventory (an update completes when the inventory reports the offered version), and large packages can take minutes per step.",
 		Annotations: mutationAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyPackageInstallPlanInput) (*mcp.CallToolResult, applyPackageInstallPlanOutput, error) {
 		result, err := service.ApplyPackageInstallPlan(ctx, input.Plan, input.ApprovalHash)

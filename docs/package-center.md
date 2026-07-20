@@ -20,8 +20,8 @@ stable DSM id, display name, installed version, a normalized run status
 and whether DSM allows the package to be started, stopped, or uninstalled.
 
 `capabilities` reports which operations are available and the DSM backend
-selected for each. `install` and `update` are deliberately reported as
-unsupported (see [Deferred operations](#deferred-operations)).
+selected for each, including the guarded online `install` and `update`
+(both backed by `SYNO.Core.Package.Installation`).
 
 MCP exposes the same application results through `get_package_capabilities`,
 `get_package_state`, and `get_package_settings`.
@@ -140,13 +140,35 @@ packages take minutes per step. MCP: `plan_package_install` and
 to true). The read-only gateway strips the plan/apply pair, and the remote
 gateway's high-risk approval flow applies.
 
-## Deferred operations
+## Guarded update
 
-- `update`/`upgrade` apply (installing a newer version over an installed
-  package) is modeled but **not implemented**: a package upgrade has no
-  supported downgrade path, so it stays deferred until it ships as its own
-  guarded, explicitly authorized operation. `package available --updates`
-  covers the read side.
+Updating an installed package to the version offered by the online catalog is
+its own plan/apply, sharing the install machinery and apply tool:
+
+```console
+dsmctl package update PHP8.2 --nas office
+dsmctl package update PHP8.2 --nas office --approve <hash-from-plan>
+```
+
+The update plan **binds to the installed version**: apply re-reads the
+inventory and rejects the plan when the package was updated or removed in
+between. Planning rejects a package that is not installed, is already at the
+offered version, or where the repository offers an **older** build than the
+NAS ships (seen live with File Station on DSM 7.3) — a version difference is
+never treated as permission to downgrade. When the catalog lists both a
+stable and a beta build, the stable one is used. New dependencies of the
+offered version become ordered install steps before the target. A package
+update has no supported downgrade path, so the plan is always **high risk**.
+Completion is confirmed when the inventory reports the offered version; the
+package's run state is restored (`run_after_install` follows the observed
+running state). MCP: `plan_package_update` +
+`apply_package_install_plan`; the read-only gateway strips both.
+
+Live-verified on DSM 7.3: PHP 8.2 updated 8.2.28-0107 → 8.2.30-0170 with the
+inventory confirming the new version, and the downgrade guard refusing the
+File Station 1.4.3-2210 → 1.4.3-1610 "update".
+
+## Deferred operations
 
 Writing the **trust level**, **beta channel**, and **default install volume** is
 also not supported: trust level has no DSM write endpoint, and the beta channel
