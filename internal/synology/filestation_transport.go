@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -234,7 +235,7 @@ func doMultipartUpload(ctx context.Context, prep transferPrep, sid, synoToken, a
 	}
 	response, err := prep.client.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("request %s: %w", redactTransferURL(endpoint), err)
+		return nil, redactTransferError(endpoint, err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
@@ -333,7 +334,7 @@ func doDownload(ctx context.Context, prep transferPrep, sid, synoToken, path str
 	}
 	response, err := prep.client.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("request %s: %w", redactTransferURL(endpoint), err)
+		return nil, redactTransferError(endpoint, err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
@@ -444,7 +445,7 @@ func doThumbnail(ctx context.Context, prep transferPrep, sid, synoToken, path st
 	}
 	response, err := prep.client.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("request %s: %w", redactTransferURL(endpoint), err)
+		return nil, redactTransferError(endpoint, err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
@@ -476,6 +477,25 @@ func doThumbnail(ctx context.Context, prep transferPrep, sid, synoToken, path st
 		ContentType: contentType,
 		Filename:    filenameFromDisposition(response.Header.Get("Content-Disposition")),
 	}, nil
+}
+
+// redactTransferError wraps a transport-level http.Client.Do failure so no
+// session credential leaks. A failed request returns a *url.Error whose URL
+// field — and therefore its Error() output — carries the FULL request URL,
+// including the _sid and SynoToken query parameters. redactTransferURL only
+// covers the %s operand; a plain `%w`-wrap of the *url.Error still leaks the raw
+// URL. This drops the *url.Error envelope (the only part that carries the URL)
+// and keeps the operation verb plus the underlying cause — a dial, timeout, or
+// TLS error that does not embed the query — prefixed with the credential-masked
+// endpoint. The underlying cause is preserved for errors.Is/As (for example a
+// TLS pin-verification failure remains detectable).
+func redactTransferError(endpoint url.URL, err error) error {
+	redacted := redactTransferURL(endpoint)
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return fmt.Errorf("request %s: %s: %w", redacted, urlErr.Op, urlErr.Err)
+	}
+	return fmt.Errorf("request %s: %w", redacted, err)
 }
 
 // redactTransferURL returns endpoint with credential query parameters masked,

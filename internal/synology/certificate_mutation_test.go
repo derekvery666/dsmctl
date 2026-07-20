@@ -164,6 +164,29 @@ func TestDoCertificateExportRedactsSessionTokens(t *testing.T) {
 	}
 }
 
+// TestDoCertificateExportRedactsSessionTokensOnTransportError proves the
+// transport-failure branch (http.Client.Do returns a *url.Error) does not leak
+// _sid/SynoToken. The *url.Error carries the full request URL — with the session
+// credentials — in its own Error() output, which redacting only the %s operand
+// would miss. The server is closed before the request so Do fails at dial.
+func TestDoCertificateExportRedactsSessionTokensOnTransportError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	prep := newCertTransferPrep(t, server)
+	server.Close() // now connections are refused, so Do returns a *url.Error
+
+	_, err := doCertificateExport(context.Background(), prep, prep.sid, prep.synoToken, "CertId1")
+	if err == nil {
+		t.Fatal("expected a transport error")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, prep.sid) || strings.Contains(msg, prep.synoToken) {
+		t.Fatalf("transport error leaked session credentials: %s", msg)
+	}
+	if !strings.Contains(msg, "REDACTED") {
+		t.Fatalf("transport error did not carry the redacted endpoint: %s", msg)
+	}
+}
+
 // TestRepinTLSConfig verifies the re-pin swaps the pinned fingerprint: after
 // re-pinning to a new leaf, its handshake state passes and the old leaf fails.
 func TestRepinTLSConfig(t *testing.T) {
