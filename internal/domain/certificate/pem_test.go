@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -217,5 +218,42 @@ func TestDesiredFromLeafCarriesOnlyPublicFields(t *testing.T) {
 	// A private key must never be inferable from the leaf material or Desired.
 	if strings.Contains(string(leafBytes), "PRIVATE") {
 		t.Fatal("leaf PEM unexpectedly contains private-key material")
+	}
+}
+
+func TestDesiredFromLeafIncludesIPSANs(t *testing.T) {
+	// DSM's CRT.list reports IP SANs as bare strings; the desired set must carry
+	// them too, or an IP-covering import's postcondition re-read mismatches the
+	// observed set and falsely reports the cert "not found after apply".
+	key := rsaKey(t)
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(42),
+		Subject:      pkix.Name{CommonName: "10.17.36.235"},
+		DNSNames:     []string{"nas.example.com"},
+		IPAddresses:  []net.IP{net.ParseIP("10.17.36.235")},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create leaf: %v", err)
+	}
+	leaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("parse leaf: %v", err)
+	}
+	desired := DesiredFromLeaf(leaf, "TLS_KEY", false)
+	var hasDNS, hasIP bool
+	for _, san := range desired.SubjectAltNames {
+		switch san {
+		case "nas.example.com":
+			hasDNS = true
+		case "10.17.36.235":
+			hasIP = true
+		}
+	}
+	if !hasDNS || !hasIP {
+		t.Fatalf("SubjectAltNames = %v; want both nas.example.com and 10.17.36.235", desired.SubjectAltNames)
 	}
 }

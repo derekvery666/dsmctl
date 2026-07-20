@@ -67,12 +67,15 @@ const (
 	ImportFieldAsDefault  = "as_default"
 	ImportFieldSettleTime = "settle_time"
 
-	// WIRE-UNVERIFIED (WI-065): CRT set / delete / export parameter names.
+	// WIRE-UNVERIFIED (WI-065): CRT set / export parameter names.
 	SetFieldID        = "id"
 	SetFieldAsDefault = "as_default"
 	SetFieldDesc      = "desc"
-	DeleteFieldID     = "id"
-	ExportFieldID     = "id"
+	// DeleteFieldID is LIVE-VERIFIED (DSM 7.3): the delete param is `ids` (a JSON
+	// array of cert ids). Posting `id` instead returns API code 5503 and does not
+	// delete the certificate.
+	DeleteFieldID = "ids"
+	ExportFieldID = "id"
 
 	// WIRE-UNVERIFIED (WI-065): Service set parameter names. DSM binds a service
 	// by posting a JSON `settings` array of {service, id} objects.

@@ -253,9 +253,8 @@ func (c *Client) DeleteCertificate(ctx context.Context, id string) (CertificateM
 	if !certops.SupportsCRTWrites(c.target) {
 		return CertificateMutationResult{}, fmt.Errorf("%s is not supported on this NAS", certops.CRTAPIName)
 	}
-	// WIRE-UNVERIFIED (delete id-vs-ids): re-confirm live. The shipped
-	// `{"id":[...]}` array reached the DSM delete handler and returned a domain
-	// error (not a missing-arg error), so the `id` array param is likely correct.
+	// LIVE-VERIFIED (DSM 7.3): the delete param is `ids` (an array); posting `id`
+	// returns code 5503 and does not delete. certops.DeleteFieldID is `ids`.
 	params := map[string]any{certops.DeleteFieldID: []string{id}}
 	_, err := lockedExecutor{client: c}.Execute(ctx, compatibilityRequest(certops.CRTAPIName, certops.CRTDeleteMethod, params))
 	if err != nil {

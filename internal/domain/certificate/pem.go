@@ -86,7 +86,7 @@ func LeafFingerprint(cert *x509.Certificate) string {
 func DesiredFromLeaf(leaf *x509.Certificate, refName string, hasIntermediate bool) DesiredCertificate {
 	return DesiredCertificate{
 		Subject:              nameFromPKIX(leaf.Subject.CommonName, orgOf(leaf.Subject.Organization), countryOf(leaf.Subject.Country)),
-		SubjectAltNames:      append([]string(nil), leaf.DNSNames...),
+		SubjectAltNames:      sansFromLeaf(leaf),
 		Issuer:               nameFromPKIX(leaf.Issuer.CommonName, orgOf(leaf.Issuer.Organization), countryOf(leaf.Issuer.Country)),
 		Serial:               leaf.SerialNumber.Text(16),
 		NotBeforeUnix:        leaf.NotBefore.Unix(),
@@ -95,6 +95,19 @@ func DesiredFromLeaf(leaf *x509.Certificate, refName string, hasIntermediate boo
 		KeyCredentialRefName: refName,
 		HasIntermediate:      hasIntermediate,
 	}
+}
+
+// sansFromLeaf collects the leaf's Subject Alternative Names as DSM's CRT.list
+// reports them: DNS names verbatim plus IP addresses in string form (e.g.
+// "10.17.36.235"). Omitting the IP SANs made an IP-covering import's
+// postcondition re-read mismatch the observed set and falsely report the cert
+// "not found in the store after apply" even though the import succeeded.
+func sansFromLeaf(leaf *x509.Certificate) []string {
+	sans := append([]string(nil), leaf.DNSNames...)
+	for _, ip := range leaf.IPAddresses {
+		sans = append(sans, ip.String())
+	}
+	return sans
 }
 
 func nameFromPKIX(cn, org, country string) Name {
