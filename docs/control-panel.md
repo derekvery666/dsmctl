@@ -471,6 +471,67 @@ device info, and the community and SNMPv3 credentials via a credential
 reference) are a deferred follow-on and, like the other guarded modules, will be
 excluded from the read-only gateway.
 
+## Login Portal (read-only)
+
+DSM's Control Panel → Login Portal page carries three independent DSM API
+families with independent failure boundaries: the DSM tab
+(`SYNO.Core.Web.DSM`, with the customized-hostname sibling
+`SYNO.Core.Web.DSM.External`), the Applications tab (`SYNO.Core.AppPortal`), and
+the Advanced tab reverse proxy (`SYNO.Core.AppPortal.ReverseProxy`). One being
+absent reports `(not supported)` without disabling the others, and each fails
+closed (no silent empty-success decode) when its API is missing.
+
+```console
+dsmctl control-panel login-portal capabilities --nas office
+dsmctl control-panel login-portal dsm --nas office --json
+dsmctl control-panel login-portal applications --nas office --json
+dsmctl control-panel login-portal reverse-proxy --nas office --json
+```
+
+- **DSM access** reads `SYNO.Core.Web.DSM` (`get`) into stable field names: HTTP
+  and HTTPS ports, HTTPS enabled, HTTP→HTTPS force-redirect, HSTS, HTTP/2 (DSM
+  field `enable_spdy`), and the customized domain (`enable_custom_domain` /
+  `fqdn`). **v1 is selected deliberately**: DSM 7.3 advertises both v1 and v2, but
+  the v2 `get` omits `enable_https` and `enable_hsts`, so v1 is the only version
+  carrying the complete normalized set. The customized external hostname is an
+  independently gated enrichment from the sibling `SYNO.Core.Web.DSM.External`
+  (`get` → `hostname`); when that API is absent it is reported `(not supported)`
+  without failing the DSM-access read.
+- **Applications** reads `SYNO.Core.AppPortal` (`list`) → the per-application
+  portal list with app id, title, and per-app HTTP→HTTPS redirect. Alias and
+  custom portal ports are surfaced only when a custom portal is configured.
+- **Reverse proxy** reads `SYNO.Core.AppPortal.ReverseProxy` (`list`) → the rule
+  set, keyed by the server-assigned rule uuid, with the frontend and backend
+  (protocol/host/port), the HSTS/HTTP2 frontend flags, whether a certificate is
+  referenced, and how many custom headers are configured.
+
+**Secret suppression is mandatory on read.** A reverse-proxy rule may reference a
+certificate and carry custom header values (which can hold an injected auth
+token). The decoder **never surfaces key material or header values**: it reports
+the certificate as presence-only (`certificate_present`) and the headers as a
+count-only (`custom_header_count`). A unit test injects certificate/header/SID
+canaries and asserts the re-encoded models carry no trace, and a live `--json`
+grep confirms no SID/SynoToken leaks.
+
+MCP exposes the same reads through `get_login_portal_capabilities`,
+`get_login_portal_dsm`, `get_login_portal_applications`, and
+`get_login_portal_reverse_proxy`. All are read-only and never change how DSM is
+reached.
+
+Verified live on DSM 7.3: `SYNO.Core.Web.DSM` v1 (`http_port`, `https_port`,
+`enable_https`, `enable_https_redirect`, `enable_hsts`, `enable_spdy`,
+`enable_custom_domain`, `fqdn`), `SYNO.Core.Web.DSM.External` v1 (`hostname`),
+`SYNO.Core.AppPortal` v1 `list` (`id`, `display_name`, `enable_redirect`), and
+`SYNO.Core.AppPortal.ReverseProxy` v1 `list` (`entries`). The lab has zero
+reverse-proxy rules configured, so the list envelope and rule count are
+live-verified but the per-rule field mapping is spec-derived and decoded
+leniently (an unknown key yields an empty/zero field, never a wrong value);
+re-verifying a populated rule shape is a prerequisite of the guarded-write
+follow-on. Guarded writes (DSM ports/HSTS/redirect/domain, application portal
+alias/port, reverse-proxy rule CRUD) are a deferred follow-on and are **HIGH
+risk** — each changes how DSM itself is reached — and, like the other guarded
+modules, will be excluded from the read-only gateway.
+
 ## Adding another module
 
 Add a dedicated type under `internal/domain/controlpanel`, an operation package

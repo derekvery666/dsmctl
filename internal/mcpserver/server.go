@@ -1283,6 +1283,31 @@ type getFirewallCapabilitiesOutput struct {
 	Report       synology.CompatibilityReport  `json:"report" jsonschema:"Discovered APIs and selected firewall backends"`
 }
 
+type loginPortalInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getDSMWebServiceOutput struct {
+	NAS      string                 `json:"nas" jsonschema:"NAS profile used for the request"`
+	Settings synology.DSMWebService `json:"settings" jsonschema:"DSM web-service access settings"`
+}
+
+type getApplicationPortalsOutput struct {
+	NAS     string                      `json:"nas" jsonschema:"NAS profile used for the request"`
+	Portals synology.ApplicationPortals `json:"portals" jsonschema:"Per-application portal list"`
+}
+
+type getReverseProxyRulesOutput struct {
+	NAS   string                     `json:"nas" jsonschema:"NAS profile used for the request"`
+	Rules synology.ReverseProxyRules `json:"rules" jsonschema:"Reverse-proxy rule list"`
+}
+
+type getLoginPortalCapabilitiesOutput struct {
+	NAS          string                           `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.LoginPortalCapabilities `json:"capabilities" jsonschema:"Login Portal reads currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport     `json:"report" jsonschema:"Discovered APIs and selected Login Portal backends"`
+}
+
 type getDriveAdminCapabilitiesOutput struct {
 	NAS          string                          `json:"nas" jsonschema:"NAS profile used for the request"`
 	Capabilities synology.DriveAdminCapabilities `json:"capabilities" jsonschema:"Drive Admin operations currently exposed by dsmctl, with installed-package evidence"`
@@ -3527,6 +3552,58 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getFirewallRulesOutput{}, err
 		}
 		return nil, getFirewallRulesOutput{NAS: result.NAS, RuleSet: result.RuleSet}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_login_portal_capabilities",
+		Title:       "Get Login Portal capabilities",
+		Description: "Report which Control Panel > Login Portal reads dsmctl supports on the selected NAS (the DSM web-service access settings, the customized external hostname, the per-application portal list, and the reverse-proxy rule list) and the backend for each. Each area is an independent boundary: one being absent leaves the others usable. This slice is read-only; guarded writes are deferred.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input loginPortalInput) (*mcp.CallToolResult, getLoginPortalCapabilitiesOutput, error) {
+		result, err := service.GetLoginPortalCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getLoginPortalCapabilitiesOutput{}, err
+		}
+		return nil, getLoginPortalCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_login_portal_dsm",
+		Title:       "Get DSM web-service access settings",
+		Description: "Read the Control Panel > Login Portal > DSM tab settings: DSM HTTP/HTTPS ports, whether HTTPS is enabled, whether HTTP is force-redirected to HTTPS, whether HSTS and HTTP/2 are enabled, and the customized domain / external hostname. These settings decide how DSM itself is reached. This tool never changes settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input loginPortalInput) (*mcp.CallToolResult, getDSMWebServiceOutput, error) {
+		result, err := service.GetDSMWebService(ctx, input.NAS)
+		if err != nil {
+			return nil, getDSMWebServiceOutput{}, err
+		}
+		return nil, getDSMWebServiceOutput{NAS: result.NAS, Settings: result.Settings}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_login_portal_applications",
+		Title:       "Get application portals",
+		Description: "Read the Control Panel > Login Portal > Applications tab: the per-application portal list, each with its application id, title, whether its portal force-redirects HTTP to HTTPS, and (when a custom portal is configured) its alias and portal ports. This tool never changes settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input loginPortalInput) (*mcp.CallToolResult, getApplicationPortalsOutput, error) {
+		result, err := service.GetApplicationPortals(ctx, input.NAS)
+		if err != nil {
+			return nil, getApplicationPortalsOutput{}, err
+		}
+		return nil, getApplicationPortalsOutput{NAS: result.NAS, Portals: result.Portals}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_login_portal_reverse_proxy",
+		Title:       "Get reverse-proxy rules",
+		Description: "Read the Control Panel > Login Portal > Advanced tab: the reverse-proxy rule list. Each rule reports its id, description, frontend (source protocol/host/port) and backend (destination protocol/host/port), whether HSTS/HTTP2 are enabled, whether a certificate is referenced (presence only, never key material), and how many custom headers are configured (count only, never header values). This tool never changes settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input loginPortalInput) (*mcp.CallToolResult, getReverseProxyRulesOutput, error) {
+		result, err := service.GetReverseProxyRules(ctx, input.NAS)
+		if err != nil {
+			return nil, getReverseProxyRulesOutput{}, err
+		}
+		return nil, getReverseProxyRulesOutput{NAS: result.NAS, Rules: result.Rules}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

@@ -62,8 +62,8 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools() error = %v", err)
 	}
-	if len(tools.Tools) != 176 {
-		t.Fatalf("ListTools() returned %d tools, want 176", len(tools.Tools))
+	if len(tools.Tools) != 180 {
+		t.Fatalf("ListTools() returned %d tools, want 180", len(tools.Tools))
 	}
 	for _, tool := range tools.Tools {
 		if scope, ok := ToolScope(tool.Name); !ok || scope == "" {
@@ -153,6 +153,10 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"get_firewall_status":                 false,
 		"get_firewall_profiles":               false,
 		"get_firewall_rules":                  false,
+		"get_login_portal_capabilities":       false,
+		"get_login_portal_dsm":                false,
+		"get_login_portal_applications":       false,
+		"get_login_portal_reverse_proxy":      false,
 	}
 	mutationTools := map[string]bool{
 		"apply_account_plan":                false,
