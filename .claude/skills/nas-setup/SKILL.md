@@ -44,7 +44,7 @@ low-end/unattended boxes where the layout is a foregone conclusion.
 | 2 | First administrator + finish wizard | `dsmctl provision` → **nas-provision** skill | no — fast; **→ working NAS** |
 | *(pause)* | Inspect disks, decide the layout with the operator | `dsmctl --nas <n> storage inventory` / `capabilities` | — |
 | 3 | Build storage | **nas-storage-setup** skill | yes — parity init runs in the background |
-| 4 | Configure identity / settings | `dsmctl system set-name`, and more Control Panel modules | no |
+| 4 | Configure identity / settings | `dsmctl system set-hostname`, and more Control Panel modules | no |
 
 ## Stage 1 — Install DSM
 
@@ -97,8 +97,8 @@ Set the DSM **server name (hostname)** — the name shown in Control Panel and o
 the network:
 
 ```console
-dsmctl --nas <name> system set-name <server-name>        # confirms first
-dsmctl --nas <name> system set-name <server-name> --yes  # unattended
+dsmctl --nas <name> system set-hostname <server-name>        # confirms first
+dsmctl --nas <name> system set-hostname <server-name> --yes  # unattended
 ```
 
 It validates the hostname grammar, applies via `SYNO.Core.Network`, and verifies

@@ -62,8 +62,8 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools() error = %v", err)
 	}
-	if len(tools.Tools) != 222 {
-		t.Fatalf("ListTools() returned %d tools, want 222", len(tools.Tools))
+	if len(tools.Tools) != 228 {
+		t.Fatalf("ListTools() returned %d tools, want 228", len(tools.Tools))
 	}
 	for _, tool := range tools.Tools {
 		if scope, ok := ToolScope(tool.Name); !ok || scope == "" {
@@ -112,6 +112,7 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"get_storage_state":                     false,
 		"plan_account_change":                   false,
 		"plan_control_panel_time_change":        false,
+		"plan_system_hostname_change":           false,
 		"plan_san_change":                       false,
 		"plan_share_change":                     false,
 		"plan_storage_change":                   false,
@@ -187,6 +188,7 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 	mutationTools := map[string]bool{
 		"apply_account_plan":                   false,
 		"apply_control_panel_time_plan":        false,
+		"apply_system_hostname_plan":           false,
 		"apply_san_plan":                       false,
 		"apply_share_plan":                     false,
 		"apply_storage_plan":                   false,
