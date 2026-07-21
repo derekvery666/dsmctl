@@ -30,6 +30,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/domain/san"
 	"github.com/ychiu1211/dsmctl/internal/domain/accountprotection"
 	firewalldomain "github.com/ychiu1211/dsmctl/internal/domain/firewall"
+	networkdomain "github.com/ychiu1211/dsmctl/internal/domain/network"
 	"github.com/ychiu1211/dsmctl/internal/domain/loginportal"
 	"github.com/ychiu1211/dsmctl/internal/domain/securityadvisor"
 	"github.com/ychiu1211/dsmctl/internal/domain/servicediscovery"
@@ -1460,8 +1461,40 @@ type getNetworkRoutesOutput struct {
 
 type getNetworkCapabilitiesOutput struct {
 	NAS          string                       `json:"nas" jsonschema:"NAS profile used for the request"`
-	Capabilities synology.NetworkCapabilities `json:"capabilities" jsonschema:"Network reads currently exposed by dsmctl"`
+	Capabilities synology.NetworkCapabilities `json:"capabilities" jsonschema:"Network reads and guarded writes currently exposed by dsmctl"`
 	Report       synology.CompatibilityReport `json:"report" jsonschema:"Discovered APIs and selected network backends"`
+}
+
+type planNetworkGeneralChangeInput struct {
+	NAS     string                      `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request networkdomain.GeneralChange `json:"request" jsonschema:"Patch-only general network change: any of hostname, default_gateway_v4, dns_primary, dns_secondary, ipv4_first, plus the allow_connectivity_break override. Omitted fields are preserved"`
+}
+
+type planNetworkGeneralChangeOutput struct {
+	Plan application.NetworkGeneralPlan `json:"plan" jsonschema:"Validated plan bound to the complete observed general block, the resolved management path, the never-sever guard decision, and the approval hash"`
+}
+
+type applyNetworkGeneralPlanInput struct {
+	Plan         application.NetworkGeneralPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_network_general_change"`
+	ApprovalHash string                         `json:"approval_hash" jsonschema:"Exact approval hash from the plan"`
+}
+
+type planNetworkInterfaceChangeInput struct {
+	NAS     string                        `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request networkdomain.InterfaceChange `json:"request" jsonschema:"Patch-only interface change: the interface name plus any of ipv4, netmask, gateway_v4, use_dhcp, mtu, plus the allow_connectivity_break override. Omitted fields are preserved"`
+}
+
+type planNetworkInterfaceChangeOutput struct {
+	Plan application.NetworkInterfacePlan `json:"plan" jsonschema:"Validated plan with the never-sever guard decision. NOTE: the interface-set wire is unverified, so the apply is refused"`
+}
+
+type applyNetworkInterfacePlanInput struct {
+	Plan         application.NetworkInterfacePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_network_interface_change"`
+	ApprovalHash string                           `json:"approval_hash" jsonschema:"Exact approval hash from the plan"`
+}
+
+type networkApplyOutput struct {
+	Result application.NetworkApplyResult `json:"result" jsonschema:"Mutation result after stale-state, never-sever, and postcondition checks"`
 }
 
 type loginPortalInput struct {
@@ -4080,6 +4113,58 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getNetworkRoutesOutput{}, err
 		}
 		return nil, getNetworkRoutesOutput{NAS: result.NAS, Routes: result.Routes}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_network_general_change",
+		Title:       "Plan a general network change (hostname, DNS, default gateway)",
+		Description: "Validate a patch-only change to the Control Panel > Network > General settings (hostname, DNS nameservers, default gateway, IPv4-first) and return an approval plan bound to the complete observed general block and the resolved management path. The management path is the NIC whose IPv4 equals the address dsmctl connects to. A default-gateway change can sever the management path and is run through the mandatory never-sever guard: the plan is REFUSED unless allow_connectivity_break is set. Hostname and DNS changes are medium risk; a default-gateway change is high risk. Omitted fields are preserved (patch-only). This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planNetworkGeneralChangeInput) (*mcp.CallToolResult, planNetworkGeneralChangeOutput, error) {
+		plan, err := service.PlanNetworkGeneralChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planNetworkGeneralChangeOutput{}, err
+		}
+		return nil, planNetworkGeneralChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_network_general_plan",
+		Title:       "Apply an approved general network plan",
+		Description: "Apply an unmodified general network plan only while its approval hash and the complete observed state (the general block and the resolved management path) still match, merging the patch into a freshly read general block (patch-only), then re-read to verify the named fields took effect. The never-sever guard is re-run before the write; a default-gateway change whose result would sever the management path is refused unless the plan carried allow_connectivity_break.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyNetworkGeneralPlanInput) (*mcp.CallToolResult, networkApplyOutput, error) {
+		result, err := service.ApplyNetworkGeneralPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, networkApplyOutput{}, err
+		}
+		return nil, networkApplyOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_network_interface_change",
+		Title:       "Plan a per-interface network change (plan-only; apply is wire-unverified)",
+		Description: "Validate a patch-only change to one network interface (IPv4, netmask, gateway, DHCP, MTU) and return an approval plan. The mandatory never-sever guard identifies the management NIC as the interface whose IPv4 equals the address dsmctl connects to and REFUSES any change to it (IP/netmask/DHCP/MTU) — or ANY interface change when the connection is ambiguous (a hostname/DDNS/QuickConnect/NATed path where the on-NAS egress cannot be resolved) — unless allow_connectivity_break is set; a change to a non-management NIC is permitted (medium risk). NOTE: the DSM interface-set request shape is wire-unverified (SYNO.Core.Network.Ethernet set returns code 4302 for every probed body), so the apply is REFUSED; the plan and the guard still work. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planNetworkInterfaceChangeInput) (*mcp.CallToolResult, planNetworkInterfaceChangeOutput, error) {
+		plan, err := service.PlanNetworkInterfaceChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planNetworkInterfaceChangeOutput{}, err
+		}
+		return nil, planNetworkInterfaceChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_network_interface_plan",
+		Title:       "Apply a per-interface network plan (refused: wire unverified)",
+		Description: "Validate an unmodified interface plan (hash, stale-state, and never-sever guard) and then REFUSE the live write: the SYNO.Core.Network.Ethernet set request shape is wire-unverified (DSM returns code 4302 for every known body), so interface reconfiguration is plan-only in this build. This tool is registered for surface completeness; it never mutates DSM.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyNetworkInterfacePlanInput) (*mcp.CallToolResult, networkApplyOutput, error) {
+		result, err := service.ApplyNetworkInterfacePlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, networkApplyOutput{}, err
+		}
+		return nil, networkApplyOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
