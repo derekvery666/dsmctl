@@ -101,7 +101,7 @@ const (
 	vaultTargetsPopulatedBody = `{"target_list":[{"computing_size":false,"is_enc":false,"is_resumable":false,
 		"last_backup_duration":15,"last_backup_start_time":1784602516,"share":"hb_vault","status":"idle",
 		"target_id":1,"target_name":"DiskStation_1","target_path":"/volume1/hb_vault/DiskStation_1",
-		"uni_key":"00113285995F_1_1784602486","used_size":729}]}`
+		"uni_key":"00005E005305_1_1784602486","used_size":729}]}`
 	successBody = `{}`
 )
 
@@ -311,7 +311,7 @@ func TestTaskCreateRemoteFlow(t *testing.T) {
 			TaskName:      "nightly",
 			SourceFolders: []string{"/homes"},
 		},
-		Host: "10.17.37.51", Account: "deryck", Password: "secret",
+		Host: "192.0.2.51", Account: "testuser", Password: "secret",
 		Share: "hb_vault", Port: 6281, SSL: true,
 	}
 	result, _, err := ExecuteTaskCreate(context.Background(), target, executor, input)
@@ -326,7 +326,7 @@ func TestTaskCreateRemoteFlow(t *testing.T) {
 	}
 	repo := executor.requests[1]
 	if repo.API != RepositoryAPIName || repo.JSONParameters["transfer_type"] != "image_remote" ||
-		repo.JSONParameters["dest"] != "10.17.37.51" || repo.JSONParameters["target_id"] != "DiskStation_1" ||
+		repo.JSONParameters["dest"] != "192.0.2.51" || repo.JSONParameters["target_id"] != "DiskStation_1" ||
 		repo.JSONParameters["is_webapi_authen"] != false || repo.JSONParameters["ssl_trust_mode"] != "ignore" {
 		t.Fatalf("repository create params = %#v", repo.JSONParameters)
 	}
