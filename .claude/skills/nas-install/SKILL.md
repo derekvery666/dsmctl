@@ -2,21 +2,43 @@
 name: nas-install
 description: >-
   Bring up a factory-fresh, reset, or crashed Synology NAS end to end with
-  dsmctl: detect its install state, install DSM (online, or offline by
-  auto-downloading the matching .pat from Synology when the device has no
-  internet), then create the first administrator with the password stored in the
-  OS credential store. Use when asked to "install DSM", "set up a new NAS",
-  "reinstall a broken NAS", "裝好一台全新/reset 的 NAS", "線上安裝 DSM", or when a
-  discovered device reports state not_install / sys_crash / sys_migrat.
+  dsmctl, all the way to fully usable: detect its install state, install DSM
+  (online, or offline by auto-downloading the matching .pat from Synology when the
+  device has no internet), create the first administrator (password stored in the
+  OS credential store), finish the DSM setup wizard (disabling the built-in admin
+  so the welcome wizard stops), and build one storage volume across all disks.
+  `dsmctl install --admin-user <user> --create-volume` does the whole chain in one
+  command. Use when asked to "install DSM", "set up a new NAS", "complete the
+  installation", "reinstall a broken NAS", "裝好一台全新/reset 的 NAS", "線上安裝
+  DSM", "完成安裝", or when a discovered device reports state not_install /
+  sys_crash / sys_migrat.
 ---
 
-# Bring up a fresh Synology NAS (install DSM + first admin)
+# Bring up a fresh Synology NAS (install DSM → first admin → storage)
 
-Goal: take a NAS that has no usable DSM and end with DSM installed and a first
-administrator whose password is in the OS credential store. Everything is a
-`dsmctl` invocation; this skill is the order of operations and the decision
-points. **Installing DSM erases the device's disks — it is destructive and
-irreversible. Confirm the target with the user before `--install`.**
+Goal: take a NAS that has no usable DSM all the way to **fully ready to use** —
+DSM installed, first administrator created (password in the OS credential store),
+the DSM setup wizard finished (built-in `admin` disabled), and one storage volume
+built across all disks. Everything is a `dsmctl` invocation; this skill is the
+order of operations and the decision points. **Installing DSM and creating a
+volume both erase the device's disks — destructive and irreversible. Confirm the
+target with the user before `--install` / `--create-volume`.**
+
+## The one command (full bring-up)
+
+`dsmctl install` chains the whole sequence when given `--admin-user` (install →
+create admin → disable built-in admin → finish wizard) and `--create-volume`
+(build one all-disk volume). For a lab NAS with an internet route:
+
+```console
+dsmctl install --url http://<ip>:5000 --install --yes \
+    --admin-user <user> --create-volume
+# add --allow-unsupported-disks if the drives are not on Synology's HCL (lab drives)
+# --raid raid5 (default) / --filesystem btrfs (default) to change the layout
+```
+
+That is the CMS-style mass-deploy path. The sections below are the same steps
+run individually, and the decision points behind each flag.
 
 ## 1. Find the device and its Web Assistant URL
 
@@ -71,20 +93,43 @@ setup URL). This takes several minutes (plus download/upload time offline); run
 it in the background and monitor if the harness has a timeout. When it finishes
 it prints the setup URL, e.g. `https://<ip>:5001`.
 
-## 4. Create the first administrator
+## 4. Create the first administrator (and finish the wizard)
 
-Once DSM is up it is in first-run setup. Create the admin; the generated
-password is stored in the OS credential store and never printed:
+Adding `--admin-user` to the install command does this automatically right after
+DSM comes up. To do it as a separate step (or against an already-installed NAS),
+use `dsmctl provision`:
 
-```
+```console
 dsmctl provision <profile-name> --url https://<ip>:5001 --admin-user <user> --insecure-skip-tls-verify
 ```
 
-`--insecure-skip-tls-verify` accepts the device's fresh self-signed certificate
-(a lab convenience; interactively you would pin it instead). The password lands
-in Windows Credential Manager / macOS Keychain / Linux Secret Service under the
-profile name; retrieve it later, at a terminal, with
+This creates the admin, **disables the built-in `admin` account from the setup
+session** (which is what makes DSM stop showing the "Welcome to DSM" wizard —
+disabling admin flips DSM's `admin_configured` flag), finishes the wizard, and
+hardens. `--insecure-skip-tls-verify` accepts the device's fresh self-signed
+certificate (a lab convenience; interactively you would pin it instead). The
+generated password lands in the OS credential store under the profile name and is
+never printed; retrieve it later, at a terminal, with
 `dsmctl auth password reveal --nas <profile-name>`.
+
+(If a NAS provisioned before this fix keeps showing the welcome wizard, its
+built-in admin is still enabled — retrofit with
+`dsmctl provision <profile-name> --reset-builtin-admin`.)
+
+## 5. Create the first storage volume (makes the NAS usable)
+
+Adding `--create-volume` to the install command builds one storage volume across
+ALL disks after provisioning (default all-disk btrfs RAID5). A fresh DSM has NO
+storage, so shared folders and most packages do not work until this runs.
+
+```console
+dsmctl install ... --admin-user <user> --create-volume [--raid raid5] [--filesystem btrfs] [--allow-unsupported-disks]
+```
+
+To build storage as a separate step (or on an already-installed NAS), follow the
+**nas-storage-setup** skill — it asks the user for the RAID/filesystem layout and
+runs the two guarded plan/apply cycles (pool, then volume) with the fresh-disk and
+lab-drive handling.
 
 ## Notes and limits
 

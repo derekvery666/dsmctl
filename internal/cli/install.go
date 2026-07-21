@@ -20,8 +20,8 @@ import (
 )
 
 func newInstallCommand(opts *options) *cobra.Command {
-	var targetURL, patFile, adminUser, deviceName, autoUpdate, profileName string
-	var doInstall, assumeYes, analytics bool
+	var targetURL, patFile, adminUser, deviceName, autoUpdate, profileName, raidType, filesystem string
+	var doInstall, assumeYes, analytics, createVolume, allowUnsupportedDisks bool
 	var timeoutMinutes, passwordLength int
 	command := &cobra.Command{
 		Use:   "install",
@@ -31,12 +31,21 @@ func newInstallCommand(opts *options) *cobra.Command {
 			"from Synology, installs it, and reboots). Installing is DESTRUCTIVE: it\n" +
 			"writes the OS to the device's disks, so it requires --install and a\n" +
 			"confirmation (--yes to skip the prompt). Without --install the command\n" +
-			"only reports state and changes nothing. After DSM is installed, create\n" +
-			"the first administrator with 'dsmctl provision'.",
+			"only reports state and changes nothing.\n\n" +
+			"This is the end-to-end bring-up: adding --admin-user creates the first\n" +
+			"administrator and finishes the DSM setup wizard (including disabling the\n" +
+			"built-in admin) after the install, and adding --create-volume then builds\n" +
+			"one storage volume across all disks (default all-disk btrfs RAID5). With\n" +
+			"all three, one command takes bare hardware to a fully usable NAS:\n" +
+			"    dsmctl install --url http://<ip>:5000 --install --yes \\\n" +
+			"        --admin-user <user> --create-volume",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if strings.TrimSpace(targetURL) == "" {
 				return errors.New("--url is required, e.g. http://10.17.36.255:5000")
+			}
+			if createVolume && strings.TrimSpace(adminUser) == "" {
+				return errors.New("--create-volume needs --admin-user: the volume is created as the provisioned administrator")
 			}
 			target := provision.Target{BaseURL: targetURL, HTTPClient: installHTTPClient()}
 			ctx := cmd.Context()
@@ -145,6 +154,22 @@ func newInstallCommand(opts *options) *cobra.Command {
 			if err := runFirstAdmin(cmd, store, cfg, service, req); err != nil {
 				return fmt.Errorf("DSM is installed, but creating the administrator failed (retry with 'dsmctl provision %s --url %s --admin-user %s --insecure-skip-tls-verify'): %w", name, setupURL, adminUser, err)
 			}
+			if !createVolume {
+				fmt.Fprintf(out, "\nNext: create storage so the NAS is usable — run 'dsmctl storage' (or re-run install with --create-volume).\n")
+				return nil
+			}
+			// Reload the service so it sees the just-provisioned profile and its
+			// stored credential, then create the first volume as that administrator.
+			volumeService, err := loadService(opts)
+			if err != nil {
+				return fmt.Errorf("DSM installed and administrator created, but reloading to create storage failed (run 'dsmctl storage' against %q): %w", name, err)
+			}
+			defer closeService(volumeService)
+			fmt.Fprintln(out)
+			if err := createAllDiskVolume(cmd, volumeService, name, raidType, filesystem, allowUnsupportedDisks); err != nil {
+				return fmt.Errorf("DSM installed and administrator %q created, but creating the storage volume failed (finish it with 'dsmctl storage' or the nas-storage-setup skill): %w", adminUser, err)
+			}
+			fmt.Fprintf(out, "\nNAS %q is fully set up and ready to use.\n", name)
 			return nil
 		},
 	}
@@ -159,6 +184,10 @@ func newInstallCommand(opts *options) *cobra.Command {
 	command.Flags().StringVar(&autoUpdate, "auto-update", "security", "DSM update policy for the created administrator: security, all, or notify")
 	command.Flags().BoolVar(&analytics, "analytics", false, "opt in to Synology device analytics when creating the administrator")
 	command.Flags().IntVar(&passwordLength, "length", 24, "generated administrator password length")
+	command.Flags().BoolVar(&createVolume, "create-volume", false, "after provisioning, create one storage volume across ALL disks (requires --admin-user; DESTRUCTIVE)")
+	command.Flags().StringVar(&raidType, "raid", "raid5", "RAID type for --create-volume: raid5, raid6, raid10, raid1, shr, shr2, jbod, or basic")
+	command.Flags().StringVar(&filesystem, "filesystem", "btrfs", "filesystem for --create-volume: btrfs or ext4")
+	command.Flags().BoolVar(&allowUnsupportedDisks, "allow-unsupported-disks", false, "let --create-volume use drives DSM does not list as compatible (lab/unvalidated drives)")
 	return command
 }
 
