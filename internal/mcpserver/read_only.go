@@ -33,6 +33,37 @@ func NewReadOnly(service *application.Service, version string) *mcp.Server {
 		// Certificate export extracts private-key material to a local file; the
 		// plan/apply pair mutates the certificate store (every write is high risk).
 		"get_certificate_export",
+		// run_security_scan is a load-heavy NAS action (not a read); the
+		// schedule/baseline plan/apply pair mutates DSM. All three are stripped
+		// from the read-only gateway.
+		"run_security_scan",
+		"plan_security_advisor_schedule_change",
+		"apply_security_advisor_schedule_plan",
+		"plan_account_protection_autoblock_change",
+		"apply_account_protection_autoblock_plan",
+		"plan_account_protection_list_change",
+		"apply_account_protection_list_plan",
+		"plan_account_protection_thresholds_change",
+		"apply_account_protection_thresholds_plan",
+		"plan_account_protection_enforce_2fa_change",
+		"apply_account_protection_enforce_2fa_plan",
+		// Terminal & SNMP guarded writes (WI-071). Enabling SSH/Telnet or disabling
+		// SSH is high risk; the SNMP set carries the community secret. Both pairs are
+		// stripped from the read-only gateway.
+		"plan_terminal_change",
+		"apply_terminal_plan",
+		"plan_snmp_change",
+		"apply_snmp_plan",
+		// Login Portal guarded writes (WI-070). A DSM web-service change changes how
+		// DSM itself is reached (high risk); the application-portal and reverse-proxy
+		// writes change external exposure. All are stripped from the read-only gateway.
+		"plan_login_portal_dsm_change",
+		"apply_login_portal_dsm_plan",
+		"plan_login_portal_application_change",
+		"apply_login_portal_application_plan",
+		"plan_login_portal_reverse_proxy_create",
+		"plan_login_portal_reverse_proxy_delete",
+		"apply_login_portal_reverse_proxy_plan",
 		"plan_certificate_change",
 		"apply_certificate_plan",
 		"plan_filestation_change",

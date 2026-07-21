@@ -12,10 +12,13 @@ func loadService(opts *options) (*application.Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	// The runtime prefers a stored web-login session; this resolver is the
-	// automatic, non-interactive fallback when no session can be resumed. It
-	// checks the OS credential store first ('auth password set') and then the
-	// profile's environment variable, matching the stdio MCP entry point.
+	// The SecureStore is the runtime's password resolver. It resolves the account
+	// password keyring-first — including one stored by 'dsmctl provision' or
+	// 'dsmctl auth password set' — and falls back to the profile's password
+	// environment variable, so a provisioned NAS is usable by every command
+	// without a separate 'dsmctl auth login'. The runtime still prefers a
+	// resumable web-login session and only consults this resolver when no session
+	// exists or a seeded one can no longer be resumed.
 	secrets := credentials.NewSecureStore()
 	managerOptions := []runtime.Option{
 		runtime.WithDeviceStore(secrets),

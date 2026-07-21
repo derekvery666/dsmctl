@@ -424,6 +424,153 @@ unverified field cannot corrupt state. Reaching a NAS *by* its QuickConnect ID i
 a separate connection-layer concern in
 [WI-042](../spec/work-items/WI-042-quickconnect-transport.md).
 
+## Terminal and SNMP
+
+DSM's Control Panel → Terminal & SNMP page carries two independent DSM API
+families with independent failure boundaries: the Terminal tab (SSH/Telnet) is
+`SYNO.Core.Terminal` and the SNMP tab is `SYNO.Core.SNMP`. One being absent
+reports `(not supported)` without disabling the other, and each fails closed
+(no silent empty-success decode) when its API is missing.
+
+```console
+dsmctl control-panel terminal-snmp capabilities --nas office
+dsmctl control-panel terminal-snmp terminal --nas office --json
+dsmctl control-panel terminal-snmp snmp --nas office --json
+```
+
+- **Terminal** reads `SYNO.Core.Terminal` (`get`, v3→v2→v1): whether SSH and
+  Telnet are enabled, the SSH listening port, and whether local console access
+  is forbidden. dsmctl drives DSM over the WebAPI session, not SSH, so these
+  describe the human remote-shell exposure only. (The cipher/kex/mac algorithm
+  menus DSM returns are ignored.)
+- **SNMP** reads `SYNO.Core.SNMP` (`get`, v1): whether the service is enabled,
+  which protocol versions (v1/v2c, v3) are on, the device location and contact,
+  the SNMPv3 username, and whether a read community and a trap target are
+  configured.
+
+**Secret suppression is mandatory on read.** The SNMP `get` echoes the v1/v2c
+community string (`rocommunity`), and — when configured — the SNMPv3 auth and
+privacy passwords and any trap community, in cleartext. The decoder **never
+reads these values into the model**: it surfaces only presence flags
+(`community_configured`, `trap_configured`, `trap_host_present`) and the
+non-secret SNMPv3 username. A unit test injects a canary into every secret
+field and asserts the re-encoded model carries no trace of it. The community
+string and passwords are never returned by any read, CLI output, or MCP result.
+
+MCP exposes the same reads through `get_terminal_snmp_capabilities`,
+`get_terminal_state`, and `get_snmp_state`. All are read-only and never change
+the Terminal or SNMP configuration.
+
+Verified live on DSM 7.3: `SYNO.Core.Terminal` v1–v3 (`enable_ssh`,
+`enable_telnet`, `ssh_port`, `forbid_console`) and `SYNO.Core.SNMP` v1
+(`enable_snmp`, `enable_snmp_v1v2`, `enable_snmp_v3`, `location`, `contact`,
+`rocommunity`, `rouser`).
+
+### Guarded writes
+
+Both areas take patch-only changes through the hash-bound plan/apply contract,
+merged into a freshly read state so an unspecified switch is never silently
+reset, then re-read to verify the effect. Both plan/apply pairs are excluded
+from the read-only MCP gateway.
+
+```console
+echo '{"ssh_port":2222}' | dsmctl control-panel terminal-snmp terminal-plan --nas office -f -
+dsmctl control-panel terminal-snmp terminal-apply --nas office -f plan.json --approve <hash>
+
+WI071_COMMUNITY=... dsmctl control-panel terminal-snmp snmp-apply --nas office -f plan.json --approve <hash>
+```
+
+- **Terminal** set (`SYNO.Core.Terminal` `set`, v3→v2→v1): `ssh_enabled`,
+  `ssh_port`, `telnet_enabled`, `console_forbidden`. Enabling SSH or Telnet, or
+  disabling SSH, is classified **high** risk — it changes the human remote-shell
+  attack surface (dsmctl itself drives DSM over the WebAPI session, not SSH, so
+  its own access survives). An SSH-port change is medium and warns to verify the
+  matching firewall rule / upstream port forward separately (out of scope here).
+- **SNMP** set (`SYNO.Core.SNMP` `set`, v1): `enabled`, `v1_v2c_enabled`,
+  `v3_enabled` (disable only), `location`, `contact`, and the read community.
+  Every SNMP change is **medium** risk. The read community is a **secret**
+  supplied as `community_credential_ref: env:NAME`, resolved to bytes only at
+  apply time and sent solely in the SNMP `set` request body (as `rocommunity`);
+  the reference NAME — never the community value — is all that enters the plan,
+  the approval hash, the result, or a log line. A request-capture unit test
+  proves the resolved secret rides only the wire request and is zeroized after.
+
+**WIRE-UNVERIFIED (not writable through this module).** Enabling SNMPv3 requires
+a v3 auth passphrase whose DSM `set`-field names could not be confirmed live
+(DSM returns error 2202 for every candidate, and the module admin JS was not
+fetchable); only *disabling* v3 is supported. The SNMP trap target is likewise
+unverified — no trap field appears in the SNMP `get` response even while the
+service is enabled, so a trap write cannot be confirmed by a postcondition
+re-read. Both are left capability-only pending a codesearch/JS confirmation.
+
+DSM quirks confirmed live and handled: SNMP `set` returns code 2202 when a
+required secret is missing (v1/v2c enabled with no community, or v3 enabled with
+no passphrase) — the plan pre-checks the community case; and an empty-string
+`location`/`contact` is applied only while the service is enabled (DSM ignores an
+empty-string write while SNMP is disabled), and DSM has no API to blank a
+configured community once set.
+
+## Login Portal (read-only)
+
+DSM's Control Panel → Login Portal page carries three independent DSM API
+families with independent failure boundaries: the DSM tab
+(`SYNO.Core.Web.DSM`, with the customized-hostname sibling
+`SYNO.Core.Web.DSM.External`), the Applications tab (`SYNO.Core.AppPortal`), and
+the Advanced tab reverse proxy (`SYNO.Core.AppPortal.ReverseProxy`). One being
+absent reports `(not supported)` without disabling the others, and each fails
+closed (no silent empty-success decode) when its API is missing.
+
+```console
+dsmctl control-panel login-portal capabilities --nas office
+dsmctl control-panel login-portal dsm --nas office --json
+dsmctl control-panel login-portal applications --nas office --json
+dsmctl control-panel login-portal reverse-proxy --nas office --json
+```
+
+- **DSM access** reads `SYNO.Core.Web.DSM` (`get`) into stable field names: HTTP
+  and HTTPS ports, HTTPS enabled, HTTP→HTTPS force-redirect, HSTS, HTTP/2 (DSM
+  field `enable_spdy`), and the customized domain (`enable_custom_domain` /
+  `fqdn`). **v1 is selected deliberately**: DSM 7.3 advertises both v1 and v2, but
+  the v2 `get` omits `enable_https` and `enable_hsts`, so v1 is the only version
+  carrying the complete normalized set. The customized external hostname is an
+  independently gated enrichment from the sibling `SYNO.Core.Web.DSM.External`
+  (`get` → `hostname`); when that API is absent it is reported `(not supported)`
+  without failing the DSM-access read.
+- **Applications** reads `SYNO.Core.AppPortal` (`list`) → the per-application
+  portal list with app id, title, and per-app HTTP→HTTPS redirect. Alias and
+  custom portal ports are surfaced only when a custom portal is configured.
+- **Reverse proxy** reads `SYNO.Core.AppPortal.ReverseProxy` (`list`) → the rule
+  set, keyed by the server-assigned rule uuid, with the frontend and backend
+  (protocol/host/port), the HSTS/HTTP2 frontend flags, whether a certificate is
+  referenced, and how many custom headers are configured.
+
+**Secret suppression is mandatory on read.** A reverse-proxy rule may reference a
+certificate and carry custom header values (which can hold an injected auth
+token). The decoder **never surfaces key material or header values**: it reports
+the certificate as presence-only (`certificate_present`) and the headers as a
+count-only (`custom_header_count`). A unit test injects certificate/header/SID
+canaries and asserts the re-encoded models carry no trace, and a live `--json`
+grep confirms no SID/SynoToken leaks.
+
+MCP exposes the same reads through `get_login_portal_capabilities`,
+`get_login_portal_dsm`, `get_login_portal_applications`, and
+`get_login_portal_reverse_proxy`. All are read-only and never change how DSM is
+reached.
+
+Verified live on DSM 7.3: `SYNO.Core.Web.DSM` v1 (`http_port`, `https_port`,
+`enable_https`, `enable_https_redirect`, `enable_hsts`, `enable_spdy`,
+`enable_custom_domain`, `fqdn`), `SYNO.Core.Web.DSM.External` v1 (`hostname`),
+`SYNO.Core.AppPortal` v1 `list` (`id`, `display_name`, `enable_redirect`), and
+`SYNO.Core.AppPortal.ReverseProxy` v1 `list` (`entries`). The lab has zero
+reverse-proxy rules configured, so the list envelope and rule count are
+live-verified but the per-rule field mapping is spec-derived and decoded
+leniently (an unknown key yields an empty/zero field, never a wrong value);
+re-verifying a populated rule shape is a prerequisite of the guarded-write
+follow-on. Guarded writes (DSM ports/HSTS/redirect/domain, application portal
+alias/port, reverse-proxy rule CRUD) are a deferred follow-on and are **HIGH
+risk** — each changes how DSM itself is reached — and, like the other guarded
+modules, will be excluded from the read-only gateway.
+
 ## Adding another module
 
 Add a dedicated type under `internal/domain/controlpanel`, an operation package

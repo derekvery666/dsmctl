@@ -106,6 +106,19 @@ func (s *SecureStore) StoredPassword(ctx context.Context, profileName string) (s
 	return password, nil
 }
 
+// RevealPassword returns the stored plaintext password for a profile from the
+// OS credential store ONLY — never the environment-variable fallback. It is the
+// single method that yields a plaintext password to a human-facing sink and
+// MUST NOT be called from the MCP server, the application service, or any log
+// path; callers gate it behind an interactive-terminal check. A missing entry
+// returns ErrNoStoredPassword.
+func (s *SecureStore) RevealPassword(ctx context.Context, profileName string) (string, error) {
+	// Identical to StoredPassword; kept as a distinct, intention-revealing name
+	// for the human-gated reveal call sites that must never be reachable from the
+	// MCP server or application service.
+	return s.StoredPassword(ctx, profileName)
+}
+
 func (s *SecureStore) SavePassword(ctx context.Context, profileName, password string) error {
 	if err := ctx.Err(); err != nil {
 		return err

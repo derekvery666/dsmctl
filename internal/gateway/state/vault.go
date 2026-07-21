@@ -121,10 +121,10 @@ func (r *Repository) Password(ctx context.Context, profileName string, profile c
 	return r.environment.Password(ctx, profileName, profile)
 }
 
-// StoredPassword returns the password held in the encrypted vault for the
-// profile. Unlike Password it never falls back to environment variables, so
-// the human-gated reveal shows exactly what the vault stores; a profile
-// without a vault entry reports ErrNotFound.
+// StoredPassword returns only the vault-enrolled password. Unlike Password it
+// never consults the environment fallback, so administrator reveal exposes
+// exactly what the Admin UI stored and nothing configured out-of-band; a
+// profile without a vault entry reports ErrNotFound.
 func (r *Repository) StoredPassword(ctx context.Context, profileName string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -144,10 +144,7 @@ func (r *Repository) StoredPassword(ctx context.Context, profileName string) (st
 		}
 		return err
 	})
-	if err != nil {
-		return "", err
-	}
-	return password, nil
+	return password, err
 }
 
 func (r *Repository) SavePassword(ctx context.Context, profileName, password string) (uint64, error) {

@@ -1,6 +1,8 @@
 package credentials
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -41,5 +43,52 @@ func TestGeneratePasswordIsRandom(t *testing.T) {
 	}
 	if a == b {
 		t.Fatal("two generated passwords were identical")
+	}
+}
+
+func TestMemoryReferenceResolverRoundTripAndForget(t *testing.T) {
+	r := NewMemoryReferenceResolver()
+	ref := r.Put("s3cr3t")
+	if !strings.HasPrefix(ref, "mem:") {
+		t.Fatalf("Put() = %q, want mem: prefix", ref)
+	}
+	got, err := r.ResolveSecret(context.Background(), ref)
+	if err != nil || got != "s3cr3t" {
+		t.Fatalf("ResolveSecret() = %q, %v", got, err)
+	}
+	r.Forget(ref)
+	if _, err := r.ResolveSecret(context.Background(), ref); err == nil {
+		t.Fatal("ResolveSecret() after Forget error = nil, want error")
+	}
+	if _, err := r.ResolveSecret(context.Background(), "env:FOO"); err == nil {
+		t.Fatal("ResolveSecret(env:) error = nil, want scheme rejection")
+	}
+}
+
+func TestChainReferenceResolverPrefersMatchingScheme(t *testing.T) {
+	mem := NewMemoryReferenceResolver()
+	ref := mem.Put("value")
+	chain := ChainReferenceResolver(mem, NewEnvironmentReferenceResolver())
+	got, err := chain.ResolveSecret(context.Background(), ref)
+	if err != nil || got != "value" {
+		t.Fatalf("chain(mem) = %q, %v", got, err)
+	}
+	if _, err := chain.ResolveSecret(context.Background(), "mem:absent"); err == nil {
+		t.Fatal("chain(absent) error = nil, want error")
+	}
+}
+
+func TestRevealPasswordIsKeyringOnly(t *testing.T) {
+	backend := newMemoryKeyring()
+	backend.values[keyringService+":"+passwordKey("office")] = "stored-pw"
+	store := &SecureStore{keyring: backend, environment: &Environment{lookup: func(string) (string, bool) {
+		return "env-pw", true // must be ignored: reveal never consults the environment fallback
+	}}}
+	got, err := store.RevealPassword(context.Background(), "office")
+	if err != nil || got != "stored-pw" {
+		t.Fatalf("RevealPassword() = %q, %v", got, err)
+	}
+	if _, err := store.RevealPassword(context.Background(), "absent"); !errors.Is(err, ErrNoStoredPassword) {
+		t.Fatalf("RevealPassword(absent) error = %v, want ErrNoStoredPassword", err)
 	}
 }

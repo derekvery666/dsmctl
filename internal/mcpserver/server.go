@@ -21,17 +21,22 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/domain/ftpservices"
 	"github.com/ychiu1211/dsmctl/internal/domain/identity"
 	"github.com/ychiu1211/dsmctl/internal/domain/nfsexport"
+	"github.com/ychiu1211/dsmctl/internal/domain/notification"
 	"github.com/ychiu1211/dsmctl/internal/domain/office"
 	"github.com/ychiu1211/dsmctl/internal/domain/packagecenter"
 	"github.com/ychiu1211/dsmctl/internal/domain/photos"
 	"github.com/ychiu1211/dsmctl/internal/domain/resmon"
 	"github.com/ychiu1211/dsmctl/internal/domain/rsyncservice"
 	"github.com/ychiu1211/dsmctl/internal/domain/san"
+	"github.com/ychiu1211/dsmctl/internal/domain/accountprotection"
+	"github.com/ychiu1211/dsmctl/internal/domain/loginportal"
+	"github.com/ychiu1211/dsmctl/internal/domain/securityadvisor"
 	"github.com/ychiu1211/dsmctl/internal/domain/servicediscovery"
 	"github.com/ychiu1211/dsmctl/internal/domain/share"
 	"github.com/ychiu1211/dsmctl/internal/domain/storage"
 	"github.com/ychiu1211/dsmctl/internal/domain/surveillance"
 	"github.com/ychiu1211/dsmctl/internal/domain/syslog"
+	"github.com/ychiu1211/dsmctl/internal/domain/terminalsnmp"
 	"github.com/ychiu1211/dsmctl/internal/domain/tftpservice"
 	"github.com/ychiu1211/dsmctl/internal/synology"
 )
@@ -873,6 +878,61 @@ type getLogsInput struct {
 	To      string `json:"to,omitempty" jsonschema:"Inclusive upper time bound (requires from): a local timestamp or Unix seconds"`
 }
 
+type getNotificationInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getNotificationHistoryInput struct {
+	NAS    string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"Maximum number of notifications to return; defaults to a bounded page size"`
+	Offset int    `json:"offset,omitempty" jsonschema:"Number of newest notifications to skip for pagination"`
+	Level  string `json:"level,omitempty" jsonschema:"Severity filter applied by DSM: info, warn, or error"`
+	From   string `json:"from,omitempty" jsonschema:"Inclusive lower time bound: a local timestamp (2006-01-02 or 2006-01-02 15:04:05) or Unix seconds"`
+	To     string `json:"to,omitempty" jsonschema:"Inclusive upper time bound: a local timestamp or Unix seconds"`
+	Lang   string `json:"lang,omitempty" jsonschema:"DSM string-table language for rendered titles/messages, such as enu (default) or cht"`
+}
+
+type getNotificationCapabilitiesOutput struct {
+	NAS          string                            `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.NotificationCapabilities `json:"capabilities" jsonschema:"Notification read areas currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport      `json:"report" jsonschema:"Discovered APIs and selected notification compatibility backends"`
+}
+
+type getNotificationMailOutput struct {
+	NAS  string                         `json:"nas" jsonschema:"NAS profile used for the request"`
+	Mail synology.NotificationMailState `json:"mail" jsonschema:"Normalized email notification channel without any password material"`
+}
+
+type getNotificationPushOutput struct {
+	NAS  string                         `json:"nas" jsonschema:"NAS profile used for the request"`
+	Push synology.NotificationPushState `json:"push" jsonschema:"Normalized push notification channel without any device tokens"`
+}
+
+type getNotificationWebhookOutput struct {
+	NAS     string                            `json:"nas" jsonschema:"NAS profile used for the request"`
+	Webhook synology.NotificationWebhookState `json:"webhook" jsonschema:"Configured webhook providers without URLs or secrets"`
+}
+
+type getNotificationSMSOutput struct {
+	NAS string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	SMS synology.NotificationSMSState `json:"sms" jsonschema:"Normalized SMS notification channel without provider auth material"`
+}
+
+type getNotificationRulesOutput struct {
+	NAS   string                          `json:"nas" jsonschema:"NAS profile used for the request"`
+	Rules synology.NotificationRulesState `json:"rules" jsonschema:"Notification event rule catalog per profile"`
+}
+
+type getNotificationDesktopOutput struct {
+	NAS     string                            `json:"nas" jsonschema:"NAS profile used for the request"`
+	Desktop synology.NotificationDesktopState `json:"desktop" jsonschema:"Per-category desktop notification toggles of the signed-in user"`
+}
+
+type getNotificationHistoryOutput struct {
+	NAS     string                            `json:"nas" jsonschema:"NAS profile used for the request"`
+	History synology.NotificationHistoryState `json:"history" jsonschema:"One page of the DSM notification history, newest first"`
+}
+
 type getLogsOutput struct {
 	NAS  string            `json:"nas" jsonschema:"NAS profile used for the request"`
 	Logs synology.LogState `json:"logs" jsonschema:"Normalized DSM system log entries and severity counts"`
@@ -1099,6 +1159,58 @@ type getCertificateCapabilitiesOutput struct {
 	Report       synology.CompatibilityReport     `json:"report" jsonschema:"Discovered APIs and selected certificate backend"`
 }
 
+type getTerminalSNMPInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getTerminalStateOutput struct {
+	NAS      string                 `json:"nas" jsonschema:"NAS profile used for the request"`
+	Terminal synology.TerminalState `json:"terminal" jsonschema:"Normalized Terminal (SSH/Telnet) state"`
+}
+
+type getSNMPStateOutput struct {
+	NAS  string             `json:"nas" jsonschema:"NAS profile used for the request"`
+	SNMP synology.SNMPState `json:"snmp" jsonschema:"Normalized SNMP state; carries no community string or SNMPv3 passwords"`
+}
+
+type getTerminalSNMPCapabilitiesOutput struct {
+	NAS          string                            `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.TerminalSNMPCapabilities `json:"capabilities" jsonschema:"Terminal and SNMP reads and guarded writes currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport      `json:"report" jsonschema:"Discovered APIs and selected Terminal/SNMP backends"`
+}
+
+type planTerminalChangeInput struct {
+	NAS     string                      `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request terminalsnmp.TerminalChange `json:"request" jsonschema:"Patch-only Terminal intent (ssh_enabled, ssh_port, telnet_enabled, console_forbidden)"`
+}
+
+type planTerminalChangeOutput struct {
+	Plan application.TerminalChangePlan `json:"plan" jsonschema:"Validated plan bound to the complete observed Terminal state and approval hash"`
+}
+
+type applyTerminalPlanInput struct {
+	Plan         application.TerminalChangePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_terminal_change"`
+	ApprovalHash string                         `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
+}
+
+type terminalSNMPApplyOutput struct {
+	Result application.TerminalSNMPApplyResult `json:"result" jsonschema:"Mutation result after stale-state and postcondition checks; carries no secret"`
+}
+
+type planSNMPChangeInput struct {
+	NAS     string                  `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request terminalsnmp.SNMPChange `json:"request" jsonschema:"Patch-only SNMP intent. The read community is a secret referenced by community_credential_ref (env:NAME) and resolved only at apply time"`
+}
+
+type planSNMPChangeOutput struct {
+	Plan application.SNMPChangePlan `json:"plan" jsonschema:"Validated plan bound to the complete observed SNMP state and approval hash; carries no community string or SNMPv3 password"`
+}
+
+type applySNMPPlanInput struct {
+	Plan         application.SNMPChangePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_snmp_change"`
+	ApprovalHash string                     `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
+}
+
 type planCertificateChangeInput struct {
 	NAS     string                    `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 	Request certificate.ChangeRequest `json:"request" jsonschema:"Certificate import, set_default, bind_service, or delete intent. The private key is referenced by env:NAME and resolved only at apply time"`
@@ -1125,6 +1237,244 @@ type exportCertificateInput struct {
 
 type exportCertificateOutput struct {
 	Result application.ExportCertificateResult `json:"result" jsonschema:"Local file the archive was written to and its size; no key bytes are returned"`
+}
+
+type getSecurityAdvisorInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getSecurityAdvisorStatusOutput struct {
+	NAS    string                         `json:"nas" jsonschema:"NAS profile used for the request"`
+	Status synology.SecurityAdvisorStatus `json:"status" jsonschema:"Normalized last-scan status and per-category findings"`
+}
+
+type getSecurityAdvisorScheduleOutput struct {
+	NAS           string                                `json:"nas" jsonschema:"NAS profile used for the request"`
+	Configuration synology.SecurityAdvisorConfiguration `json:"configuration" jsonschema:"Current scan schedule and security baseline"`
+}
+
+type getSecurityAdvisorCapabilitiesOutput struct {
+	NAS          string                               `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.SecurityAdvisorCapabilities `json:"capabilities" jsonschema:"Security Advisor operations currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport         `json:"report" jsonschema:"Discovered APIs and selected Security Advisor backends"`
+}
+
+type planSecurityAdvisorScheduleChangeInput struct {
+	NAS     string                         `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request securityadvisor.ScheduleChange `json:"request" jsonschema:"Patch-only scan schedule and security-baseline intent"`
+}
+
+type planSecurityAdvisorScheduleChangeOutput struct {
+	Plan application.SecurityAdvisorSchedulePlan `json:"plan" jsonschema:"Validated plan bound to the complete observed configuration and approval hash"`
+}
+
+type applySecurityAdvisorSchedulePlanInput struct {
+	Plan         application.SecurityAdvisorSchedulePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_security_advisor_schedule_change"`
+	ApprovalHash string                                  `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved security advisor plan"`
+}
+
+type applySecurityAdvisorSchedulePlanOutput struct {
+	Result application.SecurityAdvisorScheduleApplyResult `json:"result" jsonschema:"Schedule + baseline mutation result after stale-state and postcondition checks"`
+}
+
+type runSecurityScanOutput struct {
+	Result application.SecurityAdvisorScanActionResult `json:"result" jsonschema:"Result of triggering a full Security Advisor scan"`
+}
+
+type accountProtectionInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getAutoBlockSettingsOutput struct {
+	NAS      string                     `json:"nas" jsonschema:"NAS profile used for the request"`
+	Settings synology.AutoBlockSettings `json:"settings" jsonschema:"Auto Block configuration"`
+}
+
+type getAutoBlockListsOutput struct {
+	NAS   string                  `json:"nas" jsonschema:"NAS profile used for the request"`
+	Lists synology.AutoBlockLists `json:"lists" jsonschema:"Auto Block allow and block IP lists"`
+}
+
+type getAccountProtectionOutput struct {
+	NAS        string                     `json:"nas" jsonschema:"NAS profile used for the request"`
+	Protection synology.AccountProtection `json:"protection" jsonschema:"Account Protection thresholds"`
+}
+
+type getEnforceTwoFactorOutput struct {
+	NAS    string                    `json:"nas" jsonschema:"NAS profile used for the request"`
+	Policy synology.EnforceTwoFactor `json:"policy" jsonschema:"Enforced-2FA policy scope"`
+}
+
+type getAccountProtectionCapabilitiesOutput struct {
+	NAS          string                                 `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.AccountProtectionCapabilities `json:"capabilities" jsonschema:"Account-protection reads and guarded writes currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport           `json:"report" jsonschema:"Discovered APIs and selected account-protection backends"`
+}
+
+type planAutoBlockChangeInput struct {
+	NAS     string                            `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request accountprotection.AutoBlockChange `json:"request" jsonschema:"Patch-only Auto Block settings intent"`
+}
+
+type planAutoBlockChangeOutput struct {
+	Plan application.AutoBlockSettingsPlan `json:"plan" jsonschema:"Validated plan bound to the complete observed settings and approval hash"`
+}
+
+type applyAutoBlockPlanInput struct {
+	Plan         application.AutoBlockSettingsPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_account_protection_autoblock_change"`
+	ApprovalHash string                           `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
+}
+
+type accountProtectionApplyOutput struct {
+	Result application.AccountProtectionApplyResult `json:"result" jsonschema:"Mutation result after stale-state and postcondition checks"`
+}
+
+type planAccountProtectionThresholdsChangeInput struct {
+	NAS     string                                    `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request accountprotection.AccountProtectionChange `json:"request" jsonschema:"Patch-only Account Protection thresholds intent"`
+}
+
+type planAccountProtectionThresholdsChangeOutput struct {
+	Plan application.AccountProtectionThresholdsPlan `json:"plan" jsonschema:"Validated plan bound to the complete observed thresholds and approval hash"`
+}
+
+type applyAccountProtectionThresholdsPlanInput struct {
+	Plan         application.AccountProtectionThresholdsPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_account_protection_thresholds_change"`
+	ApprovalHash string                                      `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
+}
+
+type planEnforceTwoFactorChangeInput struct {
+	NAS     string                                   `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request accountprotection.EnforceTwoFactorChange `json:"request" jsonschema:"Enforced-2FA policy scope intent (otp_enforce_option); enabling requires allow_lockout_override"`
+}
+
+type planEnforceTwoFactorChangeOutput struct {
+	Plan application.EnforceTwoFactorPlan `json:"plan" jsonschema:"Validated plan bound to the observed policy and approval hash"`
+}
+
+type applyEnforceTwoFactorPlanInput struct {
+	Plan         application.EnforceTwoFactorPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_account_protection_enforce_2fa_change"`
+	ApprovalHash string                          `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
+}
+
+type planAutoBlockListChangeInput struct {
+	NAS     string                       `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request accountprotection.IPListEdit `json:"request" jsonschema:"Single allow/block list add or remove; self-lockout edits require allow_lockout_override"`
+}
+
+type planAutoBlockListChangeOutput struct {
+	Plan application.AutoBlockListPlan `json:"plan" jsonschema:"Validated plan bound to the complete observed lists, active sources, and approval hash"`
+}
+
+type applyAutoBlockListPlanInput struct {
+	Plan         application.AutoBlockListPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_account_protection_list_change"`
+	ApprovalHash string                       `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
+}
+
+type firewallInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type firewallRulesInput struct {
+	NAS     string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Profile string `json:"profile,omitempty" jsonschema:"Limit to a single firewall profile by name; omit to read every profile"`
+}
+
+type getFirewallStatusOutput struct {
+	NAS    string                  `json:"nas" jsonschema:"NAS profile used for the request"`
+	Status synology.FirewallStatus `json:"status" jsonschema:"Global firewall enable flag, active profile, and network adapters"`
+}
+
+type getFirewallProfilesOutput struct {
+	NAS      string                     `json:"nas" jsonschema:"NAS profile used for the request"`
+	Profiles []synology.FirewallProfile `json:"profiles" jsonschema:"Firewall profiles, with the active one marked"`
+}
+
+type getFirewallRulesOutput struct {
+	NAS     string                   `json:"nas" jsonschema:"NAS profile used for the request"`
+	RuleSet synology.FirewallRuleSet `json:"rule_set" jsonschema:"Per-adapter default policy and ordered rules for the requested profile(s)"`
+}
+
+type getFirewallCapabilitiesOutput struct {
+	NAS          string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.FirewallCapabilities `json:"capabilities" jsonschema:"Firewall reads currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport  `json:"report" jsonschema:"Discovered APIs and selected firewall backends"`
+}
+
+type loginPortalInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getDSMWebServiceOutput struct {
+	NAS      string                 `json:"nas" jsonschema:"NAS profile used for the request"`
+	Settings synology.DSMWebService `json:"settings" jsonschema:"DSM web-service access settings"`
+}
+
+type getApplicationPortalsOutput struct {
+	NAS     string                      `json:"nas" jsonschema:"NAS profile used for the request"`
+	Portals synology.ApplicationPortals `json:"portals" jsonschema:"Per-application portal list"`
+}
+
+type getReverseProxyRulesOutput struct {
+	NAS   string                     `json:"nas" jsonschema:"NAS profile used for the request"`
+	Rules synology.ReverseProxyRules `json:"rules" jsonschema:"Reverse-proxy rule list"`
+}
+
+type getLoginPortalCapabilitiesOutput struct {
+	NAS          string                           `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.LoginPortalCapabilities `json:"capabilities" jsonschema:"Login Portal reads and guarded writes currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport     `json:"report" jsonschema:"Discovered APIs and selected Login Portal backends"`
+}
+
+type planDSMWebServiceChangeInput struct {
+	NAS     string                          `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request loginportal.DSMWebServiceChange `json:"request" jsonschema:"Patch-only DSM web-service intent; a change that would sever the current dsmctl transport needs allow_connectivity_break"`
+}
+
+type planDSMWebServiceChangeOutput struct {
+	Plan application.DSMWebServicePlan `json:"plan" jsonschema:"Validated plan bound to the complete observed settings, current transport, and approval hash"`
+}
+
+type applyDSMWebServicePlanInput struct {
+	Plan         application.DSMWebServicePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_login_portal_dsm_change"`
+	ApprovalHash string                       `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
+}
+
+type loginPortalApplyOutput struct {
+	Result application.LoginPortalApplyResult `json:"result" jsonschema:"Mutation result after stale-state and postcondition checks"`
+}
+
+type planApplicationPortalChangeInput struct {
+	NAS     string                              `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request loginportal.ApplicationPortalChange `json:"request" jsonschema:"Patch-only application-portal intent keyed by app_id"`
+}
+
+type planApplicationPortalChangeOutput struct {
+	Plan application.ApplicationPortalPlan `json:"plan" jsonschema:"Validated plan bound to the observed portal and approval hash"`
+}
+
+type applyApplicationPortalPlanInput struct {
+	Plan         application.ApplicationPortalPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_login_portal_application_change"`
+	ApprovalHash string                           `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
+}
+
+type planReverseProxyCreateInput struct {
+	NAS     string                             `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request loginportal.ReverseProxyRuleCreate `json:"request" jsonschema:"Reverse-proxy rule to create; secret header values use credential_ref (env:NAME)"`
+}
+
+type planReverseProxyDeleteInput struct {
+	NAS     string                             `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request loginportal.ReverseProxyRuleDelete `json:"request" jsonschema:"Reverse-proxy rule to delete, keyed by uuid"`
+}
+
+type planReverseProxyOutput struct {
+	Plan application.ReverseProxyPlan `json:"plan" jsonschema:"Validated plan bound to the complete observed rule set and approval hash"`
+}
+
+type applyReverseProxyPlanInput struct {
+	Plan         application.ReverseProxyPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_login_portal_reverse_proxy_create or plan_login_portal_reverse_proxy_delete"`
+	ApprovalHash string                       `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
 }
 
 type getDriveAdminCapabilitiesOutput struct {
@@ -2712,6 +3062,121 @@ func New(service *application.Service, version string) *mcp.Server {
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_notification_capabilities",
+		Title:       "Get notification capabilities",
+		Description: "Report which DSM notification read areas (email, push, webhook, SMS, rule catalog, desktop toggles, history) are available for a NAS and the DSM API backend selected for each. Each area is independent.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getNotificationInput) (*mcp.CallToolResult, getNotificationCapabilitiesOutput, error) {
+		result, err := service.GetNotificationCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getNotificationCapabilitiesOutput{}, err
+		}
+		return nil, getNotificationCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_notification_mail",
+		Title:       "Get email notification settings",
+		Description: "Read the DSM email notification channel: whether it is enabled, the SMTP server/port/TLS/auth-user configuration, sender, subject prefix, recipients, and the Synology-relay email mode. The SMTP password is never returned. This tool never changes notification settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getNotificationInput) (*mcp.CallToolResult, getNotificationMailOutput, error) {
+		result, err := service.GetNotificationMail(ctx, input.NAS)
+		if err != nil {
+			return nil, getNotificationMailOutput{}, err
+		}
+		return nil, getNotificationMailOutput{NAS: result.NAS, Mail: result.Mail}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_notification_push",
+		Title:       "Get push notification settings",
+		Description: "Read the DSM push notification channel: whether mobile push is enabled and which mobile devices or browsers are paired. Device push tokens are never returned. This tool never changes notification settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getNotificationInput) (*mcp.CallToolResult, getNotificationPushOutput, error) {
+		result, err := service.GetNotificationPush(ctx, input.NAS)
+		if err != nil {
+			return nil, getNotificationPushOutput{}, err
+		}
+		return nil, getNotificationPushOutput{NAS: result.NAS, Push: result.Push}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_notification_webhook",
+		Title:       "Get webhook notification providers",
+		Description: "Read the configured DSM webhook notification providers (id, name, kind, enabled). Webhook URLs and secrets are never returned. This tool never changes notification settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getNotificationInput) (*mcp.CallToolResult, getNotificationWebhookOutput, error) {
+		result, err := service.GetNotificationWebhook(ctx, input.NAS)
+		if err != nil {
+			return nil, getNotificationWebhookOutput{}, err
+		}
+		return nil, getNotificationWebhookOutput{NAS: result.NAS, Webhook: result.Webhook}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_notification_sms",
+		Title:       "Get SMS notification settings",
+		Description: "Read the DSM SMS notification channel: whether it is enabled, the selected provider, recipient phone numbers, and the provider catalog. Provider credentials and send-URL templates are never returned. This tool never changes notification settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getNotificationInput) (*mcp.CallToolResult, getNotificationSMSOutput, error) {
+		result, err := service.GetNotificationSMS(ctx, input.NAS)
+		if err != nil {
+			return nil, getNotificationSMSOutput{}, err
+		}
+		return nil, getNotificationSMSOutput{NAS: result.NAS, SMS: result.SMS}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_notification_rules",
+		Title:       "Get notification event rule catalog",
+		Description: "Read the DSM notification event catalog per profile: every event key with its group, severity, title, source application, and warning threshold. Useful to check which events DSM can notify about. This tool never changes notification rules.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getNotificationInput) (*mcp.CallToolResult, getNotificationRulesOutput, error) {
+		result, err := service.GetNotificationRules(ctx, input.NAS)
+		if err != nil {
+			return nil, getNotificationRulesOutput{}, err
+		}
+		return nil, getNotificationRulesOutput{NAS: result.NAS, Rules: result.Rules}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_notification_desktop",
+		Title:       "Get desktop notification settings",
+		Description: "Read the per-category DSM desktop notification toggles of the signed-in user (which categories show desktop notifications in DSM). This tool never changes notification settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getNotificationInput) (*mcp.CallToolResult, getNotificationDesktopOutput, error) {
+		result, err := service.GetNotificationDesktop(ctx, input.NAS)
+		if err != nil {
+			return nil, getNotificationDesktopOutput{}, err
+		}
+		return nil, getNotificationDesktopOutput{NAS: result.NAS, Desktop: result.Desktop}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_notification_history",
+		Title:       "Get notification history",
+		Description: "Read delivered DSM notifications (the desktop bell feed), newest first, with optional severity, time-range, and paging filters applied by DSM. Each entry carries the raw event key plus a rendered human-readable title and message, so recent storage, package, security, and system problems are directly visible. This tool never deletes or marks notifications.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getNotificationHistoryInput) (*mcp.CallToolResult, getNotificationHistoryOutput, error) {
+		fromTime, err := syslog.ParseTime(input.From)
+		if err != nil {
+			return nil, getNotificationHistoryOutput{}, err
+		}
+		toTime, err := syslog.ParseTime(input.To)
+		if err != nil {
+			return nil, getNotificationHistoryOutput{}, err
+		}
+		result, err := service.GetNotificationHistory(ctx, input.NAS, notification.HistoryQuery{
+			Limit: input.Limit, Offset: input.Offset, Level: input.Level,
+			From: fromTime, To: toTime, Lang: input.Lang,
+		})
+		if err != nil {
+			return nil, getNotificationHistoryOutput{}, err
+		}
+		return nil, getNotificationHistoryOutput{NAS: result.NAS, History: result.History}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_resource_monitor_capabilities",
 		Title:       "Get Resource Monitor capabilities",
 		Description: "Report whether current utilization and recorded history can be read and whether history recording can be toggled, plus the DSM backend selected for each operation.",
@@ -3061,6 +3526,97 @@ func New(service *application.Service, version string) *mcp.Server {
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_terminal_snmp_capabilities",
+		Title:       "Get Terminal and SNMP capabilities",
+		Description: "Report whether the Terminal (SSH/Telnet) and SNMP reads are supported on the selected NAS and the DSM backend for each. Terminal and SNMP are independent: one may be unsupported without disabling the other. This slice is read-only; guarded Terminal/SNMP writes are deferred.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getTerminalSNMPInput) (*mcp.CallToolResult, getTerminalSNMPCapabilitiesOutput, error) {
+		result, err := service.GetTerminalSNMPCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getTerminalSNMPCapabilitiesOutput{}, err
+		}
+		return nil, getTerminalSNMPCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_terminal_state",
+		Title:       "Get Terminal (SSH/Telnet) state",
+		Description: "Read the Control Panel > Terminal & SNMP > Terminal tab: whether SSH and Telnet are enabled, on which TCP port SSH listens, and whether local console access is forbidden. Telnet is unauthenticated cleartext and deprecated. This tool never changes the NAS.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getTerminalSNMPInput) (*mcp.CallToolResult, getTerminalStateOutput, error) {
+		result, err := service.GetTerminalState(ctx, input.NAS)
+		if err != nil {
+			return nil, getTerminalStateOutput{}, err
+		}
+		return nil, getTerminalStateOutput{NAS: result.NAS, Terminal: result.Terminal}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_snmp_state",
+		Title:       "Get SNMP state",
+		Description: "Read the Control Panel > Terminal & SNMP > SNMP tab: whether the SNMP service is enabled, which protocol versions (v1/v2c, v3) are on, the device location and contact, the SNMPv3 username, and whether a read community and a trap target are configured. Returns non-secret configuration only — the community string, the SNMPv3 auth/privacy passwords, and any trap community are never read or returned. This tool never changes the NAS.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getTerminalSNMPInput) (*mcp.CallToolResult, getSNMPStateOutput, error) {
+		result, err := service.GetSNMPState(ctx, input.NAS)
+		if err != nil {
+			return nil, getSNMPStateOutput{}, err
+		}
+		return nil, getSNMPStateOutput{NAS: result.NAS, SNMP: result.SNMP}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_terminal_change",
+		Title:       "Plan a Terminal (SSH/Telnet/console) change",
+		Description: "Validate a patch-only Terminal change (ssh_enabled, ssh_port, telnet_enabled, console_forbidden) and return an approval plan bound to the complete observed Terminal state. Enabling SSH or Telnet, or disabling SSH, changes the remote-shell attack surface and is classified high risk; an SSH-port change warns to verify the matching firewall/port forward separately. dsmctl drives DSM over the WebAPI session (not SSH), so its own access survives. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planTerminalChangeInput) (*mcp.CallToolResult, planTerminalChangeOutput, error) {
+		plan, err := service.PlanTerminalChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planTerminalChangeOutput{}, err
+		}
+		return nil, planTerminalChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_terminal_plan",
+		Title:       "Apply an approved Terminal plan",
+		Description: "Apply an unmodified Terminal plan only while its approval hash and the complete observed state still match, then re-read to verify every requested field took effect. The write is patch-only: unspecified switches are preserved by merging into a freshly read state.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyTerminalPlanInput) (*mcp.CallToolResult, terminalSNMPApplyOutput, error) {
+		result, err := service.ApplyTerminalPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, terminalSNMPApplyOutput{}, err
+		}
+		return nil, terminalSNMPApplyOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_snmp_change",
+		Title:       "Plan an SNMP change",
+		Description: "Validate a patch-only SNMP change (enabled, v1_v2c_enabled, v3_enabled, location, contact, and the read community via community_credential_ref) and return an approval plan bound to the complete observed SNMP state. The read community is a SECRET supplied as community_credential_ref (env:NAME): only the reference name enters the plan and approval hash, never the community value. Every SNMP change is medium risk. Enabling SNMPv3 is not supported (its DSM credential write wire is unverified); only disabling v3 is available. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planSNMPChangeInput) (*mcp.CallToolResult, planSNMPChangeOutput, error) {
+		plan, err := service.PlanSNMPChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planSNMPChangeOutput{}, err
+		}
+		return nil, planSNMPChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_snmp_plan",
+		Title:       "Apply an approved SNMP plan",
+		Description: "Apply an unmodified SNMP plan only while its approval hash and the complete observed state still match, then re-read to verify. When the plan sets the read community, the secret is resolved from its env:NAME reference only now and rides solely the SNMP set request body — never the plan, hash, result, or logs. The write is patch-only: unspecified fields are preserved by merging into a freshly read state.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applySNMPPlanInput) (*mcp.CallToolResult, terminalSNMPApplyOutput, error) {
+		result, err := service.ApplySNMPPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, terminalSNMPApplyOutput{}, err
+		}
+		return nil, terminalSNMPApplyOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "plan_certificate_change",
 		Title:       "Plan a certificate change",
 		Description: "Validate a high-risk certificate change (import a bring-your-own bundle, set the default certificate, bind a service, or delete a certificate), read the current certificate store, and return a hash-bound approval plan. The private key is supplied by a credential reference (env:NAME) and resolved to bytes only at apply time; it never enters the plan, the hash, the result, or any log. Import parses the leaf locally and rejects an expired leaf, a broken chain, or (for a DSM-service binding) a leaf that does not cover the connection host. This tool never mutates DSM.",
@@ -3097,6 +3653,448 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, exportCertificateOutput{}, err
 		}
 		return nil, exportCertificateOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_security_advisor_capabilities",
+		Title:       "Get Security Advisor capabilities",
+		Description: "Report which Security Advisor operations dsmctl supports on the selected NAS and the backend for each. Each SYNO.Core.SecurityScan.* API is an independent boundary, so the status/findings read, the schedule/baseline read, the guarded schedule/baseline write, and the run-scan action are reported separately and a NAS without Security Advisor reports them unsupported without erroring.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getSecurityAdvisorInput) (*mcp.CallToolResult, getSecurityAdvisorCapabilitiesOutput, error) {
+		result, err := service.GetSecurityAdvisorCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getSecurityAdvisorCapabilitiesOutput{}, err
+		}
+		return nil, getSecurityAdvisorCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_security_advisor_status",
+		Title:       "Get Security Advisor scan status and findings",
+		Description: "Read the Security Advisor last-scan status and findings (Control Panel > Security > Security Advisor): whether a scan is running, overall progress and severity, the last scan time, and per-category results with a per-severity breakdown (danger, risk, warning, out-of-date, info) and pass/fail counts. Severity is normalized to a stable enum and an unrecognized value errors rather than being coerced. Descriptive audit output only — no session identity or credential is ever returned. This tool never triggers a scan and never changes the NAS.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getSecurityAdvisorInput) (*mcp.CallToolResult, getSecurityAdvisorStatusOutput, error) {
+		result, err := service.GetSecurityAdvisorStatus(ctx, input.NAS)
+		if err != nil {
+			return nil, getSecurityAdvisorStatusOutput{}, err
+		}
+		return nil, getSecurityAdvisorStatusOutput{NAS: result.NAS, Status: result.Status}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_security_advisor_schedule",
+		Title:       "Get Security Advisor schedule and baseline",
+		Description: "Read the Security Advisor scan schedule and the active security baseline (for example home or company): whether a scheduled scan is enabled, its time and weekday, and the baseline group. This tool never changes the NAS; changing the schedule or baseline goes through plan_security_advisor_schedule_change and apply_security_advisor_schedule_plan.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getSecurityAdvisorInput) (*mcp.CallToolResult, getSecurityAdvisorScheduleOutput, error) {
+		result, err := service.GetSecurityAdvisorSchedule(ctx, input.NAS)
+		if err != nil {
+			return nil, getSecurityAdvisorScheduleOutput{}, err
+		}
+		return nil, getSecurityAdvisorScheduleOutput{NAS: result.NAS, Configuration: result.Configuration}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_security_advisor_schedule_change",
+		Title:       "Plan a Security Advisor schedule and baseline change",
+		Description: "Validate a patch-only scan schedule and security-baseline change (enable/disable the scheduled scan, its weekday and time, and switch the baseline between home and company) and return an approval plan bound to the complete observed configuration. Loosening the audit — switching from the business (company) baseline to the home baseline, or disabling the scheduled scan — is classified high risk and named in the plan summary. The custom checklist baseline is not managed here. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planSecurityAdvisorScheduleChangeInput) (*mcp.CallToolResult, planSecurityAdvisorScheduleChangeOutput, error) {
+		plan, err := service.PlanSecurityAdvisorScheduleChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planSecurityAdvisorScheduleChangeOutput{}, err
+		}
+		return nil, planSecurityAdvisorScheduleChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_security_advisor_schedule_plan",
+		Title:       "Apply an approved Security Advisor schedule plan",
+		Description: "Apply an unmodified Security Advisor schedule + baseline plan only while its approval hash and the complete observed configuration still match, then re-read to verify every requested field took effect. The write is patch-only: unspecified fields are preserved. DSM rejects the change while a scan is running.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applySecurityAdvisorSchedulePlanInput) (*mcp.CallToolResult, applySecurityAdvisorSchedulePlanOutput, error) {
+		result, err := service.ApplySecurityAdvisorSchedulePlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applySecurityAdvisorSchedulePlanOutput{}, err
+		}
+		return nil, applySecurityAdvisorSchedulePlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "run_security_scan",
+		Title:       "Run a Security Advisor scan now",
+		Description: "Trigger a full Security Advisor scan on demand (Control Panel > Security > Security Advisor). A scan is CPU/IO-heavy on the NAS and changes no configuration; track its progress with get_security_advisor_status. This action is never invoked implicitly by a read and is classified low risk because it changes no security posture.",
+		Annotations: actionAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getSecurityAdvisorInput) (*mcp.CallToolResult, runSecurityScanOutput, error) {
+		result, err := service.RunSecurityScan(ctx, input.NAS)
+		if err != nil {
+			return nil, runSecurityScanOutput{}, err
+		}
+		return nil, runSecurityScanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_account_protection_capabilities",
+		Title:       "Get account-protection capabilities",
+		Description: "Report which Control Panel > Security > Account reads dsmctl supports on the selected NAS (Auto Block settings, the Auto Block allow/block IP lists, Account Protection thresholds, and the enforced-2FA policy) and the backend for each. Each area is an independent boundary: one being absent leaves the others usable. Also reports whether the DoS-protection API is advertised (its read is a deferred follow-on). This slice is read-only; guarded writes are deferred.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input accountProtectionInput) (*mcp.CallToolResult, getAccountProtectionCapabilitiesOutput, error) {
+		result, err := service.GetAccountProtectionCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getAccountProtectionCapabilitiesOutput{}, err
+		}
+		return nil, getAccountProtectionCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_account_protection_autoblock",
+		Title:       "Get Auto Block settings",
+		Description: "Read the DSM Auto Block configuration (Control Panel > Security > Account > Auto Block): whether it is enabled, how many failed sign-in attempts within how many minutes trigger a block, and whether/after how many days a block expires. This tool never changes settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input accountProtectionInput) (*mcp.CallToolResult, getAutoBlockSettingsOutput, error) {
+		result, err := service.GetAutoBlockSettings(ctx, input.NAS)
+		if err != nil {
+			return nil, getAutoBlockSettingsOutput{}, err
+		}
+		return nil, getAutoBlockSettingsOutput{NAS: result.NAS, Settings: result.Settings}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_account_protection_autoblock_list",
+		Title:       "Get Auto Block allow/block lists",
+		Description: "Read the DSM Auto Block allow and block IP lists (the addresses always permitted and always blocked). Returns each list's entries (IP or subnet, recorded time, and DSM-reported reason) and totals. This tool never changes the lists.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input accountProtectionInput) (*mcp.CallToolResult, getAutoBlockListsOutput, error) {
+		result, err := service.GetAutoBlockLists(ctx, input.NAS)
+		if err != nil {
+			return nil, getAutoBlockListsOutput{}, err
+		}
+		return nil, getAutoBlockListsOutput{NAS: result.NAS, Lists: result.Lists}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_account_protection",
+		Title:       "Get Account Protection thresholds",
+		Description: "Read the DSM Account Protection policy (protect accounts by blocking untrusted clients after repeated failed sign-ins): whether it is enabled and the attempt/window/block-duration thresholds for untrusted and trusted clients. This tool never changes settings and never reads any user's OTP secret.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input accountProtectionInput) (*mcp.CallToolResult, getAccountProtectionOutput, error) {
+		result, err := service.GetAccountProtection(ctx, input.NAS)
+		if err != nil {
+			return nil, getAccountProtectionOutput{}, err
+		}
+		return nil, getAccountProtectionOutput{NAS: result.NAS, Protection: result.Protection}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_account_protection_enforce_2fa",
+		Title:       "Get enforced-2FA policy",
+		Description: "Read the domain-wide enforced-2FA/MFA policy scope (Control Panel > Security > Account). Surfaces the enforcement scope only; it never reads any user's OTP secret, seed, or recovery codes. This tool never changes the policy.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input accountProtectionInput) (*mcp.CallToolResult, getEnforceTwoFactorOutput, error) {
+		result, err := service.GetEnforceTwoFactor(ctx, input.NAS)
+		if err != nil {
+			return nil, getEnforceTwoFactorOutput{}, err
+		}
+		return nil, getEnforceTwoFactorOutput{NAS: result.NAS, Policy: result.Policy}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_account_protection_autoblock_change",
+		Title:       "Plan an Auto Block settings change",
+		Description: "Validate a patch-only Auto Block settings change (enabled, attempts, within_minutes, expire_enabled, expire_days) and return an approval plan bound to the complete observed settings. Disabling Auto Block, raising the attempt threshold, or lengthening the detection window weakens blocking and is classified high risk; DSM binds the thresholds only when Auto Block is enabled, which the postcondition re-read enforces. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planAutoBlockChangeInput) (*mcp.CallToolResult, planAutoBlockChangeOutput, error) {
+		plan, err := service.PlanAutoBlockChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planAutoBlockChangeOutput{}, err
+		}
+		return nil, planAutoBlockChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_account_protection_autoblock_plan",
+		Title:       "Apply an approved Auto Block settings plan",
+		Description: "Apply an unmodified Auto Block settings plan only while its approval hash and the complete observed settings still match, then re-read to verify every requested field took effect. The write is patch-only: unspecified fields are preserved by merging into a freshly read state.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyAutoBlockPlanInput) (*mcp.CallToolResult, accountProtectionApplyOutput, error) {
+		result, err := service.ApplyAutoBlockPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, accountProtectionApplyOutput{}, err
+		}
+		return nil, accountProtectionApplyOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_account_protection_list_change",
+		Title:       "Plan an Auto Block allow/block list edit",
+		Description: "Validate a patch-only add or remove of exactly one Auto Block allow/block list entry (keyed by ip + kind) and return an approval plan bound to the complete observed lists and the currently active connections. The edit never sends a whole-list payload, so sibling entries are untouched. Blocking an active source or a broad subnet, and removing an active source from the allow list, are self-lockout risks refused without allow_lockout_override; allow-listing a broad subnet is classified high risk. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planAutoBlockListChangeInput) (*mcp.CallToolResult, planAutoBlockListChangeOutput, error) {
+		plan, err := service.PlanAutoBlockListChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planAutoBlockListChangeOutput{}, err
+		}
+		return nil, planAutoBlockListChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_account_protection_list_plan",
+		Title:       "Apply an approved Auto Block list edit plan",
+		Description: "Apply an unmodified Auto Block allow/block list edit plan only while its approval hash and the complete observed state (lists plus active connections) still match, then re-read to verify the single entry was added or removed. Exactly one entry is touched; sibling entries are never reset.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyAutoBlockListPlanInput) (*mcp.CallToolResult, accountProtectionApplyOutput, error) {
+		result, err := service.ApplyAutoBlockListPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, accountProtectionApplyOutput{}, err
+		}
+		return nil, accountProtectionApplyOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_account_protection_thresholds_change",
+		Title:       "Plan an Account Protection thresholds change",
+		Description: "Validate a patch-only Account Protection (SmartBlock) thresholds change (enabled plus the untrusted/trusted attempt, window, and block-duration thresholds) and return an approval plan bound to the complete observed thresholds. Disabling Account Protection, raising an attempt threshold, or lengthening a detection window weakens blocking and is classified high risk. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planAccountProtectionThresholdsChangeInput) (*mcp.CallToolResult, planAccountProtectionThresholdsChangeOutput, error) {
+		plan, err := service.PlanAccountProtectionThresholdsChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planAccountProtectionThresholdsChangeOutput{}, err
+		}
+		return nil, planAccountProtectionThresholdsChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_account_protection_thresholds_plan",
+		Title:       "Apply an approved Account Protection thresholds plan",
+		Description: "Apply an unmodified Account Protection thresholds plan only while its approval hash and the complete observed thresholds still match, then re-read to verify every requested field took effect. The write is patch-only: unspecified fields are preserved by merging into a freshly read state.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyAccountProtectionThresholdsPlanInput) (*mcp.CallToolResult, accountProtectionApplyOutput, error) {
+		result, err := service.ApplyAccountProtectionThresholdsPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, accountProtectionApplyOutput{}, err
+		}
+		return nil, accountProtectionApplyOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_account_protection_enforce_2fa_change",
+		Title:       "Plan an enforced-2FA policy change",
+		Description: "Validate a change to the domain-wide enforced-2FA policy scope (otp_enforce_option) and return an approval plan bound to the observed policy. Every enforced-2FA change is high risk: enabling enforcement can lock out an administrator who has not enrolled 2FA and is refused without allow_lockout_override, and disabling it weakens the posture. This sets policy only; it never enrolls a user or reads any OTP secret. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planEnforceTwoFactorChangeInput) (*mcp.CallToolResult, planEnforceTwoFactorChangeOutput, error) {
+		plan, err := service.PlanEnforceTwoFactorChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planEnforceTwoFactorChangeOutput{}, err
+		}
+		return nil, planEnforceTwoFactorChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_account_protection_enforce_2fa_plan",
+		Title:       "Apply an approved enforced-2FA policy plan",
+		Description: "Apply an unmodified enforced-2FA policy plan only while its approval hash and the observed policy still match, then re-read to verify the scope took effect. This sets the enforcement policy only; it never enrolls a user or touches any OTP secret.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyEnforceTwoFactorPlanInput) (*mcp.CallToolResult, accountProtectionApplyOutput, error) {
+		result, err := service.ApplyEnforceTwoFactorPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, accountProtectionApplyOutput{}, err
+		}
+		return nil, accountProtectionApplyOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_firewall_capabilities",
+		Title:       "Get firewall capabilities",
+		Description: "Report which Control Panel > Security > Firewall reads dsmctl supports on the selected NAS (the global enable flag and active profile, the profile list, the network adapters, and each profile's per-adapter policy and ordered rules) and the backend for each. Each area is an independent boundary: one being absent leaves the others usable. Note: the per-rule field decoding is wire-unverified because the DSM-shipped profiles carry no rules by default. This slice is read-only; guarded writes are a deferred follow-on.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input firewallInput) (*mcp.CallToolResult, getFirewallCapabilitiesOutput, error) {
+		result, err := service.GetFirewallCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getFirewallCapabilitiesOutput{}, err
+		}
+		return nil, getFirewallCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_firewall_status",
+		Title:       "Get firewall status",
+		Description: "Read the global DSM firewall state (Control Panel > Security > Firewall): whether the firewall is enabled, which firewall profile is currently active, and the network adapters (interfaces) the firewall knows about. This tool never changes settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input firewallInput) (*mcp.CallToolResult, getFirewallStatusOutput, error) {
+		result, err := service.GetFirewallStatus(ctx, input.NAS)
+		if err != nil {
+			return nil, getFirewallStatusOutput{}, err
+		}
+		return nil, getFirewallStatusOutput{NAS: result.NAS, Status: result.Status}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_firewall_profiles",
+		Title:       "Get firewall profiles",
+		Description: "Read the DSM firewall profile list (each profile is a named rule group), marking which profile is currently active. This tool never changes settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input firewallInput) (*mcp.CallToolResult, getFirewallProfilesOutput, error) {
+		result, err := service.GetFirewallProfiles(ctx, input.NAS)
+		if err != nil {
+			return nil, getFirewallProfilesOutput{}, err
+		}
+		return nil, getFirewallProfilesOutput{NAS: result.NAS, Profiles: result.Profiles}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_firewall_rules",
+		Title:       "Get firewall rules",
+		Description: "Read the DSM firewall rule view: for each profile (or the one named by the profile argument), the per-adapter default (no-match) policy and the ordered rule list in DSM first-match evaluation order. Per-rule fields (action, protocol, source, ports) are wire-unverified because the DSM-shipped profiles carry no rules by default. This tool never changes settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input firewallRulesInput) (*mcp.CallToolResult, getFirewallRulesOutput, error) {
+		result, err := service.GetFirewallRules(ctx, input.NAS, input.Profile)
+		if err != nil {
+			return nil, getFirewallRulesOutput{}, err
+		}
+		return nil, getFirewallRulesOutput{NAS: result.NAS, RuleSet: result.RuleSet}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_login_portal_capabilities",
+		Title:       "Get Login Portal capabilities",
+		Description: "Report which Control Panel > Login Portal reads dsmctl supports on the selected NAS (the DSM web-service access settings, the customized external hostname, the per-application portal list, and the reverse-proxy rule list) and the backend for each. Each area is an independent boundary: one being absent leaves the others usable. This slice is read-only; guarded writes are deferred.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input loginPortalInput) (*mcp.CallToolResult, getLoginPortalCapabilitiesOutput, error) {
+		result, err := service.GetLoginPortalCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getLoginPortalCapabilitiesOutput{}, err
+		}
+		return nil, getLoginPortalCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_login_portal_dsm",
+		Title:       "Get DSM web-service access settings",
+		Description: "Read the Control Panel > Login Portal > DSM tab settings: DSM HTTP/HTTPS ports, whether HTTPS is enabled, whether HTTP is force-redirected to HTTPS, whether HSTS and HTTP/2 are enabled, and the customized domain / external hostname. These settings decide how DSM itself is reached. This tool never changes settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input loginPortalInput) (*mcp.CallToolResult, getDSMWebServiceOutput, error) {
+		result, err := service.GetDSMWebService(ctx, input.NAS)
+		if err != nil {
+			return nil, getDSMWebServiceOutput{}, err
+		}
+		return nil, getDSMWebServiceOutput{NAS: result.NAS, Settings: result.Settings}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_login_portal_applications",
+		Title:       "Get application portals",
+		Description: "Read the Control Panel > Login Portal > Applications tab: the per-application portal list, each with its application id, title, whether its portal force-redirects HTTP to HTTPS, and (when a custom portal is configured) its alias and portal ports. This tool never changes settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input loginPortalInput) (*mcp.CallToolResult, getApplicationPortalsOutput, error) {
+		result, err := service.GetApplicationPortals(ctx, input.NAS)
+		if err != nil {
+			return nil, getApplicationPortalsOutput{}, err
+		}
+		return nil, getApplicationPortalsOutput{NAS: result.NAS, Portals: result.Portals}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_login_portal_reverse_proxy",
+		Title:       "Get reverse-proxy rules",
+		Description: "Read the Control Panel > Login Portal > Advanced tab: the reverse-proxy rule list. Each rule reports its id, description, frontend (source protocol/host/port) and backend (destination protocol/host/port), whether HSTS/HTTP2 are enabled, whether a certificate is referenced (presence only, never key material), and how many custom headers are configured (count only, never header values). This tool never changes settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input loginPortalInput) (*mcp.CallToolResult, getReverseProxyRulesOutput, error) {
+		result, err := service.GetReverseProxyRules(ctx, input.NAS)
+		if err != nil {
+			return nil, getReverseProxyRulesOutput{}, err
+		}
+		return nil, getReverseProxyRulesOutput{NAS: result.NAS, Rules: result.Rules}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_login_portal_dsm_change",
+		Title:       "Plan a DSM web-service change",
+		Description: "Validate a patch-only DSM web-service change (http_port, https_port, https_enabled, http_redirect_enabled, hsts_enabled, http2_enabled, custom_domain_enabled, custom_domain, external_hostname) and return an approval plan bound to the complete observed settings and the transport dsmctl is connected on. Every DSM web-service change is high risk because it changes how DSM itself is reached. The never-break-the-current-session guard refuses, without allow_connectivity_break, any change that would sever the current transport (moving/disabling the current HTTPS port or scheme, forcing a redirect that bounces the current HTTP session, or enabling HSTS which browsers cache). This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planDSMWebServiceChangeInput) (*mcp.CallToolResult, planDSMWebServiceChangeOutput, error) {
+		plan, err := service.PlanDSMWebServiceChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planDSMWebServiceChangeOutput{}, err
+		}
+		return nil, planDSMWebServiceChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_login_portal_dsm_plan",
+		Title:       "Apply an approved DSM web-service plan",
+		Description: "Apply an unmodified DSM web-service plan only while its approval hash and the complete observed state (settings plus the current transport) still match, then re-read to verify every requested field took effect. The write is patch-only: unspecified fields are preserved by merging into a freshly read state. A change that would sever the transport dsmctl is connected on is refused unless the plan carried allow_connectivity_break, in which case the postcondition re-read fails loudly if DSM becomes unreachable.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyDSMWebServicePlanInput) (*mcp.CallToolResult, loginPortalApplyOutput, error) {
+		result, err := service.ApplyDSMWebServicePlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, loginPortalApplyOutput{}, err
+		}
+		return nil, loginPortalApplyOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_login_portal_application_change",
+		Title:       "Plan an application-portal change",
+		Description: "Validate a patch-only application-portal change (redirect_https, alias, http_port, https_port) keyed by app_id and return an approval plan bound to the observed portal. Classified medium risk: an alias or custom port changes how (and whether) the application is reached. The write is patch-only; sibling fields are preserved. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planApplicationPortalChangeInput) (*mcp.CallToolResult, planApplicationPortalChangeOutput, error) {
+		plan, err := service.PlanApplicationPortalChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planApplicationPortalChangeOutput{}, err
+		}
+		return nil, planApplicationPortalChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_login_portal_application_plan",
+		Title:       "Apply an approved application-portal plan",
+		Description: "Apply an unmodified application-portal plan only while its approval hash and the observed portal still match, then re-read to verify every requested field took effect. The write is patch-only: sibling fields are preserved by merging into a freshly read portal.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyApplicationPortalPlanInput) (*mcp.CallToolResult, loginPortalApplyOutput, error) {
+		result, err := service.ApplyApplicationPortalPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, loginPortalApplyOutput{}, err
+		}
+		return nil, loginPortalApplyOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_login_portal_reverse_proxy_create",
+		Title:       "Plan a reverse-proxy rule creation",
+		Description: "Validate a reverse-proxy rule to create (description, frontend, backend, and optional custom headers) and return an approval plan bound to the COMPLETE observed rule set, so a concurrent edit invalidates a stale plan. A secret header value must use credential_ref (env:NAME or vault:<id>); it is resolved only at apply time and never stored in the plan or hash. Classified medium risk: a new rule can publish an internal service to callers that reach the frontend. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planReverseProxyCreateInput) (*mcp.CallToolResult, planReverseProxyOutput, error) {
+		plan, err := service.PlanReverseProxyCreate(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planReverseProxyOutput{}, err
+		}
+		return nil, planReverseProxyOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_login_portal_reverse_proxy_delete",
+		Title:       "Plan a reverse-proxy rule deletion",
+		Description: "Validate a reverse-proxy rule to delete (keyed by uuid) and return an approval plan bound to the COMPLETE observed rule set, so a concurrent create/delete/reorder by another session invalidates a stale plan. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planReverseProxyDeleteInput) (*mcp.CallToolResult, planReverseProxyOutput, error) {
+		plan, err := service.PlanReverseProxyDelete(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planReverseProxyOutput{}, err
+		}
+		return nil, planReverseProxyOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_login_portal_reverse_proxy_plan",
+		Title:       "Apply an approved reverse-proxy plan",
+		Description: "Apply an unmodified reverse-proxy create or delete plan only while its approval hash and the COMPLETE observed rule set still match, then re-read to verify the rule was created (a rule now listens on the frontend) or deleted (the uuid is gone). Secret header values are resolved from their credential_ref only now, at apply time.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyReverseProxyPlanInput) (*mcp.CallToolResult, loginPortalApplyOutput, error) {
+		result, err := service.ApplyReverseProxyPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, loginPortalApplyOutput{}, err
+		}
+		return nil, loginPortalApplyOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -3500,6 +4498,19 @@ func mutationAnnotations() *mcp.ToolAnnotations {
 	return &mcp.ToolAnnotations{
 		ReadOnlyHint:    false,
 		DestructiveHint: boolPointer(true),
+		IdempotentHint:  false,
+		OpenWorldHint:   boolPointer(true),
+	}
+}
+
+// actionAnnotations marks a load-heavy action that changes no persisted
+// configuration (so it is not destructive) but is not a read and is not
+// idempotent: running it again starts another scan. It is still stripped from
+// the read-only gateway.
+func actionAnnotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint:    false,
+		DestructiveHint: boolPointer(false),
 		IdempotentHint:  false,
 		OpenWorldHint:   boolPointer(true),
 	}

@@ -21,6 +21,8 @@ func newControlPanelCommand(opts *options) *cobra.Command {
 	command.AddCommand(
 		newControlPanelTimeCommand(opts),
 		newFileServicesCommand(opts),
+		newControlPanelTerminalSNMPCommand(opts),
+		newControlPanelLoginPortalCommand(opts),
 	)
 	return command
 }

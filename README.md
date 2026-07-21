@@ -124,6 +124,10 @@ dsmctl log list --nas office
 dsmctl log list --nas office --type connection --limit 50
 dsmctl log list --nas office --from "2026-07-01" --to "2026-07-08"
 dsmctl log list --nas office --keyword cache --level error --json
+dsmctl notification capabilities --nas office
+dsmctl notification mail --nas office --json
+dsmctl notification history --nas office --level error --limit 20
+dsmctl notification history --nas office --from "2026-07-01" --json
 dsmctl package capabilities --nas office
 dsmctl package inventory --nas office --json
 dsmctl package settings --nas office --json
@@ -228,7 +232,7 @@ Example configuration (no secret values):
 }
 ```
 
-`password_env` remains available as a non-interactive password fallback for automation; it is consulted only when no web-login session is stored for the profile:
+`password_env` remains a non-interactive password fallback for automation. The runtime resolves the account password keyring-first (including one stored by `dsmctl provision`) and then from `password_env`, consulting either only when no resumable web-login session exists for the profile:
 
 ```powershell
 $env:DSMCTL_PASSWORD_OFFICE = "your-password"
@@ -343,7 +347,7 @@ go test ./integration -run TestMCPGetSystemInfoLive -v
 - Login parameters use an HTTPS POST form, not URL query parameters.
 - OTP values are short-lived and never persisted.
 - Web-login sessions (SID, SynoToken, and renewal keys) use Windows Credential Manager, macOS Keychain, or Linux Secret Service; dsmctl adds no encryption layer of its own because the OS store already provides at-rest encryption, and on hosts without a store (headless Linux) it fails closed instead of writing secrets to disk.
-- Passwords are never stored by dsmctl: web login keeps them in the browser, and the optional automation fallback reads an environment variable at login time.
+- dsmctl never requires storing a password: web login keeps it in the browser. `dsmctl provision` optionally stores a generated administrator password in the OS credential store, and the runtime then resolves the account password keyring-first (falling back to the password environment variable), so a provisioned NAS re-authenticates for every command without a browser. A stored password is retrievable only by a human at a terminal via `dsmctl auth reveal-password` (an interactive-terminal check plus a typed confirmation) and is never returned by any MCP tool.
 - Web login sends no password, OTP, session, or one-time login code until the
   NAS passes system-CA verification or the user confirms the freshly observed
   leaf-certificate fingerprint after reviewing its warnings. A pin

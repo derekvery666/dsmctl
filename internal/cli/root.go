@@ -35,6 +35,7 @@ func New(version string) *cobra.Command {
 	root.AddCommand(
 		newAccessCommand(opts),
 		newAccountCommand(opts),
+		newAccountProtectionCommand(opts),
 		newAuthCommand(opts),
 		newControlPanelCommand(opts),
 		newDiscoverCommand(opts),
@@ -44,8 +45,10 @@ func New(version string) *cobra.Command {
 		newExternalAccessCommand(opts),
 		newFileCommand(opts),
 		newInstallCommand(opts),
+		newFirewallCommand(opts),
 		newLogCommand(opts),
 		newNASCommand(opts),
+		newNotificationCommand(opts),
 		newOfficeCommand(opts),
 		newPackageCommand(opts),
 		newPhotoCommand(opts),
@@ -56,6 +59,7 @@ func New(version string) *cobra.Command {
 		newStorageCommand(opts),
 		newSurveillanceCommand(opts),
 		newSystemCommand(opts),
+		newSecurityAdvisorCommand(opts),
 	)
 	return root
 }
