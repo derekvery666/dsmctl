@@ -10,3 +10,6 @@ coverage.out
 /deploy/container/secrets/*
 !/deploy/container/secrets/README.md
 !/deploy/container/secrets/*.example
+
+# Local lab / scratch NAS config (contains internal lab addresses; never commit)
+repl-config.json
