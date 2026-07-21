@@ -102,6 +102,7 @@ type Client interface {
 	HyperBackupVersions(ctx context.Context, taskID, offset, limit int) (synology.HyperBackupVersions, error)
 	HyperBackupLogs(ctx context.Context, offset, limit int) (synology.HyperBackupLogs, error)
 	HyperBackupVault(ctx context.Context) (synology.HyperBackupVault, error)
+	HyperBackupApplications(ctx context.Context) (synology.HyperBackupApplications, error)
 	HyperBackupCapabilities(ctx context.Context) (synology.HyperBackupCapabilities, synology.CompatibilityReport, error)
 	ApplyHyperBackupTaskChange(ctx context.Context, change synology.HyperBackupTaskChange, secrets synology.HyperBackupTaskSecrets) (synology.HyperBackupTaskMutationResult, error)
 }

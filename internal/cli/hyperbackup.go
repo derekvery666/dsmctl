@@ -27,6 +27,7 @@ func newBackupCommand(opts *options) *cobra.Command {
 		newBackupVersionsCommand(opts),
 		newBackupLogsCommand(opts),
 		newBackupVaultCommand(opts),
+		newBackupApplicationsCommand(opts),
 	)
 	return command
 }
@@ -213,6 +214,33 @@ func newBackupVaultCommand(opts *options) *cobra.Command {
 	return command
 }
 
+func newBackupApplicationsCommand(opts *options) *cobra.Command {
+	var jsonOutput bool
+	command := &cobra.Command{
+		Use:     "applications",
+		Aliases: []string{"apps"},
+		Short:   "List the packages Hyper Backup can include in a backup task",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			service, err := loadService(opts)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.GetHyperBackupApplications(cmd.Context(), opts.nas)
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return encodeIndentedJSON(cmd.OutOrStdout(), result)
+			}
+			return writeBackupApplications(cmd, result)
+		},
+	}
+	command.Flags().BoolVar(&jsonOutput, "json", false, "output structured JSON")
+	return command
+}
+
 func newBackupTaskPlanCommand(opts *options) *cobra.Command {
 	var inputPath, outputPath string
 	command := &cobra.Command{
@@ -289,6 +317,7 @@ func writeBackupCapabilities(cmd *cobra.Command, result application.HyperBackupC
 	fmt.Fprintf(writer, "Vault read:\t%s\n", yesNo(c.VaultRead))
 	fmt.Fprintf(writer, "Task run/cancel (guarded):\t%s\n", yesNo(c.TaskRun))
 	fmt.Fprintf(writer, "Task create (guarded):\t%s\n", yesNo(c.TaskCreate))
+	fmt.Fprintf(writer, "Application read:\t%s\n", yesNo(c.AppRead))
 	fmt.Fprintln(writer, "\nOPERATIONS")
 	fmt.Fprintln(writer, "OPERATION\tSUPPORTED\tBACKEND\tAPI\tVERSION")
 	for _, operation := range result.Report.Operations {
@@ -386,6 +415,27 @@ func writeBackupLogs(cmd *cobra.Command, result application.HyperBackupLogsResul
 	for _, entry := range result.Logs.Entries {
 		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n",
 			valueOrDash(entry.Time), valueOrDash(entry.Level), valueOrDash(entry.User), valueOrDash(entry.Event))
+	}
+	return writer.Flush()
+}
+
+func writeBackupApplications(cmd *cobra.Command, result application.HyperBackupApplicationsResult) error {
+	writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+	fmt.Fprintf(writer, "NAS:\t%s\n", result.NAS)
+	fmt.Fprintln(writer, "\nAPPLICATIONS")
+	if len(result.Applications.Entries) == 0 {
+		fmt.Fprintln(writer, "(no applications)")
+		return writer.Flush()
+	}
+	fmt.Fprintln(writer, "ID\tNAME\tVERSION\tBACKUPABLE\tONLINE\tSUMMARY / REASON")
+	for _, application := range result.Applications.Entries {
+		note := application.Summary
+		if !application.Backupable {
+			note = application.Reason
+		}
+		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			valueOrDash(application.ID), valueOrDash(application.Name), valueOrDash(application.Version),
+			yesNo(application.Backupable), yesNo(application.OnlineBackup), valueOrDash(note))
 	}
 	return writer.Flush()
 }

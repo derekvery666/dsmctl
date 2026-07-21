@@ -492,6 +492,11 @@ type getHyperBackupLogsOutput struct {
 	Logs synology.HyperBackupLogs `json:"logs" jsonschema:"Hyper Backup log feed page"`
 }
 
+type getHyperBackupApplicationsOutput struct {
+	NAS          string                           `json:"nas" jsonschema:"NAS profile used for the request"`
+	Applications synology.HyperBackupApplications `json:"applications" jsonschema:"Packages Hyper Backup can include in a backup task, with per-application eligibility"`
+}
+
 type getHyperBackupVaultOutput struct {
 	NAS   string                    `json:"nas" jsonschema:"NAS profile used for the request"`
 	Vault synology.HyperBackupVault `json:"vault" jsonschema:"Hyper Backup Vault view of this NAS as a backup destination"`
@@ -2640,6 +2645,19 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getHyperBackupLogsOutput{}, err
 		}
 		return nil, getHyperBackupLogsOutput{NAS: result.NAS, Logs: result.Logs}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hyper_backup_applications",
+		Title:       "List Hyper Backup backupable applications",
+		Description: "List the packages Hyper Backup can include in a backup task, with per-application eligibility (backupable or the reason it is not) and the identifiers a create request's applications list accepts.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHyperBackupInput) (*mcp.CallToolResult, getHyperBackupApplicationsOutput, error) {
+		result, err := service.GetHyperBackupApplications(ctx, input.NAS)
+		if err != nil {
+			return nil, getHyperBackupApplicationsOutput{}, err
+		}
+		return nil, getHyperBackupApplicationsOutput{NAS: result.NAS, Applications: result.Applications}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

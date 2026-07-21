@@ -344,6 +344,7 @@ Available tools:
 - `get_hyper_backup_task`: read one task's repository, transfer options, live status/progress, and destination reachability; read-only.
 - `get_hyper_backup_versions`: list the backup versions one task has produced; read-only.
 - `get_hyper_backup_logs`: read the Hyper Backup log feed with per-level totals; read-only.
+- `get_hyper_backup_applications`: list the packages Hyper Backup can include in a backup task, with per-application eligibility; read-only.
 - `get_hyper_backup_vault`: read the Hyper Backup Vault view (inbound targets, parallel-session limit); requires HyperBackupVault; read-only.
 - `plan_hyper_backup_task_change`: validate a run-backup-now or cancel request and return a plan bound to the observed task state without mutating DSM.
 - `apply_hyper_backup_task_plan`: apply an approved, unchanged task plan and verify the postcondition (run started, or the running backup stopped).

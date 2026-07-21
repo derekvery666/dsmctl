@@ -402,6 +402,51 @@ func decodeLogs(data json.RawMessage) (hyperbackup.Logs, error) {
 	return logs, nil
 }
 
+// decodeApplications reads the App2.Backup list. Unusually for DSM, the data
+// element itself is the ARRAY of applications (live-verified on 4.2.2).
+func decodeApplications(data json.RawMessage) (hyperbackup.Applications, error) {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || trimmed[0] != '[' {
+		return hyperbackup.Applications{}, errors.New("decode Hyper Backup application list: expected an array")
+	}
+	var wire []struct {
+		ID           *string `json:"id"`
+		Name         *string `json:"name"`
+		Version      *string `json:"version"`
+		IsRunning    bool    `json:"is_running"`
+		OnlineBackup bool    `json:"online_backup"`
+		SummaryDisp  *string `json:"summary_disp"`
+		ErrorKey     *string `json:"error_key"`
+		Depend       *struct {
+			FolderList []string `json:"folder_list"`
+		} `json:"depend"`
+	}
+	if err := json.Unmarshal(trimmed, &wire); err != nil {
+		return hyperbackup.Applications{}, fmt.Errorf("decode Hyper Backup application list: %w", err)
+	}
+	applications := hyperbackup.Applications{Entries: make([]hyperbackup.Application, 0, len(wire))}
+	for _, entry := range wire {
+		if entry.ID == nil {
+			return hyperbackup.Applications{}, errors.New("decode Hyper Backup application list: required field \"id\" is missing")
+		}
+		application := hyperbackup.Application{
+			ID:           strings.TrimSpace(*entry.ID),
+			Name:         deref(entry.Name),
+			Version:      deref(entry.Version),
+			Running:      entry.IsRunning,
+			OnlineBackup: entry.OnlineBackup,
+			Summary:      deref(entry.SummaryDisp),
+			Reason:       deref(entry.ErrorKey),
+		}
+		application.Backupable = application.Reason == ""
+		if entry.Depend != nil {
+			application.RequiredFolders = entry.Depend.FolderList
+		}
+		applications.Entries = append(applications.Entries, application)
+	}
+	return applications, nil
+}
+
 func decodeCandidateDir(data json.RawMessage) (string, error) {
 	var resp struct {
 		CandidateDir *string `json:"candidate_dir"`

@@ -38,6 +38,10 @@ dsmctl backup tasks apply --nas office -f plan.json --approve <hash>
   id, start/completion time, integrity status, and rotation-lock flag.
 - **`logs`** reads `SYNO.SDS.Backup.Client.Common.Log` (`list`): the Hyper
   Backup event feed with per-level totals.
+- **`applications`** reads `SYNO.Backup.App2.Backup` v2 (`list`): the packages
+  Hyper Backup can include in a backup task, each with its identifier (what a
+  create request's `applications` list accepts), whether it is currently
+  backupable (or the reason it is not), and whether it is backed up online.
 - **`vault`** reads `SYNO.Backup.Service.VersionBackup.Config` (`get`) and
   `SYNO.Backup.Service.VersionBackup.Target` (`list`): the parallel inbound
   session limit and each inbound target stored on this NAS — id, share and
@@ -47,7 +51,8 @@ dsmctl backup tasks apply --nas office -f plan.json --approve <hash>
 
 MCP exposes the same reads through `get_hyper_backup_capabilities`,
 `get_hyper_backup_tasks`, `get_hyper_backup_task`, `get_hyper_backup_versions`,
-`get_hyper_backup_logs`, and `get_hyper_backup_vault`.
+`get_hyper_backup_logs`, `get_hyper_backup_applications`, and
+`get_hyper_backup_vault`.
 
 ## Guarded run/cancel/create
 
@@ -60,8 +65,9 @@ activity, and last result; for create the full set of existing task names —
 so an apply fails when anything changed in between. Both tools are stripped
 from the read-only remote gateway.
 
-A create backs up a list of shared-folder paths on the source NAS to exactly
-one destination:
+A create backs up shared-folder paths and/or applications (identifiers from
+the `applications` read; at least one source of either kind) on the source NAS
+to exactly one destination:
 
 - `local_share` — a shared folder on the source NAS itself (`image_local`);
 - `target_nas` — **another NAS known to dsmctl**: the profile's address,

@@ -27,6 +27,7 @@ const (
 	TaskAPIName        = "SYNO.Backup.Task"
 	TargetAPIName      = "SYNO.Backup.Target"
 	RepositoryAPIName  = "SYNO.Backup.Repository"
+	AppBackupAPIName   = "SYNO.Backup.App2.Backup"
 	VersionAPIName     = "SYNO.Backup.Version"
 	LogAPIName         = "SYNO.SDS.Backup.Client.Common.Log"
 	VaultConfigAPIName = "SYNO.Backup.Service.VersionBackup.Config"
@@ -39,6 +40,7 @@ const (
 	VaultReadCapabilityName   = "hyper_backup.vault.read"
 	TaskRunCapabilityName     = "hyper_backup.task.run"
 	TaskCreateCapabilityName  = "hyper_backup.task.create"
+	AppReadCapabilityName     = "hyper_backup.application.read"
 )
 
 // baselinePackage gates the client-side variants on Hyper Backup 4.x, the
@@ -303,6 +305,44 @@ var taskRunOperation = compatibility.Operation[hyperbackup.TaskChange, hyperback
 	},
 }
 
+// applicationsOperation lists the packages Hyper Backup can include in a
+// backup task (SYNO.Backup.App2.Backup v2 list, live-verified on 4.2.2). The
+// conservative support_app_share=false is sent so the answer never assumes a
+// destination capability; per-destination eligibility is re-checked by DSM at
+// create time.
+var applicationsOperation = compatibility.Operation[Input, hyperbackup.Applications]{
+	Name: AppReadCapabilityName,
+	Variants: []compatibility.Variant[Input, hyperbackup.Applications]{
+		{
+			Name: "hyperbackup-application-list-v2", API: AppBackupAPIName, Version: 2, Priority: 10,
+			Match: compatibility.All(compatibility.APIVersion(AppBackupAPIName, 2), baselinePackage),
+			Execute: func(ctx context.Context, executor compatibility.Executor, _ Input) (hyperbackup.Applications, error) {
+				data, err := executor.Execute(ctx, compatibility.Request{
+					API: AppBackupAPIName, Version: 2, Method: "list", ReadOnly: true,
+					JSONParameters: map[string]any{
+						"app_config":        []any{},
+						"support_app_share": false,
+						"detailed_app_info": true,
+					},
+				})
+				if err != nil {
+					return hyperbackup.Applications{}, fmt.Errorf("call %s.list: %w", AppBackupAPIName, err)
+				}
+				return decodeApplications(data)
+			},
+		},
+	},
+}
+
+func SelectApplications(target compatibility.Target) (compatibility.Selection, error) {
+	_, selection, err := applicationsOperation.Select(target)
+	return selection, err
+}
+
+func ExecuteApplications(ctx context.Context, target compatibility.Target, executor compatibility.Executor) (hyperbackup.Applications, compatibility.Selection, error) {
+	return applicationsOperation.Run(ctx, target, executor, Input{})
+}
+
 // TaskCreateInput is the fully resolved input for the create operation. The
 // application layer has already resolved the destination (profile or
 // credential reference) into host/account/password; the password exists only
@@ -399,6 +439,23 @@ var taskCreateOperation = compatibility.Operation[TaskCreateInput, hyperbackup.T
 				if err != nil {
 					return hyperbackup.TaskMutationResult{}, err
 				}
+				folders := input.Spec.SourceFolders
+				if folders == nil {
+					folders = []string{}
+				}
+				applications := input.Spec.Applications
+				if applications == nil {
+					applications = []string{}
+				}
+				source := map[string]any{
+					"app_list":  applications,
+					"file_list": folders,
+				}
+				if len(applications) > 0 {
+					// app_config rides along only for application backups
+					// (both source shapes live-verified on 4.2.2).
+					source["app_config"] = []any{}
+				}
 				taskData, err := executor.Execute(ctx, compatibility.Request{
 					API: TaskAPIName, Version: 1, Method: "create",
 					JSONParameters: withDestination(map[string]any{
@@ -406,10 +463,7 @@ var taskCreateOperation = compatibility.Operation[TaskCreateInput, hyperbackup.T
 						"name":      input.Spec.TaskName,
 						"repo_id":   repositoryID,
 						"target_id": directory,
-						"source": map[string]any{
-							"app_list":  []string{},
-							"file_list": input.Spec.SourceFolders,
-						},
+						"source":    source,
 						"backup_params": map[string]any{
 							"enable_data_compress": input.Spec.Compression,
 							"enable_notify":        input.Spec.Notify,
@@ -448,8 +502,8 @@ func ExecuteTaskCreate(ctx context.Context, target compatibility.Target, executo
 
 func APINames() []string {
 	return []string{
-		TaskAPIName, TargetAPIName, RepositoryAPIName, VersionAPIName, LogAPIName,
-		VaultConfigAPIName, VaultTargetAPIName,
+		TaskAPIName, TargetAPIName, RepositoryAPIName, AppBackupAPIName,
+		VersionAPIName, LogAPIName, VaultConfigAPIName, VaultTargetAPIName,
 	}
 }
 

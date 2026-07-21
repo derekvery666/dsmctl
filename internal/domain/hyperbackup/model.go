@@ -183,6 +183,25 @@ type Vault struct {
 	Package             PackageEvidence `json:"package" jsonschema:"Installed HyperBackupVault package evidence"`
 }
 
+// Application is one package Hyper Backup can include in a backup task.
+type Application struct {
+	ID              string   `json:"id" jsonschema:"Application identifier used in a task's applications list"`
+	Name            string   `json:"name,omitempty" jsonschema:"Display name"`
+	Version         string   `json:"version,omitempty" jsonschema:"Installed package version"`
+	Running         bool     `json:"running" jsonschema:"Whether the package is currently running"`
+	Backupable      bool     `json:"backupable" jsonschema:"Whether this application can be selected for backup"`
+	Reason          string   `json:"reason,omitempty" jsonschema:"Why the application cannot be backed up, when it cannot"`
+	OnlineBackup    bool     `json:"online_backup" jsonschema:"Whether the application is backed up without stopping it"`
+	Summary         string   `json:"summary,omitempty" jsonschema:"What the backup includes, as described by the application"`
+	RequiredFolders []string `json:"required_folders,omitempty" jsonschema:"Shared folders the application's data lives in, when it reports any"`
+}
+
+// Applications is the list of packages Hyper Backup can back up.
+type Applications struct {
+	Entries []Application   `json:"applications" jsonschema:"Applications Hyper Backup reports; empty when none"`
+	Package PackageEvidence `json:"package" jsonschema:"Installed HyperBackup package evidence"`
+}
+
 // TaskAction is a guarded backup-task action.
 type TaskAction string
 
@@ -200,7 +219,8 @@ const (
 // schedule; it runs when triggered (run-now action or the DSM UI).
 type TaskCreate struct {
 	TaskName      string   `json:"task_name" jsonschema:"Name of the new backup task; must not collide with an existing task"`
-	SourceFolders []string `json:"source_folders" jsonschema:"Absolute shared-folder paths on the source NAS to back up, such as /homes or /Share/projects"`
+	SourceFolders []string `json:"source_folders,omitempty" jsonschema:"Absolute shared-folder paths on the source NAS to back up, such as /homes or /Share/projects"`
+	Applications  []string `json:"applications,omitempty" jsonschema:"Application identifiers to back up (from the applications read); a task needs at least one folder or application"`
 
 	LocalShare string `json:"local_share,omitempty" jsonschema:"Local destination mode: shared-folder name on the source NAS itself"`
 
@@ -250,5 +270,6 @@ type Capabilities struct {
 	LogRead      bool            `json:"log_read" jsonschema:"Whether the Hyper Backup log feed can be read"`
 	VaultRead    bool            `json:"vault_read" jsonschema:"Whether the Hyper Backup Vault view can be read"`
 	TaskRun      bool            `json:"task_run" jsonschema:"Whether guarded run/cancel task actions are available"`
-	TaskCreate   bool            `json:"task_create" jsonschema:"Whether the guarded folder-backup task create is available"`
+	TaskCreate   bool            `json:"task_create" jsonschema:"Whether the guarded folder/application backup task create is available"`
+	AppRead      bool            `json:"application_read" jsonschema:"Whether the backupable-application list can be read"`
 }

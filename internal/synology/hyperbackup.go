@@ -16,6 +16,7 @@ type HyperBackupTaskStatus = hyperbackup.TaskStatus
 type HyperBackupVersions = hyperbackup.Versions
 type HyperBackupLogs = hyperbackup.Logs
 type HyperBackupVault = hyperbackup.Vault
+type HyperBackupApplications = hyperbackup.Applications
 type HyperBackupTaskChange = hyperbackup.TaskChange
 type HyperBackupTaskMutationResult = hyperbackup.TaskMutationResult
 type HyperBackupCapabilities = hyperbackup.Capabilities
@@ -127,6 +128,25 @@ func (c *Client) HyperBackupLogs(ctx context.Context, offset, limit int) (HyperB
 	return logs, nil
 }
 
+// HyperBackupApplications lists the packages Hyper Backup can include in a
+// backup task, with per-application eligibility.
+func (c *Client) HyperBackupApplications(ctx context.Context) (HyperBackupApplications, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, hyperbackupops.APINames()...); err != nil {
+		return HyperBackupApplications{}, fmt.Errorf("prepare Hyper Backup target: %w", err)
+	}
+	evidence := c.hyperBackupEvidenceLocked(hyperbackupops.PackageID)
+	applications, _, err := hyperbackupops.ExecuteApplications(ctx, c.target, lockedExecutor{client: c})
+	if err != nil {
+		return HyperBackupApplications{}, hyperBackupReadError("applications", evidence, err)
+	}
+	applications.Package = evidence
+	c.target.AddCapability(hyperbackupops.AppReadCapabilityName)
+	return applications, nil
+}
+
 // HyperBackupVault reads the Hyper Backup Vault view (inbound targets and the
 // parallel-session limit). It is gated on the HyperBackupVault package.
 func (c *Client) HyperBackupVault(ctx context.Context) (HyperBackupVault, error) {
@@ -215,6 +235,7 @@ func (c *Client) HyperBackupCapabilities(ctx context.Context) (HyperBackupCapabi
 		hyperbackupops.SelectVault,
 		hyperbackupops.SelectTaskRun,
 		hyperbackupops.SelectTaskCreate,
+		hyperbackupops.SelectApplications,
 	}
 	selections := make([]compatibility.Selection, 0, len(selectors))
 	for _, selectOperation := range selectors {
@@ -233,6 +254,7 @@ func (c *Client) HyperBackupCapabilities(ctx context.Context) (HyperBackupCapabi
 		hyperbackupops.VaultReadCapabilityName,
 		hyperbackupops.TaskRunCapabilityName,
 		hyperbackupops.TaskCreateCapabilityName,
+		hyperbackupops.AppReadCapabilityName,
 	}
 	for index, name := range capabilityNames {
 		if supported(index) {
@@ -250,6 +272,7 @@ func (c *Client) HyperBackupCapabilities(ctx context.Context) (HyperBackupCapabi
 		VaultRead:    supported(4),
 		TaskRun:      supported(5),
 		TaskCreate:   supported(6),
+		AppRead:      supported(7),
 	}
 	return capabilities, c.target.Report(selections...), nil
 }

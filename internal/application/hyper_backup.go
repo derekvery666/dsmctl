@@ -43,6 +43,11 @@ type HyperBackupVaultResult struct {
 	Vault synology.HyperBackupVault `json:"vault" jsonschema:"Hyper Backup Vault view of this NAS as a backup destination"`
 }
 
+type HyperBackupApplicationsResult struct {
+	NAS          string                           `json:"nas" jsonschema:"NAS profile used for the request"`
+	Applications synology.HyperBackupApplications `json:"applications" jsonschema:"Packages Hyper Backup can include in a backup task, with per-application eligibility"`
+}
+
 func (s *Service) GetHyperBackupCapabilities(ctx context.Context, requestedNAS string) (HyperBackupCapabilitiesResult, error) {
 	name, client, err := s.manager.Client(ctx, requestedNAS)
 	if err != nil {
@@ -119,6 +124,18 @@ func (s *Service) GetHyperBackupLogs(ctx context.Context, requestedNAS string, o
 		return HyperBackupLogsResult{}, authenticationError(name, err)
 	}
 	return HyperBackupLogsResult{NAS: name, Logs: logs}, nil
+}
+
+func (s *Service) GetHyperBackupApplications(ctx context.Context, requestedNAS string) (HyperBackupApplicationsResult, error) {
+	name, client, err := s.manager.Client(ctx, requestedNAS)
+	if err != nil {
+		return HyperBackupApplicationsResult{}, err
+	}
+	applications, err := client.HyperBackupApplications(ctx)
+	if err != nil {
+		return HyperBackupApplicationsResult{}, authenticationError(name, err)
+	}
+	return HyperBackupApplicationsResult{NAS: name, Applications: applications}, nil
 }
 
 func (s *Service) GetHyperBackupVault(ctx context.Context, requestedNAS string) (HyperBackupVaultResult, error) {
@@ -433,10 +450,17 @@ func planHyperBackupTaskCreate(nas string, request hyperbackup.TaskChange, tasks
 			"the password_ref credential is resolved at apply and saved into Hyper Backup's task configuration on the source NAS",
 			"the destination NAS certificate is not verified (transfer encryption without certificate pinning)")
 	}
+	sources := []string{}
+	if len(create.SourceFolders) > 0 {
+		sources = append(sources, strings.Join(create.SourceFolders, ", "))
+	}
+	if len(create.Applications) > 0 {
+		sources = append(sources, fmt.Sprintf("application(s) %s", strings.Join(create.Applications, ", ")))
+	}
 	plan.Risk = "medium"
 	plan.Warnings = warnings
 	plan.Summary = []string{
-		fmt.Sprintf("create backup task %q backing up %s to %s", create.TaskName, strings.Join(create.SourceFolders, ", "), destination),
+		fmt.Sprintf("create backup task %q backing up %s to %s", create.TaskName, strings.Join(sources, " and "), destination),
 		"a destination directory is created (or the requested one is used) and a repository is registered on the source NAS",
 	}
 	plan.Hash, err = hyperBackupTaskPlanHash(plan)
@@ -475,13 +499,18 @@ func validateHyperBackupTaskCreateShape(create hyperbackup.TaskCreate) error {
 	if strings.TrimSpace(create.TaskName) == "" {
 		return fmt.Errorf("create requires a task_name")
 	}
-	if len(create.SourceFolders) == 0 {
-		return fmt.Errorf("create requires at least one source folder")
+	if len(create.SourceFolders) == 0 && len(create.Applications) == 0 {
+		return fmt.Errorf("create requires at least one source folder or application")
 	}
 	for _, folder := range create.SourceFolders {
 		trimmed := strings.TrimSpace(folder)
 		if !strings.HasPrefix(trimmed, "/") || len(trimmed) < 2 {
 			return fmt.Errorf("source folder %q must be an absolute shared-folder path such as /homes", folder)
+		}
+	}
+	for _, application := range create.Applications {
+		if strings.TrimSpace(application) == "" {
+			return fmt.Errorf("application identifiers must not be empty")
 		}
 	}
 	modes := 0
