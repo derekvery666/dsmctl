@@ -97,8 +97,9 @@ type snapshotReplicationClient interface {
 	ApplySnapshotReplicationChange(context.Context, snapshotreplication.Change) (synology.SnapshotReplicationMutationResult, error)
 	// Cross-NAS replication relation create (WI-090).
 	StorageState(context.Context) (synology.StorageState, error)
-	ReplicationPairingEndpoint(context.Context) (synology.PairingEndpoint, error)
-	PairReplicationCredential(context.Context, synology.SnapshotReplicationPairEndpoint, string) (string, error)
+	ReplicationDestinationEndpoint(context.Context) (synology.PairingEndpoint, error)
+	ReplicationAccountCredential(context.Context) (synology.ReplicationAccountCredential, error)
+	PairReplicationCredential(context.Context, synology.SnapshotReplicationPairEndpoint, synology.ReplicationAccountCredential) (string, error)
 	CheckReplicationRemoteConn(context.Context, synology.SnapshotReplicationPairEndpoint, string) error
 	CreateReplicationPlan(context.Context, snapshotreplication.RelationCreate, synology.SnapshotReplicationPairEndpoint, string) (string, error)
 	PollReplicationTask(context.Context, string) (snapshotreplication.RelationTaskStatus, error)
@@ -888,11 +889,11 @@ func planSnapshotReplicationRelationWithClients(ctx context.Context, sourceName 
 	return plan, nil
 }
 
-// ApplySnapshotReplicationRelationPlan applies a validated relation plan. When
-// destSession is non-nil the destination pairing session is taken from it (the
-// CLI web-login path); otherwise it is minted from the destination vault
-// profile inside the tool.
-func (s *Service) ApplySnapshotReplicationRelationPlan(ctx context.Context, plan SnapshotReplicationRelationPlan, approvalHash string, destSession *SnapshotReplicationDestSession) (SnapshotReplicationRelationApplyResult, error) {
+// ApplySnapshotReplicationRelationPlan applies a validated relation plan. The
+// destination admin credential is resolved from its vault profile only here, at
+// apply time, and used to authenticate the DR pairing by account; it never
+// enters the plan, its hash, logs, or MCP arguments.
+func (s *Service) ApplySnapshotReplicationRelationPlan(ctx context.Context, plan SnapshotReplicationRelationPlan, approvalHash string) (SnapshotReplicationRelationApplyResult, error) {
 	if err := validateSnapshotReplicationRelationPlan(plan, approvalHash); err != nil {
 		return SnapshotReplicationRelationApplyResult{}, err
 	}
@@ -919,23 +920,10 @@ func (s *Service) ApplySnapshotReplicationRelationPlan(ctx context.Context, plan
 	if sourceName != plan.SourceNAS || destName != plan.DestNAS {
 		return SnapshotReplicationRelationApplyResult{}, fmt.Errorf("replication plan NAS profiles resolved differently at apply")
 	}
-	return applySnapshotReplicationRelationWithClients(ctx, sourceName, sourceClient, destName, destClient, plan, destSession)
+	return applySnapshotReplicationRelationWithClients(ctx, sourceName, sourceClient, destName, destClient, plan)
 }
 
-// SnapshotReplicationDestSession overrides how the destination pairing session
-// is obtained at apply. When supplied (by the CLI web-login path), dsmctl uses
-// this freshly web-logged-in destination session — the same OAuth2 auth-code +
-// PKCE flow DSM's own `synocredential` broker performs — instead of the
-// vault-resumed session. It carries only session material (a sid), never the
-// account password.
-type SnapshotReplicationDestSession struct {
-	Addr  string
-	Port  int
-	HTTPS bool
-	SID   string
-}
-
-func applySnapshotReplicationRelationWithClients(ctx context.Context, sourceName string, sourceClient snapshotReplicationClient, destName string, destClient snapshotReplicationClient, plan SnapshotReplicationRelationPlan, destSession *SnapshotReplicationDestSession) (SnapshotReplicationRelationApplyResult, error) {
+func applySnapshotReplicationRelationWithClients(ctx context.Context, sourceName string, sourceClient snapshotReplicationClient, destName string, destClient snapshotReplicationClient, plan SnapshotReplicationRelationPlan) (SnapshotReplicationRelationApplyResult, error) {
 	// TOCTOU close: re-plan against live two-site state and compare.
 	current, err := planSnapshotReplicationRelationWithClients(ctx, sourceName, sourceClient, destName, destClient, plan.Request)
 	if err != nil {
@@ -950,25 +938,22 @@ func applySnapshotReplicationRelationWithClients(ctx context.Context, sourceName
 		return SnapshotReplicationRelationApplyResult{}, fmt.Errorf("replication plan is stale; create a new plan")
 	}
 
-	// Obtain the destination pairing session. The web-login override (a fresh
-	// browser OAuth session, matching DSM's synocredential broker) takes
-	// precedence; otherwise mint it from the destination vault profile inside
-	// the tool. Either way only a sid is forwarded, never the password.
-	var pairEndpoint synology.SnapshotReplicationPairEndpoint
-	var destSID string
-	if destSession != nil {
-		pairEndpoint = synology.SnapshotReplicationPairEndpoint{Addr: destSession.Addr, Port: destSession.Port, HTTPS: destSession.HTTPS}
-		destSID = destSession.SID
-	} else {
-		endpoint, err := destClient.ReplicationPairingEndpoint(ctx)
-		if err != nil {
-			return SnapshotReplicationRelationApplyResult{}, authenticationError(destName, err)
-		}
-		pairEndpoint = synology.SnapshotReplicationPairEndpoint{Addr: endpoint.Addr, Port: endpoint.Port, HTTPS: endpoint.HTTPS}
-		destSID = endpoint.SID
+	// Mint the DR pairing credential on the source, authenticating to the
+	// destination by account. The destination endpoint (address/port/TLS) needs
+	// no login; the destination admin credential is resolved from its vault
+	// profile only here and handed to the source's temp_create (auth:"account").
+	// The password never enters the plan, its hash, logs, or MCP arguments.
+	endpoint, err := destClient.ReplicationDestinationEndpoint(ctx)
+	if err != nil {
+		return SnapshotReplicationRelationApplyResult{}, authenticationError(destName, err)
+	}
+	pairEndpoint := synology.SnapshotReplicationPairEndpoint{Addr: endpoint.Addr, Port: endpoint.Port, HTTPS: endpoint.HTTPS}
+	destCredential, err := destClient.ReplicationAccountCredential(ctx)
+	if err != nil {
+		return SnapshotReplicationRelationApplyResult{}, authenticationError(destName, err)
 	}
 
-	credID, err := sourceClient.PairReplicationCredential(ctx, pairEndpoint, destSID)
+	credID, err := sourceClient.PairReplicationCredential(ctx, pairEndpoint, destCredential)
 	if err != nil {
 		return SnapshotReplicationRelationApplyResult{}, authenticationError(sourceName, err)
 	}
@@ -999,40 +984,71 @@ func applySnapshotReplicationRelationWithClients(ctx context.Context, sourceName
 	if err != nil {
 		return SnapshotReplicationRelationApplyResult{}, err
 	}
-	if status.PlanID == "" {
-		return SnapshotReplicationRelationApplyResult{}, fmt.Errorf("replication create task reported no plan id")
-	}
 
-	// Confirm independently: the SPECIFIC plan the task created must be listed on
-	// the source. Match on the created plan id, not the share name — a pre-existing
-	// unrelated relation for the same share name must not satisfy this check.
+	// Confirm independently against the authoritative source plan list rather
+	// than the create task's transient self-report (get_poll_task does not
+	// reliably echo the new plan id). When the task DOES report a plan id, match
+	// on it exactly — a pre-existing unrelated relation for the same share name
+	// must not satisfy the check. When it does not (the common case), the plan
+	// guaranteed and the apply re-plan re-verified that no relation for this
+	// share existed before the create, so the single source relation now
+	// matching the target share is the one just created.
 	confirmed, err := sourceClient.SnapshotReplicationPlans(ctx)
 	if err != nil {
 		return SnapshotReplicationRelationApplyResult{}, fmt.Errorf("verify replication relation: %w", err)
 	}
+	createdPlanID := status.PlanID
 	found := false
 	for _, relation := range confirmed.Plans {
-		if relation.ID == status.PlanID {
+		if createdPlanID != "" {
+			if relation.ID == createdPlanID {
+				found = true
+				break
+			}
+			continue
+		}
+		if strings.EqualFold(relation.TargetName, plan.Request.SourceShare) {
+			createdPlanID = relation.ID
 			found = true
+			break
 		}
 	}
-	if !found {
-		return SnapshotReplicationRelationApplyResult{}, fmt.Errorf("replication plan %q is not listed on %q after create", status.PlanID, sourceName)
+	if !found || createdPlanID == "" {
+		return SnapshotReplicationRelationApplyResult{}, fmt.Errorf("replication relation for share %q is not listed on %q after create", plan.Request.SourceShare, sourceName)
 	}
+
+	// Best-effort: resolve the destination-side plan id for reporting. DSM shares
+	// the plan id across both sites, so this is normally identical.
+	remotePlanID := status.RemotePlanID
+	if remotePlanID == "" {
+		if destPlans, derr := destClient.SnapshotReplicationPlans(ctx); derr == nil {
+			for _, relation := range destPlans.Plans {
+				if relation.ID == createdPlanID || strings.EqualFold(relation.TargetName, plan.Request.SourceShare) {
+					remotePlanID = relation.ID
+					break
+				}
+			}
+		}
+	}
+
 	confirmedOK = true
 	return SnapshotReplicationRelationApplyResult{
 		SourceNAS:    sourceName,
 		DestNAS:      destName,
 		PlanHash:     plan.Hash,
 		Applied:      true,
-		PlanID:       status.PlanID,
-		RemotePlanID: status.RemotePlanID,
+		PlanID:       createdPlanID,
+		RemotePlanID: remotePlanID,
 	}, nil
 }
 
 // awaitReplicationCreate polls the create task to a terminal state, mirroring
 // the package-install poller: an explicit task error is fatal, a poll read
-// error is best-effort, and success requires a bounded deadline.
+// error is best-effort, and completion requires a bounded deadline. The task's
+// success/plan-id self-report is advisory only — the caller confirms the
+// created relation against the authoritative plan list — so a finished task
+// with no reported error is treated as done regardless of whether get_poll_task
+// echoed a plan id (it reliably does not for a create).
 func awaitReplicationCreate(ctx context.Context, client snapshotReplicationClient, taskID string) (snapshotreplication.RelationTaskStatus, error) {
 	deadline := time.Now().Add(15 * time.Minute)
 	for {
@@ -1045,9 +1061,6 @@ func awaitReplicationCreate(ctx context.Context, client snapshotReplicationClien
 				return snapshotreplication.RelationTaskStatus{}, fmt.Errorf("replication create task failed: %s", status.Error)
 			}
 			if status.Finished {
-				if !status.Success || status.PlanID == "" || status.RemotePlanID == "" {
-					return snapshotreplication.RelationTaskStatus{}, fmt.Errorf("replication create task finished without a confirmed plan id")
-				}
 				return status, nil
 			}
 		}

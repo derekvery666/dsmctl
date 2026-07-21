@@ -79,7 +79,7 @@ The full lifecycle (create with description+lock → edit attributes → toggle
 browsing on and off → delete) was live-verified on the DSM 7.3-81168 lab
 against a throwaway `dsmctl-e2e-snap-*` share, which was removed afterward.
 
-## Replication relation create (WI-090 — built, pairing blocked)
+## Replication relation create (WI-090 — headless, live-verified)
 
 `dsmctl snapshot relation plan|apply|delete` creates a **shared-folder
 replication relation from one NAS profile to another** through the same
@@ -92,6 +92,13 @@ The plan is high-risk and guards against overwriting destination data (no
 same-named share or existing relation), requires a healthy btrfs destination
 volume, verifies source→destination reachability, and confirms the created
 relation by plan id after polling the async task.
+
+Pairing is **fully headless**: dsmctl mints the DR credential on the source by
+authenticating to the destination by account (DSM's `SYNO.DR.Node.Credential`
+`temp_create` with `auth:"account"`, resolving the destination admin password
+from its vault profile), so no browser sign-in and no `synocredential` OAuth
+broker is involved. A destination account that enforces interactive 2FA is not
+supported for headless pairing — use a dedicated automation account.
 
 ```console
 dsmctl snapshot relation plan --source nas51 --dest nas255 --share data --dest-volume /volume1 -o plan.json
@@ -106,17 +113,16 @@ reads it back with both site blocks, `can_*` capability flags, and last-sync
 time/bytes. These reads and management ops are **live-verified** against a real
 nas51→nas255 relation (a sync moved real data; pause and delete succeeded).
 
-> **Live status — creating a relation:** the operation is implemented,
-> adversarially reviewed, and unit-tested; on the nas51↔nas255 pair the apply
-> runs end-to-end with **no secret in the plan** (verified). But DSM's
-> `SYNO.DR.Node.Credential temp_create` rejects a forwarded session (error 528)
-> — proven for a resumed vault session AND a fresh browser-OAuth session
-> (`--web-login`). DSM 7.4.7 mints the durable pairing credential only through
-> its `synocredential` broker's extra registration step, which dsmctl cannot
-> reproduce headlessly yet (lead: `SYNO.Remote.Credential.Challenge/.Info`).
-> **Until then, create the relation once in the DSM UI; dsmctl reads and
-> manages it thereafter** (all live-verified). The failover/switchover/reprotect
-> family is surfaced read-only (`can_*`) and is never executable here.
+> **Live status — creating a relation:** live-verified end-to-end on the
+> nas51→nas255 pair. `dsmctl snapshot relation apply` created the relation fully
+> headless (`applied:true`, matching `plan_id`/`remote_plan_id` on both sites),
+> with **no secret in the plan**; a subsequent `sync` moved data and `delete`
+> tore it down. The earlier error-528 blocker was a wrong credential mode:
+> `temp_create` with `auth:"session"` (forwarding a DSM sid) is rejected, but
+> `auth:"account"` (destination account + password + optional otpcode, resolved
+> from the vault) mints the credential directly — no `synocredential` browser
+> broker. The failover/switchover/reprotect family is surfaced read-only
+> (`can_*`) and is never executable here.
 
 ## Deferred
 

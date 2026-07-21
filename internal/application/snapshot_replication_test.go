@@ -135,10 +135,13 @@ func (c *fakeSnapshotReplicationClient) ApplySnapshotReplicationChange(_ context
 func (c *fakeSnapshotReplicationClient) StorageState(context.Context) (synology.StorageState, error) {
 	return synology.StorageState{}, nil
 }
-func (c *fakeSnapshotReplicationClient) ReplicationPairingEndpoint(context.Context) (synology.PairingEndpoint, error) {
+func (c *fakeSnapshotReplicationClient) ReplicationDestinationEndpoint(context.Context) (synology.PairingEndpoint, error) {
 	return synology.PairingEndpoint{}, fmt.Errorf("not implemented")
 }
-func (c *fakeSnapshotReplicationClient) PairReplicationCredential(context.Context, synology.SnapshotReplicationPairEndpoint, string) (string, error) {
+func (c *fakeSnapshotReplicationClient) ReplicationAccountCredential(context.Context) (synology.ReplicationAccountCredential, error) {
+	return synology.ReplicationAccountCredential{}, fmt.Errorf("not implemented")
+}
+func (c *fakeSnapshotReplicationClient) PairReplicationCredential(context.Context, synology.SnapshotReplicationPairEndpoint, synology.ReplicationAccountCredential) (string, error) {
 	return "", fmt.Errorf("not implemented")
 }
 func (c *fakeSnapshotReplicationClient) CheckReplicationRemoteConn(context.Context, synology.SnapshotReplicationPairEndpoint, string) error {

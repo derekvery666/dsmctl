@@ -70,9 +70,20 @@ type CreateResult struct {
 
 // --- temp_create (pairing) ---
 
+// pairInput carries the destination account credential the source NAS
+// authenticates with. It uses temp_create's auth:"account" mode (account +
+// password + optional otpcode), the fully headless pairing path: DSM's
+// SYNO.DR.Node.Credential accepts account-based auth directly and mints the
+// durable credential, with no browser synocredential broker. (The auth:"session"
+// mode — forwarding a DSM sid — is rejected with error 528 and is not used.)
+// The password is resolved from the destination vault profile only at apply
+// time; it never enters a plan, its hash, logs, or MCP arguments, and the DSM
+// request logger redacts the "password"/"otpcode" parameters.
 type pairInput struct {
 	Endpoint PairEndpoint
-	SID      string
+	Account  string
+	Password string
+	OTPCode  string
 }
 
 var replicationPairOperation = compatibility.Operation[pairInput, string]{
@@ -82,13 +93,18 @@ var replicationPairOperation = compatibility.Operation[pairInput, string]{
 			Name: "dr-node-credential-temp-create-v1", API: NodeCredentialAPIName, Version: 1, Priority: 10,
 			Match: compatibility.All(compatibility.APIVersion(NodeCredentialAPIName, 1), replicationPackage),
 			Execute: func(ctx context.Context, executor compatibility.Executor, input pairInput) (string, error) {
+				parameters := map[string]any{
+					"conn":     input.Endpoint.conn(),
+					"auth":     "account",
+					"account":  input.Account,
+					"password": input.Password,
+				}
+				if input.OTPCode != "" {
+					parameters["otpcode"] = input.OTPCode
+				}
 				data, err := executor.Execute(ctx, compatibility.Request{
 					API: NodeCredentialAPIName, Version: 1, Method: "temp_create",
-					JSONParameters: map[string]any{
-						"conn":    input.Endpoint.conn(),
-						"auth":    "session",
-						"session": input.SID,
-					},
+					JSONParameters: parameters,
 				})
 				if err != nil {
 					return "", fmt.Errorf("call %s.temp_create: %w", NodeCredentialAPIName, err)
@@ -104,8 +120,8 @@ func SelectReplicationPair(target compatibility.Target) (compatibility.Selection
 	return selection, err
 }
 
-func ExecuteReplicationTempCredential(ctx context.Context, target compatibility.Target, executor compatibility.Executor, endpoint PairEndpoint, sid string) (string, compatibility.Selection, error) {
-	return replicationPairOperation.Run(ctx, target, executor, pairInput{Endpoint: endpoint, SID: sid})
+func ExecuteReplicationTempCredential(ctx context.Context, target compatibility.Target, executor compatibility.Executor, endpoint PairEndpoint, account, password, otpCode string) (string, compatibility.Selection, error) {
+	return replicationPairOperation.Run(ctx, target, executor, pairInput{Endpoint: endpoint, Account: account, Password: password, OTPCode: otpCode})
 }
 
 // --- check_remote_conn ---

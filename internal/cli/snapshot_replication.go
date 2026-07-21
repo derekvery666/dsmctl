@@ -2,18 +2,13 @@ package cli
 
 import (
 	"fmt"
-	"net/url"
-	"strconv"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
 	"github.com/ychiu1211/dsmctl/internal/application"
-	"github.com/ychiu1211/dsmctl/internal/config"
 	"github.com/ychiu1211/dsmctl/internal/domain/snapshotreplication"
-	"github.com/ychiu1211/dsmctl/internal/runtime"
-	"github.com/ychiu1211/dsmctl/internal/weblogin"
 )
 
 func newSnapshotReplicationCommand(opts *options) *cobra.Command {
@@ -146,104 +141,43 @@ enters the plan, its approval hash, logs, or MCP arguments.`,
 
 func newSnapshotRelationApplyCommand(opts *options) *cobra.Command {
 	var inputPath, approvalHash string
-	var webLogin bool
 	command := &cobra.Command{
 		Use:   "apply",
 		Short: "Apply a replication relation plan after hash and stale-state validation",
 		Long: `Apply a replication relation plan after hash and stale-state validation.
 
-DSM mints the pairing credential through its browser OAuth broker. Pass
---web-login to complete that login interactively: dsmctl prints a sign-in URL
-for the destination NAS; you authenticate in your browser (2FA/passkey
-included), and the resulting session is used for pairing. Without --web-login,
-dsmctl tries the destination's stored vault session, which DSM's broker may
-reject.`,
+dsmctl mints the DR pairing credential headlessly: it authenticates to the
+destination NAS by account (DSM's SYNO.DR.Node.Credential auth:"account" mode),
+resolving the destination admin password from its vault profile only at apply
+time. The password never enters the plan, its hash, logs, or MCP arguments. No
+browser sign-in is required. A destination account that enforces interactive
+2FA is not supported for headless pairing (use a dedicated automation account).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			var plan application.SnapshotReplicationRelationPlan
 			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
 				return fmt.Errorf("read replication plan: %w", err)
 			}
-			var destSession *application.SnapshotReplicationDestSession
-			if webLogin {
-				session, err := webLoginDestSession(cmd, opts, plan.DestNAS)
-				if err != nil {
-					return err
-				}
-				destSession = session
-			}
-			return applyRelation(cmd, opts, plan, approvalHash, destSession)
+			return applyRelation(cmd, opts, plan, approvalHash)
 		},
 	}
 	command.Flags().StringVarP(&inputPath, "file", "f", "-", "replication plan JSON file, or - for stdin")
 	command.Flags().StringVar(&approvalHash, "approve", "", "exact SHA-256 hash printed by the replication plan")
-	command.Flags().BoolVar(&webLogin, "web-login", false, "sign in to the destination NAS in your browser to obtain the pairing session")
 	_ = command.MarkFlagRequired("approve")
 	return command
 }
 
-func applyRelation(cmd *cobra.Command, opts *options, plan application.SnapshotReplicationRelationPlan, approvalHash string, destSession *application.SnapshotReplicationDestSession) error {
+func applyRelation(cmd *cobra.Command, opts *options, plan application.SnapshotReplicationRelationPlan, approvalHash string) error {
 	service, err := loadService(opts)
 	if err != nil {
 		return err
 	}
 	defer closeService(service)
-	result, err := service.ApplySnapshotReplicationRelationPlan(cmd.Context(), plan, approvalHash, destSession)
+	result, err := service.ApplySnapshotReplicationRelationPlan(cmd.Context(), plan, approvalHash)
 	if err != nil {
 		return err
 	}
 	return encodeIndentedJSON(cmd.OutOrStdout(), result)
-}
-
-// webLoginDestSession runs the interactive browser OAuth flow against the
-// destination NAS — the same auth-code + PKCE flow DSM's synocredential broker
-// performs — and returns a fresh session for pairing. Only session material is
-// returned; the account password is never handled here.
-func webLoginDestSession(cmd *cobra.Command, opts *options, destNAS string) (*application.SnapshotReplicationDestSession, error) {
-	cfg, err := config.NewStore(opts.configPath).Load()
-	if err != nil {
-		return nil, err
-	}
-	name, profile, err := cfg.Resolve(destNAS)
-	if err != nil {
-		return nil, fmt.Errorf("resolve destination NAS %q: %w", destNAS, err)
-	}
-	addr, port, https, err := parseEndpoint(profile.URL)
-	if err != nil {
-		return nil, fmt.Errorf("destination NAS %q URL: %w", name, err)
-	}
-	fmt.Fprintf(cmd.ErrOrStderr(), "Signing in to destination %q (%s) for Snapshot Replication pairing...\n", name, profile.URL)
-	result, err := weblogin.Login(cmd.Context(), profile.URL, weblogin.Options{
-		HTTPClient:  runtime.HTTPClient(profile),
-		Prompt:      cmd.ErrOrStderr(),
-		SessionName: "Snapshot Replication",
-	})
-	if err != nil {
-		return nil, fmt.Errorf("web login to destination %q: %w", name, err)
-	}
-	return &application.SnapshotReplicationDestSession{Addr: addr, Port: port, HTTPS: https, SID: result.SID}, nil
-}
-
-func parseEndpoint(rawURL string) (addr string, port int, https bool, err error) {
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return "", 0, false, err
-	}
-	addr = parsed.Hostname()
-	https = parsed.Scheme == "https"
-	port = 5000
-	if https {
-		port = 5001
-	}
-	if raw := parsed.Port(); raw != "" {
-		if n, convErr := strconv.Atoi(raw); convErr == nil {
-			port = n
-		}
-	}
-	if addr == "" {
-		return "", 0, false, fmt.Errorf("no host in %q", rawURL)
-	}
-	return addr, port, https, nil
 }
 
 func newSnapshotRelationDeleteCommand(opts *options) *cobra.Command {

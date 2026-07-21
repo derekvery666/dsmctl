@@ -4,41 +4,29 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/ychiu1211/dsmctl/internal/domain/snapshotreplication"
 	snapshotops "github.com/ychiu1211/dsmctl/internal/synology/operations/snapshotreplication"
 )
 
-// PairingEndpoint is the destination NAS management endpoint plus a live DSM
-// session, everything a source NAS needs to establish a Snapshot Replication
-// pairing to this destination. Sid/SynoToken are session material minted from
-// the destination profile's stored credential — never the account password.
+// PairingEndpoint is the destination NAS management endpoint a source NAS
+// connects to when it authenticates the DR pairing by account. It carries only
+// the address, port, and TLS flag — no session material and no password.
 type PairingEndpoint struct {
-	Addr      string
-	Port      int
-	HTTPS     bool
-	SID       string
-	SynoToken string
+	Addr  string
+	Port  int
+	HTTPS bool
 }
 
-// ReplicationPairingEndpoint logs this client in if needed and returns its
-// management endpoint and live session. It is for the internal apply-time
-// cross-NAS pairing flow: dsmctl calls it on the *destination* client (which
-// Manager.Client authenticated with the destination profile's vault credential)
-// and forwards the resulting session to the source NAS's DR pairing API. The
-// account password never leaves the credential resolver; only the resulting
-// session id is surfaced, and only to the in-process apply path.
-func (c *Client) ReplicationPairingEndpoint(ctx context.Context) (PairingEndpoint, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if err := c.loginLocked(ctx); err != nil {
-		return PairingEndpoint{}, fmt.Errorf("authenticate destination for pairing: %w", err)
-	}
+// ReplicationDestinationEndpoint returns this (destination) client's management
+// endpoint (address, port, TLS), derived from its base URL without logging in.
+// The source NAS's account-based pairing authenticates to it directly; it needs
+// no destination session, so no credential is resolved here.
+func (c *Client) ReplicationDestinationEndpoint(_ context.Context) (PairingEndpoint, error) {
 	endpoint := PairingEndpoint{
-		Addr:      c.baseURL.Hostname(),
-		HTTPS:     c.baseURL.Scheme == "https",
-		SID:       c.sid,
-		SynoToken: c.synoToken,
+		Addr:  c.baseURL.Hostname(),
+		HTTPS: c.baseURL.Scheme == "https",
 	}
 	if endpoint.HTTPS {
 		endpoint.Port = 5001
@@ -50,10 +38,47 @@ func (c *Client) ReplicationPairingEndpoint(ctx context.Context) (PairingEndpoin
 			endpoint.Port = parsed
 		}
 	}
-	if endpoint.SID == "" {
-		return PairingEndpoint{}, fmt.Errorf("destination session is empty after login")
+	if endpoint.Addr == "" {
+		return PairingEndpoint{}, fmt.Errorf("destination endpoint address is empty")
 	}
 	return endpoint, nil
+}
+
+// ReplicationAccountCredential is a destination profile's account credential,
+// resolved from the vault only at apply time for account-based DR pairing
+// (temp_create auth:"account"). It is passed to the source NAS's pairing call
+// and never enters a plan, its hash, logs, or MCP output.
+type ReplicationAccountCredential struct {
+	Account  string
+	Password string
+	OTPCode  string
+}
+
+// ReplicationAccountCredential resolves this (destination) client's account
+// credential from its vault profile for an apply-time account-based pairing.
+// The password is resolved lazily (the same resolver a login would use) and
+// returned only to the in-process apply path. A destination account that
+// requires interactive 2FA is not supported for headless pairing: no OTP is
+// resolved here, and DSM answers such a pairing with an "OTP required" error.
+func (c *Client) ReplicationAccountCredential(ctx context.Context) (ReplicationAccountCredential, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	account := strings.TrimSpace(c.username)
+	if account == "" {
+		return ReplicationAccountCredential{}, fmt.Errorf("destination profile has no account for replication pairing")
+	}
+	password := c.password
+	if password == "" && c.passwordFunc != nil {
+		resolved, err := c.passwordFunc(ctx)
+		if err != nil {
+			return ReplicationAccountCredential{}, fmt.Errorf("resolve destination password: %w", err)
+		}
+		password = resolved
+	}
+	if password == "" {
+		return ReplicationAccountCredential{}, fmt.Errorf("destination profile %q has no password available for account-based replication pairing", account)
+	}
+	return ReplicationAccountCredential{Account: account, Password: password}, nil
 }
 
 // Re-exported types for the application layer.
@@ -61,16 +86,17 @@ type SnapshotReplicationRelationCreate = snapshotreplication.RelationCreate
 type SnapshotReplicationPairEndpoint = snapshotops.PairEndpoint
 type SnapshotReplicationCreateResult = snapshotops.CreateResult
 
-// PairReplicationCredential establishes a temporary DR credential on this
-// (source) client for the given destination endpoint+session, returning the
-// cred_id the create call consumes.
-func (c *Client) PairReplicationCredential(ctx context.Context, endpoint SnapshotReplicationPairEndpoint, sid string) (string, error) {
+// PairReplicationCredential establishes a durable DR credential on this (source)
+// client for the given destination endpoint, authenticating by the destination
+// account credential (temp_create auth:"account"), and returns the cred_id the
+// create call consumes.
+func (c *Client) PairReplicationCredential(ctx context.Context, endpoint SnapshotReplicationPairEndpoint, cred ReplicationAccountCredential) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := c.prepareSnapshotReplicationTargetLocked(ctx); err != nil {
 		return "", err
 	}
-	credID, _, err := snapshotops.ExecuteReplicationTempCredential(ctx, c.target, lockedExecutor{client: c}, endpoint, sid)
+	credID, _, err := snapshotops.ExecuteReplicationTempCredential(ctx, c.target, lockedExecutor{client: c}, endpoint, cred.Account, cred.Password, cred.OTPCode)
 	if err != nil {
 		return "", fmt.Errorf("pair replication credential: %w", err)
 	}

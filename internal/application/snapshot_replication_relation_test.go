@@ -26,7 +26,8 @@ type fakeReplicationRelationClient struct {
 	volAvail    uint64
 	plans       []snapshotreplication.ReplicationPlan
 
-	endpointSID   string
+	destAccount   string
+	destPassword  string
 	pairCredID    string
 	createTask    string
 	pollStatus    snapshotreplication.RelationTaskStatus
@@ -34,7 +35,7 @@ type fakeReplicationRelationClient struct {
 	failCheck     bool
 
 	// recorded
-	pairedSID          string
+	pairedCred         synology.ReplicationAccountCredential
 	createdWith        *snapshotreplication.RelationCreate
 	deletedCreds       []string
 	deletedPlans       []string
@@ -66,9 +67,10 @@ func newDestRelation() *fakeReplicationRelationClient {
 		shareSnap:   map[string]bool{"homes": true},
 		volPath:     "/volume1",
 		volFS:       "btrfs",
-		volWritable: true,
-		volAvail:    1 << 40,
-		endpointSID: "dest-sid-xyz",
+		volWritable:  true,
+		volAvail:     1 << 40,
+		destAccount:  "dest-admin",
+		destPassword: "dest-secret-pw",
 	}
 }
 
@@ -90,9 +92,9 @@ func TestPlanReplicationRelationHappyAndNoSecretLeak(t *testing.T) {
 	if plan.SourceNAS != "nas51" || plan.DestNAS != "nas255" {
 		t.Fatalf("plan sites = %q -> %q", plan.SourceNAS, plan.DestNAS)
 	}
-	// The dest credential/session must never appear in the serialized plan.
+	// The dest credential must never appear in the serialized plan.
 	blob, _ := json.Marshal(plan)
-	for _, secret := range []string{"dest-sid-xyz", "dest-cred-abc"} {
+	for _, secret := range []string{"dest-secret-pw", "dest-cred-abc"} {
 		if strings.Contains(string(blob), secret) {
 			t.Fatalf("plan leaked secret %q: %s", secret, blob)
 		}
@@ -134,17 +136,17 @@ func TestApplyReplicationRelationBrokersSecretAtApply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan error = %v", err)
 	}
-	result, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan, nil)
+	result, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan)
 	if err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 	if !result.Applied || result.PlanID != "plan-1" || result.RemotePlanID != "rplan-1" {
 		t.Fatalf("result = %#v", result)
 	}
-	// The source paired using the destination's sid, obtained only at apply from
-	// the dest client — never from the plan.
-	if source.pairedSID != "dest-sid-xyz" {
-		t.Fatalf("source paired with sid %q, want the dest session id", source.pairedSID)
+	// The source paired using the destination's account credential, resolved
+	// only at apply from the dest client — never from the plan.
+	if source.pairedCred.Account != "dest-admin" || source.pairedCred.Password != "dest-secret-pw" {
+		t.Fatalf("source paired with credential %+v, want the dest account credential", source.pairedCred)
 	}
 	if source.createdWith == nil || source.createdWith.SourceShare != "data" {
 		t.Fatalf("create recorded = %#v", source.createdWith)
@@ -164,7 +166,7 @@ func TestApplyReplicationRelationStaleRejected(t *testing.T) {
 	}
 	// Destination free space changes out-of-band → observed fingerprint drifts.
 	dest.volAvail = 1 << 39
-	if _, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan, nil); err == nil || !strings.Contains(err.Error(), "stale") {
+	if _, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan); err == nil || !strings.Contains(err.Error(), "stale") {
 		t.Fatalf("expected a stale-plan error when dest state drifts, got %v", err)
 	}
 }
@@ -181,12 +183,36 @@ func TestApplyReplicationRelationConfirmsByPlanID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan error = %v", err)
 	}
-	if _, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan, nil); err == nil || !strings.Contains(err.Error(), "is not listed") {
+	if _, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan); err == nil || !strings.Contains(err.Error(), "is not listed") {
 		t.Fatalf("apply must reject a plan-id mismatch, got %v", err)
 	}
 	// The temporary credential must be cleaned up on this failure.
 	if len(source.deletedCreds) != 1 {
 		t.Fatalf("credential not cleaned up on confirm failure: %#v", source.deletedCreds)
+	}
+}
+
+func TestApplyReplicationRelationConfirmsByShareWhenTaskOmitsPlanID(t *testing.T) {
+	// The real DSM create task finishes without echoing a plan id via
+	// get_poll_task. Because the plan guarantees no pre-existing relation for the
+	// share, the confirming list resolves the created relation by target name.
+	source := newSourceRelation()
+	source.pollStatus = snapshotreplication.RelationTaskStatus{Finished: true} // no plan id, no error
+	source.confirmPlanID = "plan-created-by-dsm"
+	dest := newDestRelation()
+	plan, err := planReplicationRelationForTest(t, source, dest, snapshotreplication.RelationCreate{SourceShare: "data", DestVolume: "/volume1"})
+	if err != nil {
+		t.Fatalf("plan error = %v", err)
+	}
+	result, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan)
+	if err != nil {
+		t.Fatalf("apply error = %v", err)
+	}
+	if !result.Applied || result.PlanID != "plan-created-by-dsm" {
+		t.Fatalf("result = %#v, want the plan id resolved from the confirming list", result)
+	}
+	if len(source.deletedCreds) != 0 {
+		t.Fatalf("credential deleted after a confirmed success: %#v", source.deletedCreds)
 	}
 }
 
@@ -198,7 +224,7 @@ func TestApplyReplicationRelationCleansUpOnTaskFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan error = %v", err)
 	}
-	if _, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan, nil); err == nil || !strings.Contains(err.Error(), "out of space") {
+	if _, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan); err == nil || !strings.Contains(err.Error(), "out of space") {
 		t.Fatalf("apply error = %v", err)
 	}
 	// A failed async task must still trigger temp-credential cleanup.
@@ -233,7 +259,7 @@ func TestApplyReplicationRelationCleansUpCredentialOnCheckFailure(t *testing.T) 
 	if err != nil {
 		t.Fatalf("plan error = %v", err)
 	}
-	if _, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan, nil); err == nil || !strings.Contains(err.Error(), "cannot reach") {
+	if _, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan); err == nil || !strings.Contains(err.Error(), "cannot reach") {
 		t.Fatalf("apply error = %v", err)
 	}
 	if len(source.deletedCreds) != 1 || source.deletedCreds[0] != "dest-cred-abc" {
@@ -330,12 +356,16 @@ func (c *fakeReplicationRelationClient) SnapshotReplicationPlans(context.Context
 	return synology.SnapshotReplicationPlans{Total: len(plans), Plans: plans}, nil
 }
 
-func (c *fakeReplicationRelationClient) ReplicationPairingEndpoint(context.Context) (synology.PairingEndpoint, error) {
-	return synology.PairingEndpoint{Addr: "10.0.0.9", Port: 5001, HTTPS: true, SID: c.endpointSID}, nil
+func (c *fakeReplicationRelationClient) ReplicationDestinationEndpoint(context.Context) (synology.PairingEndpoint, error) {
+	return synology.PairingEndpoint{Addr: "10.0.0.9", Port: 5001, HTTPS: true}, nil
 }
 
-func (c *fakeReplicationRelationClient) PairReplicationCredential(_ context.Context, _ synology.SnapshotReplicationPairEndpoint, sid string) (string, error) {
-	c.pairedSID = sid
+func (c *fakeReplicationRelationClient) ReplicationAccountCredential(context.Context) (synology.ReplicationAccountCredential, error) {
+	return synology.ReplicationAccountCredential{Account: c.destAccount, Password: c.destPassword}, nil
+}
+
+func (c *fakeReplicationRelationClient) PairReplicationCredential(_ context.Context, _ synology.SnapshotReplicationPairEndpoint, cred synology.ReplicationAccountCredential) (string, error) {
+	c.pairedCred = cred
 	return c.pairCredID, nil
 }
 
