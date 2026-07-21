@@ -2,12 +2,16 @@ package cli
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/ychiu1211/dsmctl/internal/application"
+	"github.com/ychiu1211/dsmctl/internal/config"
 	"github.com/ychiu1211/dsmctl/internal/domain/snapshotreplication"
 )
 
@@ -141,6 +145,7 @@ enters the plan, its approval hash, logs, or MCP arguments.`,
 
 func newSnapshotRelationApplyCommand(opts *options) *cobra.Command {
 	var inputPath, approvalHash string
+	var promptDestCred bool
 	command := &cobra.Command{
 		Use:   "apply",
 		Short: "Apply a replication relation plan after hash and stale-state validation",
@@ -150,34 +155,139 @@ dsmctl mints the DR pairing credential headlessly: it authenticates to the
 destination NAS by account (DSM's SYNO.DR.Node.Credential auth:"account" mode),
 resolving the destination admin password from its vault profile only at apply
 time. The password never enters the plan, its hash, logs, or MCP arguments. No
-browser sign-in is required. A destination account that enforces interactive
-2FA is not supported for headless pairing (use a dedicated automation account).`,
+browser sign-in is required.
+
+If the destination profile has no stored credential, pass
+--prompt-dest-credential to enter the destination admin account and password
+interactively at the terminal (used once for pairing, never stored). A
+destination account that enforces interactive 2FA is not supported for headless
+pairing (use a dedicated automation account).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			var plan application.SnapshotReplicationRelationPlan
 			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
 				return fmt.Errorf("read replication plan: %w", err)
 			}
-			return applyRelation(cmd, opts, plan, approvalHash)
+			var destCredential *application.SnapshotReplicationDestCredential
+			if promptDestCred {
+				credential, err := promptDestinationCredential(cmd, opts, plan.DestNAS)
+				if err != nil {
+					return err
+				}
+				destCredential = credential
+			}
+			return applyRelation(cmd, opts, plan, approvalHash, destCredential)
 		},
 	}
 	command.Flags().StringVarP(&inputPath, "file", "f", "-", "replication plan JSON file, or - for stdin")
 	command.Flags().StringVar(&approvalHash, "approve", "", "exact SHA-256 hash printed by the replication plan")
+	command.Flags().BoolVar(&promptDestCred, "prompt-dest-credential", false, "enter the destination admin account and password at the terminal (for a destination with no stored vault credential)")
 	_ = command.MarkFlagRequired("approve")
 	return command
 }
 
-func applyRelation(cmd *cobra.Command, opts *options, plan application.SnapshotReplicationRelationPlan, approvalHash string) error {
+func applyRelation(cmd *cobra.Command, opts *options, plan application.SnapshotReplicationRelationPlan, approvalHash string, destCredential *application.SnapshotReplicationDestCredential) error {
 	service, err := loadService(opts)
 	if err != nil {
 		return err
 	}
 	defer closeService(service)
-	result, err := service.ApplySnapshotReplicationRelationPlan(cmd.Context(), plan, approvalHash)
+	result, err := service.ApplySnapshotReplicationRelationPlan(cmd.Context(), plan, approvalHash, destCredential)
 	if err != nil {
+		if destCredential == nil && strings.Contains(err.Error(), "no password available") {
+			return fmt.Errorf("%w\n\nThe destination profile has no stored credential. Re-run with --prompt-dest-credential to enter it at the terminal, or store it first with `dsmctl auth login`.", err)
+		}
 		return err
 	}
 	return encodeIndentedJSON(cmd.OutOrStdout(), result)
+}
+
+// promptDestinationCredential reads the destination NAS admin credential from
+// the terminal for a one-shot DR pairing (used when the destination profile has
+// no stored vault credential). The password is read without echo. It is never
+// stored, logged, or placed in the plan — it is handed straight to the apply
+// path and discarded.
+func promptDestinationCredential(cmd *cobra.Command, opts *options, destNAS string) (*application.SnapshotReplicationDestCredential, error) {
+	cfg, err := config.NewStore(opts.configPath).Load()
+	if err != nil {
+		return nil, err
+	}
+	name, profile, err := cfg.Resolve(destNAS)
+	if err != nil {
+		return nil, fmt.Errorf("resolve destination NAS %q: %w", destNAS, err)
+	}
+	out := cmd.ErrOrStderr()
+	in := cmd.InOrStdin()
+
+	fmt.Fprintf(out, "Enter the destination %q admin credential for Snapshot Replication pairing.\n", name)
+	fmt.Fprintf(out, "Account [%s]: ", profile.Username)
+	account, err := readTerminalLine(in)
+	if err != nil {
+		return nil, fmt.Errorf("read destination account: %w", err)
+	}
+	if strings.TrimSpace(account) == "" {
+		account = profile.Username
+	}
+	if strings.TrimSpace(account) == "" {
+		return nil, fmt.Errorf("a destination account is required")
+	}
+
+	fmt.Fprint(out, "Password: ")
+	password, err := readTerminalSecret(in)
+	fmt.Fprintln(out)
+	if err != nil {
+		return nil, fmt.Errorf("read destination password: %w", err)
+	}
+	if password == "" {
+		return nil, fmt.Errorf("a destination password is required")
+	}
+
+	fmt.Fprint(out, "OTP code (leave blank if none): ")
+	otp, err := readTerminalLine(in)
+	if err != nil {
+		return nil, fmt.Errorf("read destination OTP: %w", err)
+	}
+
+	return &application.SnapshotReplicationDestCredential{
+		Account:  strings.TrimSpace(account),
+		Password: password,
+		OTPCode:  strings.TrimSpace(otp),
+	}, nil
+}
+
+// readTerminalLine reads one line from in without buffering past the newline, so
+// a following secret read from the same descriptor is not consumed early.
+func readTerminalLine(in io.Reader) (string, error) {
+	var line []byte
+	buf := make([]byte, 1)
+	for {
+		n, err := in.Read(buf)
+		if n > 0 {
+			if buf[0] == '\n' {
+				break
+			}
+			if buf[0] != '\r' {
+				line = append(line, buf[0])
+			}
+		}
+		if err != nil {
+			if len(line) > 0 {
+				break
+			}
+			return "", err
+		}
+	}
+	return string(line), nil
+}
+
+// readTerminalSecret reads a secret without echo when in is a terminal, and
+// falls back to a plain line read when it is piped (non-interactive).
+func readTerminalSecret(in io.Reader) (string, error) {
+	if file, ok := in.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
+		secret, err := term.ReadPassword(int(file.Fd()))
+		return string(secret), err
+	}
+	return readTerminalLine(in)
 }
 
 func newSnapshotRelationDeleteCommand(opts *options) *cobra.Command {

@@ -889,11 +889,26 @@ func planSnapshotReplicationRelationWithClients(ctx context.Context, sourceName 
 	return plan, nil
 }
 
+// SnapshotReplicationDestCredential is a destination admin credential supplied
+// out-of-band for the DR pairing when the destination profile has no stored
+// vault credential. It is populated ONLY by the CLI's interactive terminal
+// prompt (a human types it) — never from an MCP argument, a flag value, or the
+// plan — and is used once to authenticate the pairing, then discarded. Like the
+// vault-resolved credential it never enters the plan, its hash, or logs.
+type SnapshotReplicationDestCredential struct {
+	Account  string
+	Password string
+	OTPCode  string
+}
+
 // ApplySnapshotReplicationRelationPlan applies a validated relation plan. The
-// destination admin credential is resolved from its vault profile only here, at
-// apply time, and used to authenticate the DR pairing by account; it never
-// enters the plan, its hash, logs, or MCP arguments.
-func (s *Service) ApplySnapshotReplicationRelationPlan(ctx context.Context, plan SnapshotReplicationRelationPlan, approvalHash string) (SnapshotReplicationRelationApplyResult, error) {
+// destination admin credential authenticates the DR pairing by account; it
+// never enters the plan, its hash, logs, or MCP arguments. When destCredential
+// is nil it is resolved from the destination vault profile at apply time; when
+// non-nil (the CLI interactive-prompt path, for a destination with no stored
+// credential) that human-entered credential is used instead. MCP always passes
+// nil — it cannot prompt and must never accept a password.
+func (s *Service) ApplySnapshotReplicationRelationPlan(ctx context.Context, plan SnapshotReplicationRelationPlan, approvalHash string, destCredential *SnapshotReplicationDestCredential) (SnapshotReplicationRelationApplyResult, error) {
 	if err := validateSnapshotReplicationRelationPlan(plan, approvalHash); err != nil {
 		return SnapshotReplicationRelationApplyResult{}, err
 	}
@@ -920,10 +935,10 @@ func (s *Service) ApplySnapshotReplicationRelationPlan(ctx context.Context, plan
 	if sourceName != plan.SourceNAS || destName != plan.DestNAS {
 		return SnapshotReplicationRelationApplyResult{}, fmt.Errorf("replication plan NAS profiles resolved differently at apply")
 	}
-	return applySnapshotReplicationRelationWithClients(ctx, sourceName, sourceClient, destName, destClient, plan)
+	return applySnapshotReplicationRelationWithClients(ctx, sourceName, sourceClient, destName, destClient, plan, destCredential)
 }
 
-func applySnapshotReplicationRelationWithClients(ctx context.Context, sourceName string, sourceClient snapshotReplicationClient, destName string, destClient snapshotReplicationClient, plan SnapshotReplicationRelationPlan) (SnapshotReplicationRelationApplyResult, error) {
+func applySnapshotReplicationRelationWithClients(ctx context.Context, sourceName string, sourceClient snapshotReplicationClient, destName string, destClient snapshotReplicationClient, plan SnapshotReplicationRelationPlan, destCredential *SnapshotReplicationDestCredential) (SnapshotReplicationRelationApplyResult, error) {
 	// TOCTOU close: re-plan against live two-site state and compare.
 	current, err := planSnapshotReplicationRelationWithClients(ctx, sourceName, sourceClient, destName, destClient, plan.Request)
 	if err != nil {
@@ -948,12 +963,21 @@ func applySnapshotReplicationRelationWithClients(ctx context.Context, sourceName
 		return SnapshotReplicationRelationApplyResult{}, authenticationError(destName, err)
 	}
 	pairEndpoint := synology.SnapshotReplicationPairEndpoint{Addr: endpoint.Addr, Port: endpoint.Port, HTTPS: endpoint.HTTPS}
-	destCredential, err := destClient.ReplicationAccountCredential(ctx)
-	if err != nil {
-		return SnapshotReplicationRelationApplyResult{}, authenticationError(destName, err)
+	var destCred synology.ReplicationAccountCredential
+	if destCredential != nil {
+		// Human-entered at the CLI prompt (destination has no stored credential).
+		if strings.TrimSpace(destCredential.Account) == "" || destCredential.Password == "" {
+			return SnapshotReplicationRelationApplyResult{}, fmt.Errorf("provided destination credential is missing an account or password")
+		}
+		destCred = synology.ReplicationAccountCredential{Account: destCredential.Account, Password: destCredential.Password, OTPCode: destCredential.OTPCode}
+	} else {
+		destCred, err = destClient.ReplicationAccountCredential(ctx)
+		if err != nil {
+			return SnapshotReplicationRelationApplyResult{}, authenticationError(destName, err)
+		}
 	}
 
-	credID, err := sourceClient.PairReplicationCredential(ctx, pairEndpoint, destCredential)
+	credID, err := sourceClient.PairReplicationCredential(ctx, pairEndpoint, destCred)
 	if err != nil {
 		return SnapshotReplicationRelationApplyResult{}, authenticationError(sourceName, err)
 	}

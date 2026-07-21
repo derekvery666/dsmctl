@@ -100,6 +100,15 @@ from its vault profile), so no browser sign-in and no `synocredential` OAuth
 broker is involved. A destination account that enforces interactive 2FA is not
 supported for headless pairing — use a dedicated automation account.
 
+If the destination profile has **no stored credential**, pass
+`--prompt-dest-credential` to `snapshot relation apply`: the CLI asks for the
+destination admin account (defaulting to the profile username) and password at
+the terminal (password read without echo), uses it once to pair, and discards
+it — it is never stored, logged, or placed in the plan. This is a CLI-only path:
+the MCP tool never prompts and never accepts a password, so over MCP a
+destination without a stored credential fails closed with guidance to enroll it
+(`dsmctl auth login`) or pair from the CLI.
+
 ```console
 dsmctl snapshot relation plan --source nas51 --dest nas255 --share data --dest-volume /volume1 -o plan.json
 dsmctl snapshot relation apply --nas nas51 -f plan.json --approve <hash>

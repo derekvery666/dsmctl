@@ -35,7 +35,8 @@ type fakeReplicationRelationClient struct {
 	failCheck     bool
 
 	// recorded
-	pairedCred         synology.ReplicationAccountCredential
+	pairedCred          synology.ReplicationAccountCredential
+	accountCredResolved bool
 	createdWith        *snapshotreplication.RelationCreate
 	deletedCreds       []string
 	deletedPlans       []string
@@ -136,7 +137,7 @@ func TestApplyReplicationRelationBrokersSecretAtApply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan error = %v", err)
 	}
-	result, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan)
+	result, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan, nil)
 	if err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
@@ -166,7 +167,7 @@ func TestApplyReplicationRelationStaleRejected(t *testing.T) {
 	}
 	// Destination free space changes out-of-band → observed fingerprint drifts.
 	dest.volAvail = 1 << 39
-	if _, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan); err == nil || !strings.Contains(err.Error(), "stale") {
+	if _, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan, nil); err == nil || !strings.Contains(err.Error(), "stale") {
 		t.Fatalf("expected a stale-plan error when dest state drifts, got %v", err)
 	}
 }
@@ -183,12 +184,52 @@ func TestApplyReplicationRelationConfirmsByPlanID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan error = %v", err)
 	}
-	if _, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan); err == nil || !strings.Contains(err.Error(), "is not listed") {
+	if _, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan, nil); err == nil || !strings.Contains(err.Error(), "is not listed") {
 		t.Fatalf("apply must reject a plan-id mismatch, got %v", err)
 	}
 	// The temporary credential must be cleaned up on this failure.
 	if len(source.deletedCreds) != 1 {
 		t.Fatalf("credential not cleaned up on confirm failure: %#v", source.deletedCreds)
+	}
+}
+
+func TestApplyReplicationRelationUsesPromptedCredentialOverVault(t *testing.T) {
+	// The destination profile has no stored credential; a credential entered at
+	// the CLI prompt is used instead, and the vault resolver is never consulted.
+	source := newSourceRelation()
+	dest := newDestRelation()
+	dest.destAccount = ""  // vault has nothing
+	dest.destPassword = "" // vault has nothing
+	plan, err := planReplicationRelationForTest(t, source, dest, snapshotreplication.RelationCreate{SourceShare: "data", DestVolume: "/volume1"})
+	if err != nil {
+		t.Fatalf("plan error = %v", err)
+	}
+	override := &SnapshotReplicationDestCredential{Account: "typed-admin", Password: "typed-pw"}
+	result, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan, override)
+	if err != nil {
+		t.Fatalf("apply with prompted credential error = %v", err)
+	}
+	if !result.Applied {
+		t.Fatalf("result = %#v", result)
+	}
+	if dest.accountCredResolved {
+		t.Fatal("vault credential resolver was consulted despite a prompted override")
+	}
+	if source.pairedCred.Account != "typed-admin" || source.pairedCred.Password != "typed-pw" {
+		t.Fatalf("source paired with %+v, want the prompted credential", source.pairedCred)
+	}
+}
+
+func TestApplyReplicationRelationRejectsIncompletePromptedCredential(t *testing.T) {
+	source := newSourceRelation()
+	dest := newDestRelation()
+	plan, err := planReplicationRelationForTest(t, source, dest, snapshotreplication.RelationCreate{SourceShare: "data", DestVolume: "/volume1"})
+	if err != nil {
+		t.Fatalf("plan error = %v", err)
+	}
+	override := &SnapshotReplicationDestCredential{Account: "typed-admin", Password: ""}
+	if _, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan, override); err == nil || !strings.Contains(err.Error(), "missing an account or password") {
+		t.Fatalf("apply must reject an incomplete prompted credential, got %v", err)
 	}
 }
 
@@ -204,7 +245,7 @@ func TestApplyReplicationRelationConfirmsByShareWhenTaskOmitsPlanID(t *testing.T
 	if err != nil {
 		t.Fatalf("plan error = %v", err)
 	}
-	result, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan)
+	result, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan, nil)
 	if err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
@@ -224,7 +265,7 @@ func TestApplyReplicationRelationCleansUpOnTaskFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan error = %v", err)
 	}
-	if _, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan); err == nil || !strings.Contains(err.Error(), "out of space") {
+	if _, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan, nil); err == nil || !strings.Contains(err.Error(), "out of space") {
 		t.Fatalf("apply error = %v", err)
 	}
 	// A failed async task must still trigger temp-credential cleanup.
@@ -259,7 +300,7 @@ func TestApplyReplicationRelationCleansUpCredentialOnCheckFailure(t *testing.T) 
 	if err != nil {
 		t.Fatalf("plan error = %v", err)
 	}
-	if _, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan); err == nil || !strings.Contains(err.Error(), "cannot reach") {
+	if _, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan, nil); err == nil || !strings.Contains(err.Error(), "cannot reach") {
 		t.Fatalf("apply error = %v", err)
 	}
 	if len(source.deletedCreds) != 1 || source.deletedCreds[0] != "dest-cred-abc" {
@@ -361,6 +402,7 @@ func (c *fakeReplicationRelationClient) ReplicationDestinationEndpoint(context.C
 }
 
 func (c *fakeReplicationRelationClient) ReplicationAccountCredential(context.Context) (synology.ReplicationAccountCredential, error) {
+	c.accountCredResolved = true
 	return synology.ReplicationAccountCredential{Account: c.destAccount, Password: c.destPassword}, nil
 }
 

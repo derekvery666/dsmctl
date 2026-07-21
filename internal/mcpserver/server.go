@@ -4190,7 +4190,11 @@ func New(service *application.Service, version string) *mcp.Server {
 		Description: "Apply an unmodified replication relation plan only while its approval hash and both sites' observed state still match. At apply, dsmctl resolves the destination credential from its vault profile, pairs the two NASes, verifies reachability, creates the relation, polls the task to completion, and confirms the relation is listed. High risk: writes a replica onto the destination and starts ongoing cross-site data movement.",
 		Annotations: mutationAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applySnapshotRelationInput) (*mcp.CallToolResult, applySnapshotRelationOutput, error) {
-		result, err := service.ApplySnapshotReplicationRelationPlan(ctx, input.Plan, input.ApprovalHash)
+		// MCP never prompts and must never accept a password: always resolve the
+		// destination credential from the vault (nil override). A destination
+		// without a stored credential fails closed with guidance to enroll it or
+		// pair via the CLI.
+		result, err := service.ApplySnapshotReplicationRelationPlan(ctx, input.Plan, input.ApprovalHash, nil)
 		if err != nil {
 			return nil, applySnapshotRelationOutput{}, err
 		}
