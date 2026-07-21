@@ -36,9 +36,10 @@ Read (package-gated on `HyperBackup` >= 4.0, fail-closed):
 - **Vault** — package-gated on `HyperBackupVault` >= 4.0:
   `SYNO.Backup.Service.VersionBackup.Config` v1 `get`
   (`parallel_backup_limit`) + `SYNO.Backup.Service.VersionBackup.Target` v1
-  `list` (inbound vault targets; item fields `share`/`target_name`/`used_size`/
-  `computing_size` are source-verified from the Vault UI, decoded tolerantly —
-  the lab has no inbound target yet).
+  `list` (inbound vault targets: `target_id`, `share`, `target_name`,
+  `target_path`, `status`, `is_enc`, `is_resumable`, `used_size`,
+  `computing_size`, `last_backup_start_time`, `last_backup_duration` — all
+  live-verified against a real inbound `image_remote` backup).
 - **Capabilities** — one bool per area plus both packages' evidence.
 
 Guarded write (plan/apply, hash-bound, same contract as Download Station task
@@ -110,6 +111,21 @@ repository (`repo_id` 1) were created through the same probe (Repository
 `create` → Task `create`; the create response body can arrive empty on success,
 so the postcondition re-read is the source of truth). Full field map recorded
 in the auto-memory (`dsm-hyperbackup-webapi-map`).
+
+NAS-to-NAS verification (2026-07-21, nas255 → nas51, both DS918+): HyperBackup
+4.2.2 online-installed on nas255 and HyperBackupVault 4.2.2 local-.spk-installed
+on offline nas51 through dsmctl's own package plans; destination share
+`hb_vault` created through the share plan; an `image_remote` repository + task
+(`dsmctl-remote-task`, source `/homes`, vault dir `DiskStation_1`, port 6281,
+`sslcheck` on with `ssl_trust_mode:"ignore"`, plain-credential
+`is_webapi_authen:false`) created by probe with the target credential resolved
+in-process from the OS credential store (never printed); backup run to `done`
+twice — once by probe, once through the shipped `plan`/`apply` — and the vault
+side re-read after each (used size 729 → 961 bytes). The split-package gating
+was verified for real: nas255 (client only) reports vault read unsupported,
+nas51 (vault only) fails every client read closed. Remote-target detail
+(`Target.get` → `is_online`, vault host name) and remote version list verified
+through the CLI. Both machines keep their tasks/targets as standing fixtures.
 
 ## Coordination
 

@@ -97,7 +97,12 @@ const (
 		{"event":"Setting of backup task [dsmctl-probe-task] was created","level":"info","time":"2026/07/21 01:19:57","user":"deryck"}]}`
 	vaultConfigBody  = `{"parallel_backup_limit":2}`
 	vaultTargetsBody = `{"target_list":[]}`
-	successBody      = `{}`
+	// Live payload from a real inbound image_remote backup (nas255 -> nas51).
+	vaultTargetsPopulatedBody = `{"target_list":[{"computing_size":false,"is_enc":false,"is_resumable":false,
+		"last_backup_duration":15,"last_backup_start_time":1784602516,"share":"hb_vault","status":"idle",
+		"target_id":1,"target_name":"DiskStation_1","target_path":"/volume1/hb_vault/DiskStation_1",
+		"uni_key":"00113285995F_1_1784602486","used_size":729}]}`
+	successBody = `{}`
 )
 
 func TestTasksDecodeLiveShape(t *testing.T) {
@@ -231,6 +236,27 @@ func TestVaultDecodeLiveShape(t *testing.T) {
 	}
 	if vault.ParallelBackupLimit != 2 || len(vault.Targets) != 0 {
 		t.Fatalf("vault = %#v", vault)
+	}
+}
+
+func TestVaultDecodeInboundTarget(t *testing.T) {
+	target := hbTarget("", "4.2.2-4262")
+	vault, _, err := ExecuteVault(context.Background(), target, routeExecutor{t: t, routes: map[string]string{
+		"SYNO.Backup.Service.VersionBackup.Config get":  vaultConfigBody,
+		"SYNO.Backup.Service.VersionBackup.Target list": vaultTargetsPopulatedBody,
+	}})
+	if err != nil {
+		t.Fatalf("ExecuteVault() error = %v", err)
+	}
+	if len(vault.Targets) != 1 {
+		t.Fatalf("targets = %#v", vault.Targets)
+	}
+	inbound := vault.Targets[0]
+	if inbound.TargetID != 1 || inbound.Share != "hb_vault" || inbound.TargetName != "DiskStation_1" ||
+		inbound.TargetPath != "/volume1/hb_vault/DiskStation_1" || inbound.Status != "idle" ||
+		inbound.Encrypted || inbound.UsedSizeBytes != 729 ||
+		inbound.LastBackupStart != 1784602516 || inbound.LastBackupDurationSec != 15 {
+		t.Fatalf("inbound target = %#v", inbound)
 	}
 }
 

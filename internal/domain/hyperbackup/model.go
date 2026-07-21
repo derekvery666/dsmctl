@@ -160,13 +160,19 @@ type Logs struct {
 }
 
 // VaultTarget is one inbound target stored on this NAS by Hyper Backup Vault.
-// Field availability is tolerant: the item shape is source-verified from the
-// Vault UI but the lab fixture has no inbound target yet.
+// The shape is live-verified against a real inbound image_remote backup.
 type VaultTarget struct {
-	Share         string `json:"share,omitempty" jsonschema:"Shared folder holding the target"`
-	TargetName    string `json:"target_name,omitempty" jsonschema:"Target directory name"`
-	UsedSizeBytes int64  `json:"used_size_bytes,omitempty" jsonschema:"Space the target uses in bytes; 0 while still computing"`
-	ComputingSize bool   `json:"computing_size,omitempty" jsonschema:"Whether the size is still being computed"`
+	TargetID              int    `json:"target_id" jsonschema:"Vault target identifier"`
+	Share                 string `json:"share,omitempty" jsonschema:"Shared folder holding the target"`
+	TargetName            string `json:"target_name,omitempty" jsonschema:"Target directory name"`
+	TargetPath            string `json:"target_path,omitempty" jsonschema:"Absolute path of the target on this NAS"`
+	Status                string `json:"status,omitempty" jsonschema:"Inbound session activity, such as idle or backup"`
+	Encrypted             bool   `json:"encrypted" jsonschema:"Whether the stored backup is client-side encrypted"`
+	Resumable             bool   `json:"resumable" jsonschema:"Whether an interrupted inbound backup can resume"`
+	UsedSizeBytes         int64  `json:"used_size_bytes,omitempty" jsonschema:"Space the target uses in bytes; 0 while still computing"`
+	ComputingSize         bool   `json:"computing_size,omitempty" jsonschema:"Whether the size is still being computed"`
+	LastBackupStart       int64  `json:"last_backup_start,omitempty" jsonschema:"Start of the last inbound backup as a Unix timestamp; 0 when never"`
+	LastBackupDurationSec int64  `json:"last_backup_duration_seconds,omitempty" jsonschema:"Duration of the last inbound backup in seconds"`
 }
 
 // Vault is the Hyper Backup Vault service view of this NAS as a backup

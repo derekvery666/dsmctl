@@ -418,10 +418,17 @@ func decodeVaultConfig(data json.RawMessage) (hyperbackup.Vault, error) {
 func decodeVaultTargets(data json.RawMessage) ([]hyperbackup.VaultTarget, error) {
 	var resp struct {
 		TargetList *[]struct {
-			Share         *string   `json:"share"`
-			TargetName    *string   `json:"target_name"`
-			UsedSize      flexInt64 `json:"used_size"`
-			ComputingSize bool      `json:"computing_size"`
+			TargetID       *flexInt  `json:"target_id"`
+			Share          *string   `json:"share"`
+			TargetName     *string   `json:"target_name"`
+			TargetPath     *string   `json:"target_path"`
+			Status         *string   `json:"status"`
+			IsEnc          bool      `json:"is_enc"`
+			IsResumable    bool      `json:"is_resumable"`
+			UsedSize       flexInt64 `json:"used_size"`
+			ComputingSize  bool      `json:"computing_size"`
+			LastBackupTime flexInt64 `json:"last_backup_start_time"`
+			LastDuration   flexInt64 `json:"last_backup_duration"`
 		} `json:"target_list"`
 	}
 	if err := unmarshalObject(data, "Hyper Backup Vault target list", &resp); err != nil {
@@ -432,11 +439,21 @@ func decodeVaultTargets(data json.RawMessage) ([]hyperbackup.VaultTarget, error)
 	}
 	targets := make([]hyperbackup.VaultTarget, 0, len(*resp.TargetList))
 	for _, wire := range *resp.TargetList {
+		if wire.TargetID == nil {
+			return nil, errors.New("decode Hyper Backup Vault target list: required field \"target_id\" is missing")
+		}
 		targets = append(targets, hyperbackup.VaultTarget{
-			Share:         deref(wire.Share),
-			TargetName:    deref(wire.TargetName),
-			UsedSizeBytes: int64(wire.UsedSize),
-			ComputingSize: wire.ComputingSize,
+			TargetID:              int(*wire.TargetID),
+			Share:                 deref(wire.Share),
+			TargetName:            deref(wire.TargetName),
+			TargetPath:            deref(wire.TargetPath),
+			Status:                deref(wire.Status),
+			Encrypted:             wire.IsEnc,
+			Resumable:             wire.IsResumable,
+			UsedSizeBytes:         int64(wire.UsedSize),
+			ComputingSize:         wire.ComputingSize,
+			LastBackupStart:       int64(wire.LastBackupTime),
+			LastBackupDurationSec: int64(wire.LastDuration),
 		})
 	}
 	return targets, nil

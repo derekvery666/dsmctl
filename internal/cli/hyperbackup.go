@@ -398,10 +398,11 @@ func writeBackupVault(cmd *cobra.Command, result application.HyperBackupVaultRes
 		fmt.Fprintln(writer, "(no inbound targets)")
 		return writer.Flush()
 	}
-	fmt.Fprintln(writer, "SHARE\tTARGET\tUSED BYTES\tCOMPUTING")
+	fmt.Fprintln(writer, "ID\tSHARE\tTARGET\tSTATUS\tUSED BYTES\tENCRYPTED\tLAST BACKUP (UNIX)\tDURATION (s)")
 	for _, target := range result.Vault.Targets {
-		fmt.Fprintf(writer, "%s\t%s\t%d\t%s\n",
-			valueOrDash(target.Share), valueOrDash(target.TargetName), target.UsedSizeBytes, yesNo(target.ComputingSize))
+		fmt.Fprintf(writer, "%d\t%s\t%s\t%s\t%d\t%s\t%d\t%d\n",
+			target.TargetID, valueOrDash(target.Share), valueOrDash(target.TargetName), valueOrDash(target.Status),
+			target.UsedSizeBytes, yesNo(target.Encrypted), target.LastBackupStart, target.LastBackupDurationSec)
 	}
 	return writer.Flush()
 }

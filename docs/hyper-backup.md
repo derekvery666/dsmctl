@@ -40,7 +40,10 @@ dsmctl backup tasks apply --nas office -f plan.json --approve <hash>
   Backup event feed with per-level totals.
 - **`vault`** reads `SYNO.Backup.Service.VersionBackup.Config` (`get`) and
   `SYNO.Backup.Service.VersionBackup.Target` (`list`): the parallel inbound
-  session limit and the vault targets stored on this NAS.
+  session limit and each inbound target stored on this NAS — id, share and
+  path, activity, encryption, used size, and the last inbound backup's start
+  time and duration (live-verified against a real NAS-to-NAS `image_remote`
+  backup).
 
 MCP exposes the same reads through `get_hyper_backup_capabilities`,
 `get_hyper_backup_tasks`, `get_hyper_backup_task`, `get_hyper_backup_versions`,
