@@ -16,6 +16,7 @@ import (
 func newAuthRevealPasswordCommand(opts *options) *cobra.Command {
 	var toStdout bool
 	var clearAfter int
+	var account string
 	command := &cobra.Command{
 		Use:   "reveal-password",
 		Short: "Copy a NAS's stored password to the clipboard (a human at a terminal only)",
@@ -58,7 +59,7 @@ func newAuthRevealPasswordCommand(opts *options) *cobra.Command {
 			}
 
 			secrets := credentials.NewSecureStore()
-			password, err := secrets.RevealPassword(ctx, name)
+			password, err := secrets.RevealPasswordForAccount(ctx, name, account)
 			if err != nil {
 				if errors.Is(err, credentials.ErrNoStoredPassword) {
 					auditReveal(cmd, name, "none", "no-stored-password")
@@ -94,6 +95,7 @@ func newAuthRevealPasswordCommand(opts *options) *cobra.Command {
 	}
 	command.Flags().BoolVar(&toStdout, "stdout", false, "print to the terminal instead of the clipboard")
 	command.Flags().IntVar(&clearAfter, "clear-after", 30, "seconds before the clipboard is auto-cleared (minimum 5)")
+	command.Flags().StringVar(&account, "account", "", "reveal a specific account in the NAS password book (default: the primary login)")
 	return command
 }
 

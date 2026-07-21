@@ -88,6 +88,14 @@ hash-bound plan/apply contract (`plan_snapshot_replication_create` /
 gateway). Both source and destination are configured profiles; you name them,
 and dsmctl resolves the **destination credential from its own vault profile at
 apply time only** — it never enters the plan, its hash, logs, or MCP arguments.
+The **source must be a managed profile**; the **destination may be a
+destination-only (`role: target`) profile** — a NAS you hold credentials for but
+do not manage (add one with `dsmctl nas add --role target` or the console *Add a
+NAS → Destination only* toggle). The destination resolves through the runtime's
+destination client, which bypasses the managed-role gate; the source resolves
+through the normal managed client, so a target can never be the source. If the
+destination holds a password *book* (several accounts), the primary login is
+used unless a specific account is selected. See `docs/credentials.md`.
 The plan is high-risk and guards against overwriting destination data (no
 same-named share or existing relation), requires a healthy btrfs destination
 volume, verifies source→destination reachability, and confirms the created

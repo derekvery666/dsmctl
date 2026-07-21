@@ -36,9 +36,43 @@ type Profile struct {
 	TLSMode                string     `json:"tls_mode,omitempty"`
 	CertificateFingerprint string     `json:"certificate_fingerprint,omitempty"`
 	TimeoutSeconds         int        `json:"timeout_seconds,omitempty"`
+	// Role is "managed" (the default, absent value) or "target". A target-only
+	// profile holds connection material and credentials so it can be used as an
+	// outbound destination (a Snapshot Replication / Hyper Backup target), but it
+	// is excluded from the management surfaces (read/apply tools, the managed NAS
+	// count, token allowlists). omitempty keeps pre-role config files reading as
+	// managed.
+	Role string `json:"role,omitempty"`
 	// Revision is supplied by a dynamic gateway repository. It is runtime
 	// coordination metadata, not part of the portable CLI configuration file.
 	Revision uint64 `json:"-"`
+}
+
+// Profile role values. A missing/empty Role is treated as managed.
+const (
+	ProfileRoleManaged = "managed"
+	ProfileRoleTarget  = "target"
+)
+
+// Managed reports whether this profile participates in the management surfaces.
+// Only an explicit "target" role opts out; every other value (including the
+// empty default) is managed, so existing profiles keep their behavior.
+func (p Profile) Managed() bool {
+	return !strings.EqualFold(strings.TrimSpace(p.Role), ProfileRoleTarget)
+}
+
+// NormalizeRole canonicalizes a role string to "managed"/"target" (case- and
+// whitespace-insensitive), returning an error for any other value. The managed
+// default canonicalizes to the empty string so it stays omitempty on disk.
+func NormalizeRole(role string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "", ProfileRoleManaged:
+		return "", nil
+	case ProfileRoleTarget:
+		return ProfileRoleTarget, nil
+	default:
+		return "", fmt.Errorf("role must be %q or %q", ProfileRoleManaged, ProfileRoleTarget)
+	}
 }
 
 // Identity is the stable hardware key for a NAS. Serial is the primary key;

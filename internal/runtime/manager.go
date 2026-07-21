@@ -180,6 +180,18 @@ func NewManager(cfg *config.Config, resolver credentials.Resolver, options ...Op
 // client per profile. Separate profiles can therefore hold independent DSM
 // sessions at the same time.
 func (m *Manager) Client(ctx context.Context, requested string) (string, Client, error) {
+	return m.resolveClient(ctx, requested, false)
+}
+
+// DestinationClient is Client without the managed-role gate. It is for the
+// narrow set of callers that connect to a NAS purely as an outbound destination
+// and never to manage it: Snapshot Replication / Hyper Backup destination
+// resolution and the administration console's connection test.
+func (m *Manager) DestinationClient(ctx context.Context, requested string) (string, Client, error) {
+	return m.resolveClient(ctx, requested, true)
+}
+
+func (m *Manager) resolveClient(ctx context.Context, requested string, allowTarget bool) (string, Client, error) {
 	m.profileGate.RLock()
 	defer m.profileGate.RUnlock()
 
@@ -190,6 +202,12 @@ func (m *Manager) Client(ctx context.Context, requested string) (string, Client,
 	name, profile, err := cfg.Resolve(requested)
 	if err != nil {
 		return "", nil, err
+	}
+	// A destination-only ("target") profile holds credentials for outbound use
+	// but is not managed: every management operation resolves through Client and
+	// is refused here. DestinationClient opts a NAS in as a pure destination.
+	if !allowTarget && !profile.Managed() {
+		return "", nil, fmt.Errorf("NAS %q is a destination-only profile and cannot be managed; it can only be used as a backup or replication destination", name)
 	}
 
 	m.mu.Lock()

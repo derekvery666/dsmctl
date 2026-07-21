@@ -103,6 +103,16 @@ and System Administration groups first** (queued as WI-065…080).
   — guarded relation create source→dest with the destination password
   vault-brokered at apply time; retention/schedule writes and restore/rollback
   still deferred.
+  - **Credential-model seam (2026-07-21):** the destination-credential model
+    now supports a per-NAS password *book* (multiple `{account, password}`
+    entries) and a `role: managed | target` on the profile (a target is a
+    destination you hold credentials for but do not manage). These live on the
+    shared config/vault/credentials layers. When Hyper Backup merges, its
+    destination-credential resolution should call
+    `Repository.PasswordForAccount` / `SecureStore.PasswordForAccount` (account
+    selectable) and must **not** assume `role == managed` — resolve a
+    destination through `Manager.DestinationClient`, not `Client`. See
+    `docs/credentials.md` (Password book / Destination-only / Hyper Backup seam).
 - **Virtualization/servers**: Container Manager/Docker, Virtual Machine
   Manager, VPN/DNS/DHCP/WebDAV/Web Station/Mail servers.
 - **Collaboration/dev/fleet**: Note Station/Calendar/Contacts/Chat servers,

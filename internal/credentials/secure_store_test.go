@@ -42,7 +42,7 @@ func (m *memoryKeyring) Delete(service, user string) error {
 
 func TestSecureStoreUsesKeyringBeforeEnvironment(t *testing.T) {
 	backend := newMemoryKeyring()
-	backend.values[keyringService+":"+passwordKey("office")] = "keyring-password"
+	backend.values[keyringService+":"+passwordKey("office", "")] = "keyring-password"
 	store := &SecureStore{
 		keyring: backend,
 		environment: &Environment{lookup: func(string) (string, bool) {
@@ -116,7 +116,7 @@ func (errorKeyring) Delete(string, string) error {
 
 func TestSecureStoreProbesReportPresenceWithoutValues(t *testing.T) {
 	backend := newMemoryKeyring()
-	backend.values[keyringService+":"+passwordKey("office")] = "secret"
+	backend.values[keyringService+":"+passwordKey("office", "")] = "secret"
 	store := &SecureStore{keyring: backend, environment: &Environment{lookup: func(string) (string, bool) {
 		return "", false
 	}}}

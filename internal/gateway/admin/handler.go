@@ -449,6 +449,8 @@ func (h *Handler) profile(w http.ResponseWriter, req *http.Request) {
 		h.trustProfileCertificate(w, req, name)
 	case "credentials/status":
 		h.credentialStatus(w, req, name)
+	case "credentials/accounts":
+		h.passwordAccounts(w, req, name)
 	case "credentials/password":
 		h.passwordEnrollment(w, req, name)
 	case "credentials/password/reveal":
@@ -883,7 +885,10 @@ func (h *Handler) testProfile(w http.ResponseWriter, req *http.Request, name str
 	}
 	_ = response.Body.Close()
 	stages = append(stages, testStage{Name: "tls_http", Passed: true})
-	_, client, err := h.manager.Client(ctx, name)
+	// A connection test verifies reachability + credentials for any profile,
+	// including a destination-only target you hold credentials for but do not
+	// manage, so it uses the destination client (no managed-role gate).
+	_, client, err := h.manager.DestinationClient(ctx, name)
 	if err == nil {
 		err = client.Authenticate(ctx)
 	}
@@ -921,16 +926,45 @@ func (h *Handler) credentialStatus(w http.ResponseWriter, req *http.Request, nam
 	})
 }
 
+// passwordAccounts lists the account entries in a NAS's password book. It returns
+// only account labels and provenance timestamps — never a plaintext password — so
+// it drives the console "book" view for multi-account profiles without exposing
+// any secret. It is never wired to the MCP surface.
+func (h *Handler) passwordAccounts(w http.ResponseWriter, req *http.Request, name string) {
+	if req.Method != http.MethodGet {
+		methodNotAllowed(w, http.MethodGet)
+		return
+	}
+	accounts, err := h.repository.PasswordAccounts(req.Context(), name)
+	if err != nil {
+		writeRepositoryError(w, err)
+		return
+	}
+	if accounts == nil {
+		accounts = []state.AccountCredentialInfo{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"nas": name, "accounts": accounts})
+}
+
 // revealPassword returns the stored plaintext password for a NAS to the
 // signed-in administrator. It is admin-session-gated (like every other route
 // here) and audited as credential.reveal; it is never exposed on the MCP
-// surface. POST so the plaintext response is not cached.
+// surface. POST so the plaintext response is not cached. An optional {account}
+// body selects one entry from a multi-account password book (default: primary).
 func (h *Handler) revealPassword(w http.ResponseWriter, req *http.Request, name string) {
 	if req.Method != http.MethodPost {
 		methodNotAllowed(w, http.MethodPost)
 		return
 	}
-	password, err := h.repository.RevealPassword(req.Context(), name)
+	var input struct {
+		Account string `json:"account,omitempty"`
+	}
+	if err := decodeJSON(req, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	account := strings.TrimSpace(input.Account)
+	password, err := h.repository.RevealPasswordForAccount(req.Context(), name, account)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "no password stored for this NAS")
@@ -939,16 +973,30 @@ func (h *Handler) revealPassword(w http.ResponseWriter, req *http.Request, name 
 		writeRepositoryError(w, err)
 		return
 	}
+	// Reveal discloses a plaintext secret, so record a precise audit entry naming
+	// the NAS and the account whose password was shown (account labels are not
+	// secrets). This supplements the coarse credential.reveal request audit.
+	reason := "account=(primary)"
+	if account != "" {
+		reason = "account=" + account
+	}
+	_ = h.repository.AppendAudit(req.Context(), state.AuditEvent{
+		CorrelationID: correlationID(req), ActorType: "gateway_admin", ActorID: administratorActor(req.Context()),
+		Action: "credential.reveal", NAS: name, Reason: reason, Outcome: "success",
+	})
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, map[string]string{"nas": name, "password": password})
+	writeJSON(w, http.StatusOK, map[string]string{"nas": name, "account": account, "password": password})
 }
 
 func (h *Handler) passwordEnrollment(w http.ResponseWriter, req *http.Request, name string) {
 	if req.Method == http.MethodDelete {
+		// An optional ?account= selects one entry from the password book; absent
+		// removes the primary login (the historical single-account behavior).
+		account := strings.TrimSpace(req.URL.Query().Get("account"))
 		var removed bool
 		err := h.manager.MutateProfile(req.Context(), name, func() error {
 			var err error
-			removed, _, err = h.repository.DeletePassword(req.Context(), name)
+			removed, _, err = h.repository.DeletePasswordForAccount(req.Context(), name, account)
 			return err
 		})
 		if err != nil {
@@ -1033,7 +1081,10 @@ func (h *Handler) passwordEnrollment(w http.ResponseWriter, req *http.Request, n
 		device = credentials.TrustedDevice{}
 	}
 	err = h.manager.MutateProfile(req.Context(), name, func() error {
-		_, err := h.repository.EnrollPasswordForAccount(req.Context(), name, input.ExpectedRevision, input.Account, input.Password, device)
+		// SavePasswordForAccount routes the profile login to the primary entry and
+		// any other account to an additional labeled secret, so one NAS can hold a
+		// book of accounts. A primary enrollment matches EnrollPasswordForAccount.
+		_, err := h.repository.SavePasswordForAccount(req.Context(), name, input.ExpectedRevision, input.Account, input.Password, device)
 		return err
 	})
 	if err != nil {

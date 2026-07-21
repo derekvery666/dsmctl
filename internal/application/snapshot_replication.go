@@ -121,6 +121,23 @@ func (s *Service) snapshotReplicationClient(ctx context.Context, requestedNAS st
 	return name, client, nil
 }
 
+// snapshotReplicationDestClient resolves the replication destination. Unlike the
+// source (which is managed and resolves through snapshotReplicationClient), a
+// destination may be a destination-only ("target") profile: you hold credentials
+// to pair with it but do not manage it. It therefore resolves through the
+// destination client, which does not apply the managed-role gate.
+func (s *Service) snapshotReplicationDestClient(ctx context.Context, requestedNAS string) (string, snapshotReplicationClient, error) {
+	name, generic, err := s.manager.DestinationClient(ctx, requestedNAS)
+	if err != nil {
+		return "", nil, err
+	}
+	client, ok := generic.(snapshotReplicationClient)
+	if !ok {
+		return "", nil, fmt.Errorf("NAS client does not implement Snapshot Replication management")
+	}
+	return name, client, nil
+}
+
 func (s *Service) GetSnapshotReplicationCapabilities(ctx context.Context, requestedNAS string) (SnapshotReplicationCapabilitiesResult, error) {
 	name, client, err := s.snapshotReplicationClient(ctx, requestedNAS)
 	if err != nil {
@@ -713,7 +730,7 @@ func (s *Service) PlanSnapshotReplicationRelation(ctx context.Context, sourceNAS
 	if err != nil {
 		return SnapshotReplicationRelationPlan{}, err
 	}
-	destName, destClient, err := s.snapshotReplicationClient(ctx, destNAS)
+	destName, destClient, err := s.snapshotReplicationDestClient(ctx, destNAS)
 	if err != nil {
 		return SnapshotReplicationRelationPlan{}, err
 	}
@@ -928,7 +945,7 @@ func (s *Service) ApplySnapshotReplicationRelationPlan(ctx context.Context, plan
 	if err != nil {
 		return SnapshotReplicationRelationApplyResult{}, err
 	}
-	destName, destClient, err := s.snapshotReplicationClient(ctx, plan.DestNAS)
+	destName, destClient, err := s.snapshotReplicationDestClient(ctx, plan.DestNAS)
 	if err != nil {
 		return SnapshotReplicationRelationApplyResult{}, err
 	}

@@ -52,6 +52,7 @@ type Profile struct {
 	TimeoutSeconds         int       `json:"timeout_seconds,omitempty"`
 	Revision               uint64    `json:"revision"`
 	Default                bool      `json:"default"`
+	Role                   string    `json:"role,omitempty"`
 	PasswordStored         bool      `json:"password_stored"`
 	TrustedDeviceStored    bool      `json:"trusted_device_stored"`
 	SessionStored          bool      `json:"session_stored"`
@@ -66,6 +67,9 @@ type ProfileInput struct {
 	TLSMode                string `json:"tls_mode,omitempty"`
 	CertificateFingerprint string `json:"certificate_fingerprint,omitempty"`
 	TimeoutSeconds         int    `json:"timeout_seconds,omitempty"`
+	// Role is "managed" (default) or "target". It is honored only at creation;
+	// the standard profile edit path leaves an existing profile's role unchanged.
+	Role string `json:"role,omitempty"`
 }
 
 type Health struct {
@@ -89,6 +93,23 @@ type SecretMetadata struct {
 	ID        string    `json:"id"`
 	ProfileID string    `json:"profile_id"`
 	Type      string    `json:"type"`
+	// Account labels a password-book entry with the DSM account it authenticates.
+	// It is non-secret metadata (an account name, like Profile.Username, is not a
+	// secret) and is deliberately outside the AEAD additional-data binding, so
+	// adding it does not invalidate ciphertext written before the field existed.
+	Account   string    `json:"account,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// AccountCredentialInfo describes one stored account+password entry in a
+// profile's password book. It never carries the plaintext password — only the
+// account label and provenance timestamps — so it is safe to return to the
+// administration console. Primary marks the entry that backs the runtime login
+// (Profile.Username / the resolver's Password lookup).
+type AccountCredentialInfo struct {
+	Account   string    `json:"account"`
+	Primary   bool      `json:"primary"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -97,6 +118,11 @@ func normalizeProfileInput(input ProfileInput) (ProfileInput, error) {
 	input.Name = strings.TrimSpace(input.Name)
 	input.URL = strings.TrimRight(strings.TrimSpace(input.URL), "/")
 	input.Username = strings.TrimSpace(input.Username)
+	role, err := config.NormalizeRole(input.Role)
+	if err != nil {
+		return ProfileInput{}, err
+	}
+	input.Role = role
 	input.TLSMode = strings.TrimSpace(input.TLSMode)
 	if input.TLSMode == "" {
 		input.TLSMode = TLSSystemCA

@@ -28,19 +28,27 @@ func newNASCommand(opts *options) *cobra.Command {
 func newNASAddCommand(opts *options) *cobra.Command {
 	var profile config.Profile
 	var makeDefault bool
+	var role string
 	command := &cobra.Command{
 		Use:   "add <name>",
 		Short: "Add or update a NAS profile",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
+			normalizedRole, err := config.NormalizeRole(role)
+			if err != nil {
+				return err
+			}
+			profile.Role = normalizedRole
 			store := config.NewStore(opts.configPath)
 			cfg, err := store.Load()
 			if err != nil {
 				return err
 			}
 			cfg.NAS[name] = profile
-			if makeDefault || cfg.DefaultNAS == "" {
+			// A target-only profile is a destination you hold credentials for but
+			// do not manage; it must never become the default managed NAS.
+			if profile.Managed() && (makeDefault || cfg.DefaultNAS == "") {
 				cfg.DefaultNAS = name
 			}
 			if err := store.Save(cfg); err != nil {
@@ -55,6 +63,7 @@ func newNASAddCommand(opts *options) *cobra.Command {
 	command.Flags().BoolVar(&profile.InsecureSkipTLSVerify, "insecure-skip-tls-verify", false, "accept an untrusted TLS certificate (unsafe)")
 	command.Flags().IntVar(&profile.TimeoutSeconds, "timeout", 30, "request timeout in seconds")
 	command.Flags().BoolVar(&makeDefault, "default", false, "make this the default NAS")
+	command.Flags().StringVar(&role, "role", "", "profile role: 'managed' (default) or 'target' (a destination you hold credentials for but do not manage)")
 	_ = command.MarkFlagRequired("url")
 	return command
 }

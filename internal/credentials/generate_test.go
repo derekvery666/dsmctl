@@ -80,7 +80,7 @@ func TestChainReferenceResolverPrefersMatchingScheme(t *testing.T) {
 
 func TestRevealPasswordIsKeyringOnly(t *testing.T) {
 	backend := newMemoryKeyring()
-	backend.values[keyringService+":"+passwordKey("office")] = "stored-pw"
+	backend.values[keyringService+":"+passwordKey("office", "")] = "stored-pw"
 	store := &SecureStore{keyring: backend, environment: &Environment{lookup: func(string) (string, bool) {
 		return "env-pw", true // must be ignored: reveal never consults the environment fallback
 	}}}

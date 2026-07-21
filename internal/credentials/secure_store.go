@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/zalando/go-keyring"
 
@@ -62,7 +63,7 @@ func (s *SecureStore) Password(ctx context.Context, profileName string, profile 
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	password, keyringErr := s.keyring.Get(keyringService, passwordKey(profileName))
+	password, keyringErr := s.keyring.Get(keyringService, passwordKey(profileName, ""))
 	if keyringErr == nil && password != "" {
 		return password, nil
 	}
@@ -93,10 +94,18 @@ var ErrNoStoredPassword = errors.New("no password stored for this NAS in the OS 
 // path; callers gate it behind an interactive-terminal check. A missing entry
 // returns ErrNoStoredPassword.
 func (s *SecureStore) RevealPassword(ctx context.Context, profileName string) (string, error) {
+	return s.RevealPasswordForAccount(ctx, profileName, "")
+}
+
+// RevealPasswordForAccount reveals a specific account's password from a profile's
+// password book. An empty account selects the primary entry (the one auth login
+// writes). It reads the OS credential store only, with the same human-facing
+// gating obligations as RevealPassword. A missing entry returns ErrNoStoredPassword.
+func (s *SecureStore) RevealPasswordForAccount(ctx context.Context, profileName, account string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	password, err := s.keyring.Get(keyringService, passwordKey(profileName))
+	password, err := s.keyring.Get(keyringService, passwordKey(profileName, account))
 	if errors.Is(err, keyring.ErrNotFound) {
 		return "", ErrNoStoredPassword
 	}
@@ -110,16 +119,44 @@ func (s *SecureStore) RevealPassword(ctx context.Context, profileName string) (s
 }
 
 func (s *SecureStore) SavePassword(ctx context.Context, profileName, password string) error {
+	return s.SavePasswordForAccount(ctx, profileName, "", password)
+}
+
+// SavePasswordForAccount stores a password for a named account in a profile's
+// password book. An empty account writes the primary entry (identical to
+// SavePassword); any other account is stored under an account-scoped key.
+func (s *SecureStore) SavePasswordForAccount(ctx context.Context, profileName, account, password string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if password == "" {
 		return errors.New("password cannot be empty")
 	}
-	if err := s.keyring.Set(keyringService, passwordKey(profileName), password); err != nil {
+	if err := s.keyring.Set(keyringService, passwordKey(profileName, account), password); err != nil {
 		return fmt.Errorf("save password for NAS %q in OS credential store: %w", profileName, err)
 	}
 	return nil
+}
+
+// PasswordForAccount resolves a named account's password. An empty account
+// selects the primary and mirrors Password (keyring first, then the environment
+// fallback); a named secondary resolves from the OS credential store only. It is
+// an internal resolver and its value must never reach MCP or a log.
+func (s *SecureStore) PasswordForAccount(ctx context.Context, profileName string, profile config.Profile, account string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(account) == "" {
+		return s.Password(ctx, profileName, profile)
+	}
+	password, err := s.keyring.Get(keyringService, passwordKey(profileName, account))
+	if err == nil && password != "" {
+		return password, nil
+	}
+	if err != nil && !errors.Is(err, keyring.ErrNotFound) {
+		return "", fmt.Errorf("read password for NAS %q from OS credential store: %w", profileName, err)
+	}
+	return "", fmt.Errorf("password for account %q on NAS %q is unavailable in the OS credential store", strings.TrimSpace(account), profileName)
 }
 
 func (s *SecureStore) TrustedDevice(ctx context.Context, profileName string) (TrustedDevice, error) {
@@ -163,7 +200,7 @@ func (s *SecureStore) SaveTrustedDevice(ctx context.Context, profileName string,
 // HasPassword reports whether a password for the profile exists in the OS
 // credential store. The stored value is never returned.
 func (s *SecureStore) HasPassword(ctx context.Context, profileName string) (bool, error) {
-	return s.probe(ctx, profileName, passwordKey(profileName), "password")
+	return s.probe(ctx, profileName, passwordKey(profileName, ""), "password")
 }
 
 // HasTrustedDevice reports whether a trusted-device credential exists for
@@ -176,7 +213,13 @@ func (s *SecureStore) HasTrustedDevice(ctx context.Context, profileName string) 
 // DeletePassword removes the stored password and reports whether an entry
 // existed. Deleting a missing entry is not an error.
 func (s *SecureStore) DeletePassword(ctx context.Context, profileName string) (bool, error) {
-	return s.remove(ctx, profileName, passwordKey(profileName), "password")
+	return s.DeletePasswordForAccount(ctx, profileName, "")
+}
+
+// DeletePasswordForAccount removes a named account's password from a profile's
+// password book. An empty account removes the primary entry.
+func (s *SecureStore) DeletePasswordForAccount(ctx context.Context, profileName, account string) (bool, error) {
+	return s.remove(ctx, profileName, passwordKey(profileName, account), "password")
 }
 
 // DeleteTrustedDevice removes the stored trusted-device credential and
@@ -218,8 +261,15 @@ func (s *SecureStore) remove(ctx context.Context, profileName, key, kind string)
 	return true, nil
 }
 
-func passwordKey(profileName string) string {
-	return "password/" + profileName
+// passwordKey namespaces a profile's stored password in the OS keyring. An empty
+// account is the primary entry ("password/<profile>", what auth login writes);
+// any other account is an account-scoped secondary ("password/<profile>#<account>").
+func passwordKey(profileName, account string) string {
+	account = strings.TrimSpace(account)
+	if account == "" {
+		return "password/" + profileName
+	}
+	return "password/" + profileName + "#" + account
 }
 
 func trustedDeviceKey(profileName string) string {

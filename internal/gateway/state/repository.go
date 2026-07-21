@@ -66,6 +66,7 @@ type profileRecord struct {
 	CertificateFingerprint string    `json:"certificate_fingerprint,omitempty"`
 	TimeoutSeconds         int       `json:"timeout_seconds,omitempty"`
 	Revision               uint64    `json:"revision"`
+	Role                   string    `json:"role,omitempty"`
 	PasswordSecretID       string    `json:"password_secret_id,omitempty"`
 	TrustedDeviceSecretID  string    `json:"trusted_device_secret_id,omitempty"`
 	SessionSecretID        string    `json:"session_secret_id,omitempty"`
@@ -375,7 +376,7 @@ func (r *Repository) CreateProfile(ctx context.Context, input ProfileInput) (Pro
 	if err != nil {
 		return Profile{}, err
 	}
-	record := profileRecord{ID: id, Name: input.Name, URL: input.URL, Username: input.Username, TLSMode: input.TLSMode, CertificateFingerprint: input.CertificateFingerprint, TimeoutSeconds: input.TimeoutSeconds, CreatedAt: now, UpdatedAt: now}
+	record := profileRecord{ID: id, Name: input.Name, URL: input.URL, Username: input.Username, TLSMode: input.TLSMode, CertificateFingerprint: input.CertificateFingerprint, TimeoutSeconds: input.TimeoutSeconds, Role: input.Role, CreatedAt: now, UpdatedAt: now}
 	err = r.db.Update(func(tx *bolt.Tx) error {
 		profiles := tx.Bucket(bucketProfiles)
 		if profiles.Get([]byte(input.Name)) != nil {
@@ -554,6 +555,7 @@ func (r *Repository) Snapshot(ctx context.Context) (*config.Config, error) {
 			TLSMode:                profile.TLSMode,
 			CertificateFingerprint: profile.CertificateFingerprint,
 			TimeoutSeconds:         profile.TimeoutSeconds,
+			Role:                   profile.Role,
 			Revision:               profile.Revision,
 		}
 		if profile.Default {
@@ -612,7 +614,7 @@ func publicProfile(record profileRecord, isDefault bool) Profile {
 	return Profile{
 		ID: record.ID, Name: record.Name, URL: record.URL, Username: record.Username,
 		TLSMode: record.TLSMode, CertificateFingerprint: record.CertificateFingerprint,
-		TimeoutSeconds: record.TimeoutSeconds, Revision: record.Revision, Default: isDefault,
+		TimeoutSeconds: record.TimeoutSeconds, Revision: record.Revision, Default: isDefault, Role: record.Role,
 		PasswordStored: record.PasswordSecretID != "", TrustedDeviceStored: record.TrustedDeviceSecretID != "", SessionStored: record.SessionSecretID != "",
 		CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 	}

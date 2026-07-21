@@ -24,7 +24,7 @@ const (
 	secretApply         = "apply_secret"
 )
 
-func (r *Repository) putSecret(tx *bolt.Tx, record *profileRecord, secretType string, plaintext []byte, existingID string) (string, error) {
+func (r *Repository) putSecret(tx *bolt.Tx, record *profileRecord, secretType string, plaintext []byte, existingID, account string) (string, error) {
 	id := existingID
 	if id == "" {
 		var err error
@@ -34,7 +34,7 @@ func (r *Repository) putSecret(tx *bolt.Tx, record *profileRecord, secretType st
 		}
 	}
 	now := time.Now().UTC()
-	metadata := SecretMetadata{ID: id, ProfileID: record.ID, Type: secretType, CreatedAt: now, UpdatedAt: now}
+	metadata := SecretMetadata{ID: id, ProfileID: record.ID, Type: secretType, Account: strings.TrimSpace(account), CreatedAt: now, UpdatedAt: now}
 	if existing := tx.Bucket(bucketSecrets).Get([]byte(id)); existing != nil {
 		var old sealedSecret
 		if err := json.Unmarshal(existing, &old); err != nil {
@@ -126,6 +126,149 @@ func (r *Repository) Password(ctx context.Context, profileName string, profile c
 // environment fallback) and returns ErrNotFound when no password is stored. It
 // is never wired to the MCP surface — only the admin HTTP handler calls it.
 func (r *Repository) RevealPassword(ctx context.Context, profileName string) (string, error) {
+	return r.RevealPasswordForAccount(ctx, profileName, "")
+}
+
+// passwordSecretByAccount resolves one stored password entry by account label
+// within a read transaction. An empty account (or one matching the profile
+// login) selects the primary entry pointed at by record.PasswordSecretID; any
+// other account is matched, case-insensitively, against the labeled secondary
+// password secrets bound to the profile. It returns the decrypted plaintext and
+// the resolving secret id, or ErrNotFound.
+func (r *Repository) passwordSecretByAccount(tx *bolt.Tx, record profileRecord, account string) ([]byte, string, error) {
+	account = strings.TrimSpace(account)
+	if account == "" || strings.EqualFold(account, record.Username) {
+		if record.PasswordSecretID != "" {
+			plaintext, _, err := r.secret(tx, record.PasswordSecretID, secretPassword, record.ID)
+			return plaintext, record.PasswordSecretID, err
+		}
+		if account == "" {
+			return nil, "", ErrNotFound
+		}
+		// A named account equal to record.Username without a primary secret falls
+		// through to the labeled-secret scan below.
+	}
+	id, err := passwordSecretIDForAccount(tx, record.ID, account)
+	if err != nil {
+		return nil, "", err
+	}
+	if id == "" {
+		return nil, "", ErrNotFound
+	}
+	plaintext, _, err := r.secret(tx, id, secretPassword, record.ID)
+	return plaintext, id, err
+}
+
+// passwordSecretIDForAccount returns the id of the password secret whose account
+// label matches (case-insensitive), or "" when none is stored for the profile.
+func passwordSecretIDForAccount(tx *bolt.Tx, profileID, account string) (string, error) {
+	account = strings.TrimSpace(account)
+	found := ""
+	err := tx.Bucket(bucketSecrets).ForEach(func(key, value []byte) error {
+		if found != "" {
+			return nil
+		}
+		var sealed sealedSecret
+		if err := json.Unmarshal(value, &sealed); err != nil {
+			return err
+		}
+		if sealed.Metadata.Type == secretPassword && sealed.Metadata.ProfileID == profileID && strings.EqualFold(strings.TrimSpace(sealed.Metadata.Account), account) {
+			found = string(append([]byte(nil), key...))
+		}
+		return nil
+	})
+	return found, err
+}
+
+// PasswordAccounts lists the account entries in a profile's password book. It
+// returns only account labels and timestamps — never a plaintext password — so
+// it is safe to render in the administration console. The primary entry (the one
+// backing the runtime login) sorts first; a legacy primary whose secret predates
+// account labels reports Profile.Username. An empty slice means no password is
+// stored.
+func (r *Repository) PasswordAccounts(ctx context.Context, profileName string) ([]AccountCredentialInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	result := make([]AccountCredentialInfo, 0)
+	err := r.db.View(func(tx *bolt.Tx) error {
+		record, err := readProfile(tx, profileName)
+		if err != nil {
+			return err
+		}
+		return tx.Bucket(bucketSecrets).ForEach(func(_, value []byte) error {
+			var sealed sealedSecret
+			if err := json.Unmarshal(value, &sealed); err != nil {
+				return err
+			}
+			if sealed.Metadata.Type != secretPassword || sealed.Metadata.ProfileID != record.ID {
+				return nil
+			}
+			account := strings.TrimSpace(sealed.Metadata.Account)
+			primary := sealed.Metadata.ID == record.PasswordSecretID
+			if account == "" && primary {
+				account = record.Username
+			}
+			result = append(result, AccountCredentialInfo{
+				Account: account, Primary: primary,
+				CreatedAt: sealed.Metadata.CreatedAt, UpdatedAt: sealed.Metadata.UpdatedAt,
+			})
+			return nil
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Primary != result[j].Primary {
+			return result[i].Primary
+		}
+		return strings.ToLower(result[i].Account) < strings.ToLower(result[j].Account)
+	})
+	return result, nil
+}
+
+// PasswordForAccount resolves the stored password for a specific account in a
+// profile's password book. An empty account selects the primary and mirrors
+// Password (vault first, then the environment fallback); a named secondary
+// resolves from the vault only. It is an internal apply-time resolver — the
+// destination-authentication seam that Hyper Backup will consume — and its value
+// must never be returned over MCP or written to a log.
+func (r *Repository) PasswordForAccount(ctx context.Context, profileName string, profile config.Profile, account string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	account = strings.TrimSpace(account)
+	if account == "" {
+		return r.Password(ctx, profileName, profile)
+	}
+	var password string
+	err := r.db.View(func(tx *bolt.Tx) error {
+		record, err := readProfile(tx, profileName)
+		if err != nil {
+			return err
+		}
+		plaintext, _, err := r.passwordSecretByAccount(tx, record, account)
+		if err == nil {
+			password = string(plaintext)
+		}
+		return err
+	})
+	if err == nil {
+		return password, nil
+	}
+	if errors.Is(err, ErrNotFound) && strings.EqualFold(account, profile.Username) {
+		return r.environment.Password(ctx, profileName, profile)
+	}
+	return "", err
+}
+
+// RevealPasswordForAccount returns the plaintext password for a specific account
+// in a profile's password book, reading the vault only (no environment
+// fallback). It backs the admin-gated console reveal for multi-account books and
+// is never wired to MCP. An empty account selects the primary entry; a missing
+// entry returns ErrNotFound.
+func (r *Repository) RevealPasswordForAccount(ctx context.Context, profileName, account string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -135,10 +278,7 @@ func (r *Repository) RevealPassword(ctx context.Context, profileName string) (st
 		if err != nil {
 			return err
 		}
-		if record.PasswordSecretID == "" {
-			return ErrNotFound
-		}
-		plaintext, _, err := r.secret(tx, record.PasswordSecretID, secretPassword, record.ID)
+		plaintext, _, err := r.passwordSecretByAccount(tx, record, account)
 		if err == nil {
 			password = string(plaintext)
 		}
@@ -163,7 +303,7 @@ func (r *Repository) SavePassword(ctx context.Context, profileName, password str
 		if err != nil {
 			return err
 		}
-		id, err := r.putSecret(tx, &record, secretPassword, []byte(password), record.PasswordSecretID)
+		id, err := r.putSecret(tx, &record, secretPassword, []byte(password), record.PasswordSecretID, record.Username)
 		if err != nil {
 			return err
 		}
@@ -227,7 +367,7 @@ func (r *Repository) enrollPassword(ctx context.Context, profileName string, exp
 		if expectedRevision != 0 && record.Revision != expectedRevision {
 			return fmt.Errorf("%w: expected %d, current %d", ErrRevisionConflict, expectedRevision, record.Revision)
 		}
-		passwordID, err := r.putSecret(tx, &record, secretPassword, []byte(password), record.PasswordSecretID)
+		passwordID, err := r.putSecret(tx, &record, secretPassword, []byte(password), record.PasswordSecretID, account)
 		if err != nil {
 			return err
 		}
@@ -236,7 +376,7 @@ func (r *Repository) enrollPassword(ctx context.Context, profileName string, exp
 			record.Username = account
 		}
 		if len(devicePayload) > 0 {
-			deviceID, err := r.putSecret(tx, &record, secretTrustedDevice, devicePayload, record.TrustedDeviceSecretID)
+			deviceID, err := r.putSecret(tx, &record, secretTrustedDevice, devicePayload, record.TrustedDeviceSecretID, "")
 			if err != nil {
 				return err
 			}
@@ -259,6 +399,137 @@ func (r *Repository) HasPassword(ctx context.Context, profileName string) (bool,
 
 func (r *Repository) DeletePassword(ctx context.Context, profileName string) (bool, uint64, error) {
 	return r.deleteProfileSecret(ctx, profileName, func(record *profileRecord) *string { return &record.PasswordSecretID }, true)
+}
+
+// SavePasswordForAccount commits a verified password for a named account in a
+// profile's password book. The first stored account, or one matching the profile
+// login, is the primary entry: it sets record.Username and the PasswordSecretID
+// that the runtime resolver reads, and it carries the optional trusted device.
+// Any other account is stored as an additional labeled secret without disturbing
+// the primary login. The expected revision closes the network-authentication
+// race exactly as EnrollPasswordForAccount does. A primary enrollment is
+// behaviorally identical to EnrollPasswordForAccount.
+func (r *Repository) SavePasswordForAccount(ctx context.Context, profileName string, expectedRevision uint64, account, password string, device credentials.TrustedDevice) (uint64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	account = strings.TrimSpace(account)
+	if account == "" {
+		return 0, errors.New("DSM account is required")
+	}
+	if expectedRevision == 0 {
+		return 0, errors.New("expected profile revision is required")
+	}
+	if password == "" {
+		return 0, errors.New("password cannot be empty")
+	}
+	if (device.Name == "") != (device.ID == "") {
+		return 0, errors.New("trusted device name and ID must be supplied together")
+	}
+	var devicePayload []byte
+	var err error
+	if device.ID != "" {
+		devicePayload, err = json.Marshal(device)
+		if err != nil {
+			return 0, err
+		}
+	}
+	var revision uint64
+	err = r.db.Update(func(tx *bolt.Tx) error {
+		record, err := readProfile(tx, profileName)
+		if err != nil {
+			return err
+		}
+		if record.Revision != expectedRevision {
+			return fmt.Errorf("%w: expected %d, current %d", ErrRevisionConflict, expectedRevision, record.Revision)
+		}
+		primary := record.PasswordSecretID == "" || strings.EqualFold(record.Username, account)
+		if primary {
+			passwordID, err := r.putSecret(tx, &record, secretPassword, []byte(password), record.PasswordSecretID, account)
+			if err != nil {
+				return err
+			}
+			record.PasswordSecretID = passwordID
+			record.Username = account
+			if len(devicePayload) > 0 {
+				deviceID, err := r.putSecret(tx, &record, secretTrustedDevice, devicePayload, record.TrustedDeviceSecretID, "")
+				if err != nil {
+					return err
+				}
+				record.TrustedDeviceSecretID = deviceID
+			}
+		} else {
+			// Secondary accounts store only the password; the profile's single
+			// trusted device belongs to the primary login.
+			existingID, err := passwordSecretIDForAccount(tx, record.ID, account)
+			if err != nil {
+				return err
+			}
+			if _, err := r.putSecret(tx, &record, secretPassword, []byte(password), existingID, account); err != nil {
+				return err
+			}
+		}
+		record.Revision, err = nextProfileRevision(tx)
+		if err != nil {
+			return err
+		}
+		record.UpdatedAt = time.Now().UTC()
+		revision = record.Revision
+		return putProfile(tx, record)
+	})
+	return revision, err
+}
+
+// DeletePasswordForAccount removes one account entry from a profile's password
+// book. Deleting the primary clears PasswordSecretID (the runtime resolver then
+// reports no stored password); deleting a secondary removes only that labeled
+// secret. It reports whether an entry existed and the resulting profile revision.
+func (r *Repository) DeletePasswordForAccount(ctx context.Context, profileName, account string) (bool, uint64, error) {
+	if err := ctx.Err(); err != nil {
+		return false, 0, err
+	}
+	account = strings.TrimSpace(account)
+	var removed bool
+	var revision uint64
+	err := r.db.Update(func(tx *bolt.Tx) error {
+		record, err := readProfile(tx, profileName)
+		if err != nil {
+			return err
+		}
+		primary := account == "" || strings.EqualFold(record.Username, account)
+		if primary {
+			if record.PasswordSecretID != "" {
+				if err := tx.Bucket(bucketSecrets).Delete([]byte(record.PasswordSecretID)); err != nil {
+					return err
+				}
+				record.PasswordSecretID = ""
+				removed = true
+			}
+		} else {
+			id, err := passwordSecretIDForAccount(tx, record.ID, account)
+			if err != nil {
+				return err
+			}
+			if id != "" {
+				if err := tx.Bucket(bucketSecrets).Delete([]byte(id)); err != nil {
+					return err
+				}
+				removed = true
+			}
+		}
+		if !removed {
+			revision = record.Revision
+			return nil
+		}
+		record.Revision, err = nextProfileRevision(tx)
+		if err != nil {
+			return err
+		}
+		record.UpdatedAt = time.Now().UTC()
+		revision = record.Revision
+		return putProfile(tx, record)
+	})
+	return removed, revision, err
 }
 
 func (r *Repository) TrustedDevice(ctx context.Context, profileName string) (credentials.TrustedDevice, error) {
@@ -309,7 +580,7 @@ func (r *Repository) saveTrustedDevice(ctx context.Context, profileName string, 
 		if err != nil {
 			return err
 		}
-		id, err := r.putSecret(tx, &record, secretTrustedDevice, plaintext, record.TrustedDeviceSecretID)
+		id, err := r.putSecret(tx, &record, secretTrustedDevice, plaintext, record.TrustedDeviceSecretID, "")
 		if err != nil {
 			return err
 		}
@@ -389,7 +660,7 @@ func (r *Repository) saveSession(ctx context.Context, profileName string, sessio
 		if err != nil {
 			return err
 		}
-		id, err := r.putSecret(tx, &record, secretSession, plaintext, record.SessionSecretID)
+		id, err := r.putSecret(tx, &record, secretSession, plaintext, record.SessionSecretID, "")
 		if err != nil {
 			return err
 		}
@@ -466,7 +737,7 @@ func (r *Repository) StoreApplySecret(ctx context.Context, profileName, value st
 		if err != nil {
 			return err
 		}
-		id, err := r.putSecret(tx, &record, secretApply, []byte(value), "")
+		id, err := r.putSecret(tx, &record, secretApply, []byte(value), "", "")
 		if err != nil {
 			return err
 		}

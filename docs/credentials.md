@@ -112,3 +112,59 @@ the NAS; its profile list reflects the configuration loaded when the MCP
 server started. Sign-in and sign-out remain CLI-only: when authentication
 material is missing, an MCP client should ask the user to run
 `dsmctl auth login --nas <name>` in a terminal.
+
+## Password book (multiple accounts per NAS)
+
+A NAS profile holds a *book* of one or more `{account, password}` entries, not
+just one. The **primary** account is the profile login (`Username`) that the
+runtime resolves for every operation; additional accounts are stored alongside
+it as extra labeled secrets and never disturb the primary. This backs outbound
+uses that authenticate as a *specific* account — for example a Snapshot
+Replication or Hyper Backup destination that expects its own service account
+rather than the source's admin.
+
+- **CLI**: `dsmctl auth reveal-password --nas <name> [--account <account>]`
+  reveals a chosen entry (default: the primary login). Reveal stays human-gated
+  and never crosses the MCP boundary.
+- **Gateway console**: the *Passwords* page renders each NAS as an expandable
+  book — one row per account, each masked `••••••••` with an eye 👁 to reveal
+  (admin-session-gated, audited `credential.reveal` with the account label,
+  `Cache-Control: no-store`, never on MCP). *Add account* appends a new entry;
+  the primary is marked and sorts first.
+- **Storage**: in the gateway vault each entry is one encrypted `password`
+  secret carrying its account label in metadata (outside the AEAD binding, so
+  adding the label did not invalidate pre-existing ciphertext); on the CLI it is
+  an OS-keyring entry keyed `password/<profile>` (primary) or
+  `password/<profile>#<account>` (secondary). A profile stored before account
+  labels existed reads back as its single primary account.
+
+## Destination-only ("target") profiles
+
+A profile has a `role`: `managed` (the default) or `target`. A **target** NAS is
+one you hold credentials for and use as an outbound *destination* — a backup or
+replication target — but do **not** manage. It is excluded from every management
+surface: it is not counted as a managed NAS, not usable by read/apply MCP tools
+(the runtime refuses it and the source of a replication relation must be
+managed), and not offered in a token's NAS allowlist. It is still fully usable
+as a destination, and its credentials are managed on the console *Passwords*
+page like any other profile.
+
+- **Create**: `dsmctl nas add <name> --url … --role target`, or the gateway
+  console *Add a NAS* wizard's **Role → Destination only** toggle. The role is
+  set at creation; the normal connection-edit path leaves it unchanged.
+- **Enforcement**: the runtime `Client` resolver refuses a target for any
+  management call; a narrow `DestinationClient` bypass serves the legitimate
+  destination consumers (replication/backup pairing, the console connection
+  test). A target you address directly by name from a local CLI is a
+  deliberate operator action and is not hidden from the human who owns the box.
+
+## Hyper Backup seam
+
+Hyper Backup (a separate branch) resolves a destination credential from the
+dsmctl profile (its outbound-credential resolver / `password_ref`). Because the
+`role` field and the account-selectable resolver
+(`Repository.PasswordForAccount` / `SecureStore.PasswordForAccount`) live on the
+shared config, vault, and credentials layers, a merged Hyper Backup gains "back
+up to a destination-only NAS using a chosen stored account" without rework. Its
+destination-credential resolution must call `PasswordForAccount` (account
+selectable) and must **not** assume `role == managed`.

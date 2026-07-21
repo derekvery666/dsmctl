@@ -189,7 +189,17 @@ func (s *Service) ListNASContext(ctx context.Context) ([]config.Summary, error) 
 	if err != nil {
 		return nil, err
 	}
-	return filterRemoteSummaries(ctx, cfg.Summaries(credentials.DefaultEnvironmentVariable)), nil
+	// list_nas is the managed-NAS listing. Destination-only ("target") profiles
+	// are held for outbound use, not managed, so they are excluded here; they
+	// surface only on the gateway console's Passwords page.
+	managed := make([]config.Summary, 0, len(cfg.NAS))
+	for _, summary := range cfg.Summaries(credentials.DefaultEnvironmentVariable) {
+		if profile, ok := cfg.NAS[summary.Name]; ok && !profile.Managed() {
+			continue
+		}
+		managed = append(managed, summary)
+	}
+	return filterRemoteSummaries(ctx, managed), nil
 }
 
 func filterRemoteSummaries(ctx context.Context, summaries []config.Summary) []config.Summary {
