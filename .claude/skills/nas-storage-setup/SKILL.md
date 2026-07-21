@@ -74,14 +74,28 @@ Read from the inventory JSON:
 
 ## 2. Finish the first-time wizard (idempotent)
 
-A DSM-installed NAS may still have the QuickStart welcome wizard pending. Complete it (update
-policy, analytics-off, `hide_welcome`, harden) using the **stored** password — safe to re-run:
+A DSM-installed NAS may still show the "Welcome to DSM 7.x" wizard on login. Complete the wizard
+preferences (update policy, analytics-off, `hide_welcome`) using the **stored** password:
 
 ```console
 dsmctl provision <profile> --finish-only --auto-update security
 ```
 
-(If the admin does not exist yet, use full `nas-provision` instead of `--finish-only`.)
+**If the welcome wizard keeps reappearing after that, the built-in `admin` is still enabled.**
+DSM only stops showing the wizard once its `admin_configured` flag is true, which flips only
+when the built-in `admin` account is disabled — and DSM lets `admin` be modified only by the
+setup session itself (any other admin gets error 105). A fresh `dsmctl provision` now disables
+it automatically; to retrofit a NAS provisioned before that fix (built-in admin still enabled,
+likely empty password — also a security hole):
+
+```console
+dsmctl provision <profile> --reset-builtin-admin
+```
+
+This re-enters the admin setup session and scrambles + expires the built-in admin. Verify it
+took by re-running it: a second run should FAIL to start the setup session (admin can no longer
+log in), which confirms the account is disabled and the welcome wizard is gone. (If the admin
+does not exist yet at all, use full `nas-provision` instead of `--finish-only`.)
 
 ## 3. Create the storage pool (DESTRUCTIVE — needs the user's OK)
 

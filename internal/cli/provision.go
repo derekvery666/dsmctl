@@ -22,7 +22,7 @@ import (
 
 func newProvisionCommand(opts *options) *cobra.Command {
 	var adminUser, targetURL, deviceName, autoUpdate string
-	var skipTLS, analytics, finishOnly bool
+	var skipTLS, analytics, finishOnly, resetBuiltinAdmin bool
 	var length int
 	command := &cobra.Command{
 		Use:   "provision <name>",
@@ -73,6 +73,22 @@ func newProvisionCommand(opts *options) *cobra.Command {
 				return nil
 			}
 
+			if resetBuiltinAdmin {
+				profile, ok := cfg.NAS[name]
+				if !ok {
+					return fmt.Errorf("NAS profile %q is not configured", name)
+				}
+				target, err := buildProvisionTarget(profile)
+				if err != nil {
+					return err
+				}
+				if err := service.DisableBuiltinAdmin(ctx, target); err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Scrambled and disabled the built-in admin on NAS %q; the DSM first-run welcome wizard should no longer appear.\n", name)
+				return nil
+			}
+
 			if strings.TrimSpace(adminUser) == "" {
 				return errors.New("--admin-user is required; the administrator username is yours to choose")
 			}
@@ -99,6 +115,7 @@ func newProvisionCommand(opts *options) *cobra.Command {
 	command.Flags().BoolVar(&skipTLS, "insecure-skip-tls-verify", false, "accept the NAS's fresh self-signed certificate without pinning (for an explicitly isolated lab NAS)")
 	command.Flags().BoolVar(&analytics, "analytics", false, "opt in to Synology device analytics / Active Insight (default off)")
 	command.Flags().BoolVar(&finishOnly, "finish-only", false, "skip account creation; only run the post-account wizard steps, signing in with the stored password")
+	command.Flags().BoolVar(&resetBuiltinAdmin, "reset-builtin-admin", false, "retrofit only: scramble and expire the built-in admin from the DSM setup session (fixes a NAS whose welcome wizard keeps showing because provisioning could not disable admin)")
 	command.Flags().IntVar(&length, "length", credentials.DefaultGeneratedPasswordLength, "generated password length")
 	return command
 }

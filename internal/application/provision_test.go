@@ -13,12 +13,14 @@ import (
 )
 
 type fakeProvisioner struct {
-	steps         []string
-	createErr     error
-	loginErr      error
-	completeErr   error
-	hardenErr     error
-	seenPasswords []string
+	steps           []string
+	createErr       error
+	disableAdminErr error
+	loginErr        error
+	completeErr     error
+	hardenErr       error
+	seenPasswords   []string
+	seenScramble    string
 }
 
 func (f *fakeProvisioner) EstablishSetupSession(context.Context, provision.Target) error {
@@ -32,6 +34,12 @@ func (f *fakeProvisioner) CreateFirstAdmin(_ context.Context, _ provision.Target
 	return f.createErr
 }
 
+func (f *fakeProvisioner) DisableBuiltinAdmin(_ context.Context, _ provision.Target, scramble string) error {
+	f.steps = append(f.steps, "disable_admin")
+	f.seenScramble = scramble
+	return f.disableAdminErr
+}
+
 func (f *fakeProvisioner) Login(_ context.Context, _ provision.Target, _, password string) error {
 	f.steps = append(f.steps, "login")
 	f.seenPasswords = append(f.seenPasswords, password)
@@ -43,7 +51,7 @@ func (f *fakeProvisioner) CompleteSetup(context.Context, provision.Target, provi
 	return f.completeErr
 }
 
-func (f *fakeProvisioner) Harden(context.Context, provision.Target, provision.AdminRequest, string) error {
+func (f *fakeProvisioner) Harden(context.Context, provision.Target, provision.AdminRequest) error {
 	f.steps = append(f.steps, "harden")
 	return f.hardenErr
 }
@@ -92,10 +100,10 @@ func TestProvisionFirstAdminHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProvisionFirstAdmin() error = %v", err)
 	}
-	if got := strings.Join(prov.steps, ","); got != "session,create,login,complete,harden" {
+	if got := strings.Join(prov.steps, ","); got != "session,create,disable_admin,login,complete,harden" {
 		t.Fatalf("step order = %q", got)
 	}
-	if !result.AdministratorCreated || !result.PasswordStored || !result.WizardFinished || !result.Hardened {
+	if !result.AdministratorCreated || !result.PasswordStored || !result.WizardFinished || !result.Hardened || !result.BuiltinAdminDisabled {
 		t.Fatalf("result flags = %#v", result)
 	}
 	if len(sink.persisted) != 1 || sink.persisted[0].Username != "operator" || sink.persisted[0].Name != "lab" {
@@ -111,6 +119,11 @@ func TestProvisionFirstAdminHappyPath(t *testing.T) {
 		if seen != password {
 			t.Fatalf("provisioner saw a different password than the sink stored")
 		}
+	}
+	// The built-in admin scramble must be a distinct, non-empty password so the
+	// account is never left with the empty setup password once it is disabled.
+	if prov.seenScramble == "" || prov.seenScramble == password {
+		t.Fatalf("built-in admin scramble must be a distinct non-empty password, got %q", prov.seenScramble)
 	}
 	if strings.Contains(result.NAS+result.AdminUser+result.URL, password) {
 		t.Fatal("result leaked the generated password")
@@ -162,7 +175,7 @@ func TestProvisionFirstAdminFailsWhenSinkFails(t *testing.T) {
 		t.Fatalf("account created but password not stored expected: %#v", result)
 	}
 	// Best-effort steps must not run after a persistence failure.
-	if got := strings.Join(prov.steps, ","); got != "session,create,login" {
+	if got := strings.Join(prov.steps, ","); got != "session,create,disable_admin,login" {
 		t.Fatalf("steps after sink failure = %q", got)
 	}
 }

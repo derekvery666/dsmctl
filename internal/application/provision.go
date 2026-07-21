@@ -25,9 +25,10 @@ import (
 type Provisioner interface {
 	EstablishSetupSession(ctx context.Context, target provision.Target) error
 	CreateFirstAdmin(ctx context.Context, target provision.Target, req provision.AdminRequest) error
+	DisableBuiltinAdmin(ctx context.Context, target provision.Target, scramble string) error
 	Login(ctx context.Context, target provision.Target, username, password string) error
 	CompleteSetup(ctx context.Context, target provision.Target, opts provision.SetupOptions) error
-	Harden(ctx context.Context, target provision.Target, req provision.AdminRequest, builtinAdminScramble string) error
+	Harden(ctx context.Context, target provision.Target, req provision.AdminRequest) error
 }
 
 type directProvisioner struct{}
@@ -40,6 +41,10 @@ func (directProvisioner) CreateFirstAdmin(ctx context.Context, target provision.
 	return provision.CreateFirstAdmin(ctx, target, req)
 }
 
+func (directProvisioner) DisableBuiltinAdmin(ctx context.Context, target provision.Target, scramble string) error {
+	return provision.DisableBuiltinAdmin(ctx, target, scramble)
+}
+
 func (directProvisioner) Login(ctx context.Context, target provision.Target, username, password string) error {
 	return provision.Login(ctx, target, username, password)
 }
@@ -48,8 +53,8 @@ func (directProvisioner) CompleteSetup(ctx context.Context, target provision.Tar
 	return provision.CompleteSetup(ctx, target, opts)
 }
 
-func (directProvisioner) Harden(ctx context.Context, target provision.Target, req provision.AdminRequest, builtinAdminScramble string) error {
-	return provision.Harden(ctx, target, req, builtinAdminScramble)
+func (directProvisioner) Harden(ctx context.Context, target provision.Target, req provision.AdminRequest) error {
+	return provision.Harden(ctx, target, req)
 }
 
 // WithProvisioner overrides the DSM provisioning protocol implementation, for
@@ -97,7 +102,8 @@ type ProvisionResult struct {
 	AdministratorCreated bool     `json:"administrator_created" jsonschema:"The first administrator was created and its login verified"`
 	PasswordStored       bool     `json:"password_stored" jsonschema:"The generated password was persisted to the credential store"`
 	WizardFinished       bool     `json:"wizard_finished" jsonschema:"The post-account setup wizard steps completed"`
-	Hardened             bool     `json:"hardened" jsonschema:"Post-setup hardening (auto-block, disable built-in admin) completed"`
+	BuiltinAdminDisabled bool     `json:"builtin_admin_disabled" jsonschema:"The built-in admin account was scrambled and expired in the setup session"`
+	Hardened             bool     `json:"hardened" jsonschema:"Post-setup hardening (auto-block, telemetry agent, device name) completed"`
 	Warnings             []string `json:"warnings,omitempty" jsonschema:"Non-fatal problems; the administrator is created and usable"`
 }
 
@@ -185,6 +191,16 @@ func (s *Service) ProvisionFirstAdmin(ctx context.Context, target provision.Targ
 	if err := s.provisioner.CreateFirstAdmin(ctx, target, adminReq); err != nil {
 		return result, fmt.Errorf("no administrator was created (you can retry): %w", err)
 	}
+	// Disable the built-in admin while the setup (admin) session is still held —
+	// DSM only lets the reserved admin be modified by itself, so this must happen
+	// before logging in as the new administrator. It is best-effort so a quirk
+	// cannot fail an otherwise-good provision, but it is what stops DSM's first-run
+	// welcome wizard from reappearing, so a failure is surfaced as a warning.
+	if err := s.provisioner.DisableBuiltinAdmin(ctx, target, scramble); err != nil {
+		result.Warnings = append(result.Warnings, "built-in admin not disabled (DSM may keep showing the welcome wizard): "+err.Error())
+	} else {
+		result.BuiltinAdminDisabled = true
+	}
 	if err := s.provisioner.Login(ctx, target, req.AdminUser, password); err != nil {
 		return result, fmt.Errorf("administrator %q was created but the verification login failed: %w", req.AdminUser, err)
 	}
@@ -202,7 +218,7 @@ func (s *Service) ProvisionFirstAdmin(ctx context.Context, target provision.Targ
 	} else {
 		result.WizardFinished = true
 	}
-	if err := s.provisioner.Harden(ctx, target, adminReq, scramble); err != nil {
+	if err := s.provisioner.Harden(ctx, target, adminReq); err != nil {
 		result.Warnings = append(result.Warnings, "post-setup hardening incomplete: "+err.Error())
 	} else {
 		result.Hardened = true
@@ -397,4 +413,26 @@ func (s *Service) FinishSetup(ctx context.Context, target provision.Target, user
 		return fmt.Errorf("log in as %q to finish setup: %w", username, err)
 	}
 	return s.provisioner.CompleteSetup(ctx, target, opts)
+}
+
+// DisableBuiltinAdmin retrofits a NAS whose built-in admin was left enabled
+// because a provisioning run disabled it as the new administrator and DSM
+// rejected that with error 105. It re-enters the setup (admin) session — which
+// still works while the built-in admin is enabled with its empty setup password
+// — and scrambles + expires the built-in admin the way the DSM wizard does. That
+// also flips DSM's server-side admin_configured flag, so the first-run welcome
+// wizard stops being presented on login. A NAS whose built-in admin is already
+// disabled cannot start the setup session and returns that error.
+func (s *Service) DisableBuiltinAdmin(ctx context.Context, target provision.Target) error {
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(target.BaseURL)), "https://") {
+		return fmt.Errorf("disabling the built-in admin requires an https target, got %q", target.BaseURL)
+	}
+	if err := s.provisioner.EstablishSetupSession(ctx, target); err != nil {
+		return fmt.Errorf("could not start the DSM setup session; the built-in admin may already be disabled: %w", err)
+	}
+	scramble, err := credentials.GeneratePassword(credentials.DefaultGeneratedPasswordLength)
+	if err != nil {
+		return err
+	}
+	return s.provisioner.DisableBuiltinAdmin(ctx, target, scramble)
 }
