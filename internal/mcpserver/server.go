@@ -1029,6 +1029,36 @@ type getNotificationHistoryOutput struct {
 	History synology.NotificationHistoryState `json:"history" jsonschema:"One page of the DSM notification history, newest first"`
 }
 
+type getDSMUpdateInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getDSMUpdateCapabilitiesOutput struct {
+	NAS          string                         `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.DSMUpdateCapabilities `json:"capabilities" jsonschema:"Update & Restore read areas currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport   `json:"report" jsonschema:"Discovered APIs and selected DSM update compatibility backends"`
+}
+
+type getDSMUpdateStatusOutput struct {
+	NAS    string                   `json:"nas" jsonschema:"NAS profile used for the request"`
+	Status synology.DSMUpdateStatus `json:"status" jsonschema:"Local DSM update state: installed version, whether an upgrade is allowed, and any in-progress state"`
+}
+
+type getDSMUpdateAvailableOutput struct {
+	NAS       string                      `json:"nas" jsonschema:"NAS profile used for the request"`
+	Available synology.DSMUpdateAvailable `json:"available" jsonschema:"Update-server offered-update check; availability is unknown when the update server is unreachable"`
+}
+
+type getDSMUpdatePolicyOutput struct {
+	NAS    string                   `json:"nas" jsonschema:"NAS profile used for the request"`
+	Policy synology.DSMUpdatePolicy `json:"policy" jsonschema:"DSM auto-update policy"`
+}
+
+type getDSMUpdateConfigBackupOutput struct {
+	NAS          string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	ConfigBackup synology.DSMUpdateConfigBackup `json:"config_backup" jsonschema:"Configuration-backup status and history without any destination password"`
+}
+
 type getLogsOutput struct {
 	NAS  string            `json:"nas" jsonschema:"NAS profile used for the request"`
 	Logs synology.LogState `json:"logs" jsonschema:"Normalized DSM system log entries and severity counts"`
@@ -3507,6 +3537,71 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getNotificationHistoryOutput{}, err
 		}
 		return nil, getNotificationHistoryOutput{NAS: result.NAS, History: result.History}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_dsm_update_capabilities",
+		Title:       "Get DSM Update & Restore capabilities",
+		Description: "Report which DSM Update & Restore read areas (local update status, update-server offered-update check, auto-update policy, configuration backup) are available for a NAS and the DSM API backend selected for each. Each area is independent. This tool never installs a DSM update or restores a configuration.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDSMUpdateInput) (*mcp.CallToolResult, getDSMUpdateCapabilitiesOutput, error) {
+		result, err := service.GetDSMUpdateCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getDSMUpdateCapabilitiesOutput{}, err
+		}
+		return nil, getDSMUpdateCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_dsm_update_status",
+		Title:       "Get DSM update status",
+		Description: "Read the installed DSM version/build and the local update state (whether an upgrade is allowed and any in-progress download/install state). Side-effect-free: this does not contact the update server, install an update, or change any setting.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDSMUpdateInput) (*mcp.CallToolResult, getDSMUpdateStatusOutput, error) {
+		result, err := service.GetDSMUpdateStatus(ctx, input.NAS)
+		if err != nil {
+			return nil, getDSMUpdateStatusOutput{}, err
+		}
+		return nil, getDSMUpdateStatusOutput{NAS: result.NAS, Status: result.Status}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_dsm_update_available",
+		Title:       "Check for an available DSM update",
+		Description: "Check the update server for an offered DSM update and report whether one is available, plus any offered-version and restart/criticality details DSM returns. This performs a network egress to Synology's update server; if the server is unreachable, availability is reported as unknown rather than failing. It never downloads or installs an update.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDSMUpdateInput) (*mcp.CallToolResult, getDSMUpdateAvailableOutput, error) {
+		result, err := service.GetDSMUpdateAvailable(ctx, input.NAS)
+		if err != nil {
+			return nil, getDSMUpdateAvailableOutput{}, err
+		}
+		return nil, getDSMUpdateAvailableOutput{NAS: result.NAS, Available: result.Available}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_dsm_update_policy",
+		Title:       "Get DSM auto-update policy",
+		Description: "Read the DSM auto-update policy: whether automatic update is enabled, which updates are auto-installed (such as important/security only), whether updates auto-download, the update channel, and the scheduled maintenance window. This tool never changes the policy.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDSMUpdateInput) (*mcp.CallToolResult, getDSMUpdatePolicyOutput, error) {
+		result, err := service.GetDSMUpdatePolicy(ctx, input.NAS)
+		if err != nil {
+			return nil, getDSMUpdatePolicyOutput{}, err
+		}
+		return nil, getDSMUpdatePolicyOutput{NAS: result.NAS, Policy: result.Policy}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_dsm_update_config_backup",
+		Title:       "Get DSM configuration-backup status",
+		Description: "Read the DSM configuration-backup status: whether scheduled backup to the Synology account is enabled, the destination account and encryption mode, the last-backup result, and the stored backup history (times, DSM versions, host/model). The destination account password is never returned. This tool never runs, changes, or restores a backup.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDSMUpdateInput) (*mcp.CallToolResult, getDSMUpdateConfigBackupOutput, error) {
+		result, err := service.GetDSMUpdateConfigBackup(ctx, input.NAS)
+		if err != nil {
+			return nil, getDSMUpdateConfigBackupOutput{}, err
+		}
+		return nil, getDSMUpdateConfigBackupOutput{NAS: result.NAS, ConfigBackup: result.ConfigBackup}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
