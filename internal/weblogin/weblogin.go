@@ -63,6 +63,12 @@ type Result struct {
 	ServerPublicKey []byte
 	LocalPublicKey  []byte
 	LocalPrivateKey []byte
+	// Method is "web" for the browser code-grant path (carries the Noise resume
+	// keys above) or "password" for the account+password path. Password is set
+	// only for the password path, so the caller can persist it for later
+	// browserless logins; the web path leaves it empty.
+	Method   string
+	Password string
 }
 
 // Options tunes the login flow. The zero value is usable; only HTTPClient is
@@ -79,6 +85,11 @@ type Options struct {
 	// Prompt receives human-facing progress lines (the URL to open, status).
 	Prompt  io.Writer
 	Timeout time.Duration
+	// AuthenticatePassword, when set, powers the account+password choice on the
+	// sign-in page: the loopback /password endpoint calls it with the account,
+	// password, and OTP the user typed and expects a validated Result (with
+	// Method "password"). When nil the page's password form is inert.
+	AuthenticatePassword func(ctx context.Context, account, password, otp string) (Result, error)
 }
 
 // Login runs the interactive web-login flow against a DSM base URL such as
@@ -168,6 +179,7 @@ func Login(ctx context.Context, baseURL string, opts Options) (Result, error) {
 			}
 			return
 		}
+		res.Method = "web"
 		_, _ = io.WriteString(w, "Signed in. You can close this window and return to the terminal.")
 		select {
 		case resultCh <- res:
@@ -175,7 +187,42 @@ func Login(ctx context.Context, baseURL string, opts Options) (Result, error) {
 		}
 	}
 
-	server := &http.Server{Handler: newLoopbackHandler(page, callback)}
+	passwordCallback := func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if opts.AuthenticatePassword == nil {
+			http.Error(w, "password sign-in is not available", http.StatusNotImplemented)
+			return
+		}
+		var payload struct {
+			Account  string `json:"account"`
+			Password string `json:"password"`
+			OTP      string `json:"otp"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, maxBodySize)).Decode(&payload); err != nil || payload.Account == "" || payload.Password == "" {
+			http.Error(w, "account and password are required", http.StatusBadRequest)
+			return
+		}
+		res, err := opts.AuthenticatePassword(ctx, payload.Account, payload.Password, payload.OTP)
+		payload.Password = ""
+		if err != nil {
+			// A bad password is not terminal: return an error to the page (which
+			// shows a generic failure) so the user can correct it and retry on the
+			// same page. Only a completed sign-in resolves Login.
+			http.Error(w, "sign-in failed; check the account and password", http.StatusUnauthorized)
+			return
+		}
+		res.Method = "password"
+		_, _ = io.WriteString(w, "Signed in. You can close this window and return to the terminal.")
+		select {
+		case resultCh <- res:
+		default:
+		}
+	}
+
+	server := &http.Server{Handler: newLoopbackHandler(page, callback, passwordCallback)}
 	go func() { _ = server.Serve(listener) }()
 	defer func() {
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), time.Second)
@@ -202,7 +249,7 @@ func Login(ctx context.Context, baseURL string, opts Options) (Result, error) {
 	}
 }
 
-func newLoopbackHandler(page string, callback http.HandlerFunc) http.Handler {
+func newLoopbackHandler(page string, callback, passwordCallback http.HandlerFunc) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -214,6 +261,7 @@ func newLoopbackHandler(page string, callback http.HandlerFunc) http.Handler {
 	})
 	mux.HandleFunc("/favicon.svg", webassets.ServeFavicon)
 	mux.HandleFunc("/callback", callback)
+	mux.HandleFunc("/password", passwordCallback)
 	return mux
 }
 

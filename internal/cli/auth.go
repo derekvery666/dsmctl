@@ -16,6 +16,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/config"
 	"github.com/ychiu1211/dsmctl/internal/credentials"
 	"github.com/ychiu1211/dsmctl/internal/runtime"
+	"github.com/ychiu1211/dsmctl/internal/synology"
 	"github.com/ychiu1211/dsmctl/internal/tlstrust"
 	"github.com/ychiu1211/dsmctl/internal/weblogin"
 )
@@ -34,12 +35,16 @@ func newAuthCommand(opts *options) *cobra.Command {
 func newAuthLoginCommand(opts *options) *cobra.Command {
 	return &cobra.Command{
 		Use:   "login",
-		Short: "Sign in to a NAS through your web browser",
-		Long: "Open the NAS's own sign-in page in your web browser and store the\n" +
-			"resulting DSM session. The password (and any two-factor, passkey, or\n" +
-			"approve-sign-in step) is entered only in the browser against the NAS;\n" +
-			"dsmctl never handles it. The stored session and its renewal keys are\n" +
-			"reused by later commands.",
+		Short: "Sign in to a NAS with Web Login or an account and password",
+		Long: "Open a local sign-in page in your web browser that offers two ways to\n" +
+			"sign in to the NAS; you choose one:\n" +
+			"  • Web Login — the NAS's own sign-in page opens; the password (and any\n" +
+			"    two-factor, passkey, or approve-sign-in step) is entered only there\n" +
+			"    against the NAS, and dsmctl stores the resulting resumable session.\n" +
+			"  • Account and password — typed on the page, sent over the local\n" +
+			"    loopback to dsmctl, verified against the NAS, and stored encrypted in\n" +
+			"    the OS credential store for later logins.\n" +
+			"Either way the stored credential is reused by later commands.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			store := config.NewStore(opts.configPath)
@@ -55,12 +60,28 @@ func newAuthLoginCommand(opts *options) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			secrets := credentials.NewSecureStore()
 			result, err := weblogin.Login(cmd.Context(), profile.URL, weblogin.Options{
-				HTTPClient: runtime.HTTPClient(profile),
-				Prompt:     cmd.ErrOrStderr(),
+				HTTPClient:           runtime.HTTPClient(profile),
+				Prompt:               cmd.ErrOrStderr(),
+				AuthenticatePassword: authenticateNASPassword(profile),
 			})
 			if err != nil {
 				return err
+			}
+			if result.Method == "password" {
+				// Bind the account to the profile so later commands log in with it,
+				// then store the password (never printed or logged).
+				profile.Username = result.Account
+				cfg.NAS[name] = profile
+				if err := store.Save(cfg); err != nil {
+					return err
+				}
+				if err := secrets.SavePassword(cmd.Context(), name, result.Password); err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Signed in to NAS %q as %s. The account and password are stored encrypted in the OS credential store.\n", name, result.Account)
+				return nil
 			}
 			now := time.Now()
 			session := credentials.SessionCredential{
@@ -74,12 +95,44 @@ func newAuthLoginCommand(opts *options) *cobra.Command {
 				IssuedAt:        now,
 				LastVerified:    now,
 			}
-			if err := credentials.NewSecureStore().SaveSession(cmd.Context(), name, session); err != nil {
+			if err := secrets.SaveSession(cmd.Context(), name, session); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Signed in to NAS %q as %s. The session is stored in the OS credential store.\n", name, result.Account)
 			return nil
 		},
+	}
+}
+
+// authenticateNASPassword returns a weblogin AuthenticatePassword callback that
+// validates a typed account and password against the NAS's DSM and, on success,
+// returns them for the CLI to store. The password is validated by a real DSM
+// login and never leaves this process except into the encrypted credential store.
+func authenticateNASPassword(profile config.Profile) func(ctx context.Context, account, password, otp string) (weblogin.Result, error) {
+	return func(ctx context.Context, account, password, otp string) (weblogin.Result, error) {
+		client, err := synology.NewClient(synology.Options{
+			BaseURL:    profile.URL,
+			Username:   account,
+			Password:   password,
+			HTTPClient: runtime.HTTPClient(profile),
+			OTPProvider: func(context.Context) (string, error) {
+				if strings.TrimSpace(otp) == "" {
+					return "", errors.New("one-time password required")
+				}
+				return otp, nil
+			},
+		})
+		if err != nil {
+			return weblogin.Result{}, err
+		}
+		authErr := client.Authenticate(ctx)
+		closeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_ = client.Close(closeCtx)
+		cancel()
+		if authErr != nil {
+			return weblogin.Result{}, authErr
+		}
+		return weblogin.Result{Account: account, Password: password}, nil
 	}
 }
 

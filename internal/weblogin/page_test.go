@@ -60,7 +60,7 @@ func TestPageLocalizesAllFiveLocales(t *testing.T) {
 func TestPageDrivesFourStatesFromCallbackStatus(t *testing.T) {
 	page := buildPage(testLoginURL, testDSMOrigin)
 	for _, want := range []string{
-		`data-state="waiting"`,
+		`data-state="choose"`,
 		`msg-exchanging`,
 		`msg-success`,
 		`msg-error`,
@@ -96,6 +96,8 @@ func TestPageIsSelfContained(t *testing.T) {
 func TestLoopbackHandlerServesSharedFavicon(t *testing.T) {
 	handler := newLoopbackHandler("<html></html>", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
+	}, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
 	})
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/favicon.svg", nil))
@@ -119,5 +121,42 @@ func TestPageShowsTargetNAS(t *testing.T) {
 	}
 	if !strings.Contains(page, `<h1 data-i18n="heading">Sign in to nas.example.test</h1>`) {
 		t.Error("page heading must name the NAS host")
+	}
+}
+
+// The sign-in page offers two paths on one page: an account+password form and a
+// Web Login button. Neither is auto-triggered; the user chooses.
+func TestPageOffersBothSignInPaths(t *testing.T) {
+	page := buildPage(testLoginURL, testDSMOrigin)
+	for _, want := range []string{
+		`id="pwform"`,
+		`id="acc"`,
+		`id="pw"`,
+		`type="password"`,
+		`data-i18n="account"`,
+		`data-i18n="signin"`,
+		`fetch("/password"`,
+		`id="go"`,
+		`data-i18n="weblogin"`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("sign-in page missing two-path marker %q", want)
+		}
+	}
+	if strings.Contains(page, `addEventListener("load"`) {
+		t.Error("the page must not auto-open Web Login; the user chooses a path")
+	}
+}
+
+func TestLoopbackHandlerRoutesPasswordCallback(t *testing.T) {
+	called := false
+	handler := newLoopbackHandler("<html></html>", func(http.ResponseWriter, *http.Request) {}, func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/password", strings.NewReader(`{}`)))
+	if !called || recorder.Code != http.StatusOK {
+		t.Fatalf("/password not routed: called=%v status=%d", called, recorder.Code)
 	}
 }

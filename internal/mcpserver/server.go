@@ -1754,7 +1754,7 @@ func New(service *application.Service, version string, opts ...Option) *mcp.Serv
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_auth_status",
 		Title:       "Get authentication status",
-		Description: "Report, per configured NAS, whether a password, trusted-device credential, or web-login session is stored, the password environment fallback name and whether it is set, and whether this process holds a DSM session. Never returns secret values, never accepts passwords or OTPs, and never contacts the NAS. Missing authentication is enrolled through the local CLI or the gateway administration page.",
+		Description: "Report, per configured NAS, whether a password, trusted-device credential, or web-login session is stored, the password environment fallback name and whether it is set, and whether this process holds a DSM session. Never returns secret values, never accepts passwords or OTPs, and never contacts the NAS. To add missing authentication, the user runs `dsmctl auth login --nas <name>`, which opens one sign-in page offering both Web Login and account+password; the gateway console offers the same.",
 		Annotations: localReadOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getAuthStatusInput) (*mcp.CallToolResult, getAuthStatusOutput, error) {
 		result, err := service.GetAuthStatus(ctx, input.NAS)

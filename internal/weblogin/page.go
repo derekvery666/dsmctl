@@ -118,26 +118,49 @@ h1{margin:0 0 6px;font-size:25px;letter-spacing:-.02em}
 .foot{margin:20px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px;color:var(--muted);font-size:12px}
 .foot li{display:flex;align-items:center;gap:6px}
 .foot li:before{content:"\2713";color:var(--success-vivid)}
+.field{display:flex;flex-direction:column;gap:6px;margin-bottom:13px}
+.field label{color:var(--slate-600);font-size:12px;font-weight:600}
+.control{width:100%;min-height:40px;padding:9px 11px;border:1px solid var(--line-strong);border-radius:7px;background:var(--surface);color:var(--text);font:inherit}
+.control:focus{border-color:var(--color-action);box-shadow:0 0 0 3px var(--color-focus-soft);outline:none}
+.submit{width:100%;min-height:40px;border:1px solid transparent;border-radius:7px;background:var(--color-action);color:var(--color-action-text);font-weight:600;margin-top:2px}
+.submit:hover{background:var(--color-action-hover)}
+.submit:disabled{opacity:.55;cursor:not-allowed}
+.divider{display:flex;align-items:center;gap:10px;margin:18px 0;color:var(--muted);font-size:12px}
+.divider:before,.divider:after{content:"";height:1px;flex:1;background:var(--line)}
+.weblogin{width:100%;min-height:40px;border:1px solid var(--line-strong);border-radius:7px;background:var(--surface);color:var(--slate-700);font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:8px}
+.weblogin:hover{border-color:var(--slate-400);background:var(--surface-soft)}
+.err{display:none;margin:0 0 14px;padding:10px 12px;border-radius:8px;background:var(--danger-soft);color:var(--danger-text);font-size:12px}
+body[data-state="choose"] #statusbox{display:none}
+body:not([data-state="choose"]) #choices{display:none}
 </style>
 </head>
-<body data-state="waiting">
+<body data-state="choose">
 <main class="card">
-  <div class="brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="brand-copy"><strong>dsmctl</strong><span data-i18n="brandSub">DSM web sign-in</span></span></div>
+  <div class="brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="brand-copy"><strong>dsmctl</strong><span data-i18n="brandSub">DSM sign-in</span></span></div>
   <h1 data-i18n="heading">Sign in to ` + host + `</h1>
   <p class="target">` + dsmOrigin + `</p>
-  <div class="status" role="status">
+  <div id="choices">
+    <p class="err" id="err"></p>
+    <form id="pwform" autocomplete="on">
+      <div class="field"><label for="acc" data-i18n="account">DSM account</label><input class="control" id="acc" autocomplete="username" required></div>
+      <div class="field"><label for="pw" data-i18n="password">Password</label><input class="control" id="pw" type="password" autocomplete="current-password" required></div>
+      <div class="field"><label for="otp" data-i18n="otp">OTP (only if enabled)</label><input class="control" id="otp" inputmode="numeric" autocomplete="one-time-code"></div>
+      <button class="submit" type="submit" data-i18n="signin">Sign in</button>
+    </form>
+    <div class="divider" data-i18n="or">or</div>
+    <button class="weblogin" id="go" type="button" data-i18n="weblogin">Sign in with Web Login</button>
+  </div>
+  <div class="status" role="status" id="statusbox">
     <span class="dot" aria-hidden="true"></span>
     <span>
-      <p class="msg msg-waiting" data-i18n="waiting">Opening the NAS sign-in window… if nothing appears, use the button.</p>
       <p class="msg msg-exchanging" data-i18n="exchanging">Completing sign-in…</p>
       <p class="msg msg-success" data-i18n="success">Signed in. You can close this window and return to the terminal.</p>
       <p class="msg msg-error" data-i18n="failure">Sign-in failed. Return to the terminal for details.</p>
     </span>
   </div>
-  <button id="go" class="primary" data-i18n="button">Open sign-in window</button>
   <ul class="foot">
-    <li data-i18n="footPassword">Password entered only on the NAS's own page</li>
-    <li data-i18n="footCrypto">PKCE + Noise-encrypted code exchange</li>
+    <li data-i18n="footWeb">Web Login enters the password only on the NAS's own page</li>
+    <li data-i18n="footPw">Account + password is sent over the local loopback to dsmctl and stored encrypted</li>
   </ul>
 </main>
 <script>
@@ -145,11 +168,11 @@ var loginUrl = "` + loginURL + `";
 var dsmOrigin = "` + dsmOrigin + `";
 var host = "` + host + `";
 var strings = {
-en:{brandSub:"DSM web sign-in",heading:"Sign in to {host}",waiting:"Opening the NAS sign-in window… if nothing appears, use the button.",exchanging:"Completing sign-in…",success:"Signed in. You can close this window and return to the terminal.",failure:"Sign-in failed. Return to the terminal for details.",button:"Open sign-in window",footPassword:"Password entered only on the NAS's own page",footCrypto:"PKCE + Noise-encrypted code exchange"},
-"zh-TW":{brandSub:"DSM 網頁登入",heading:"登入 {host}",waiting:"正在開啟 NAS 登入視窗…若沒有出現，請按下方按鈕。",exchanging:"正在完成登入…",success:"已登入。可以關閉此視窗，回到終端機。",failure:"登入失敗。請回到終端機查看詳細資訊。",button:"開啟登入視窗",footPassword:"密碼只在 NAS 自己的頁面輸入",footCrypto:"PKCE + Noise 加密的代碼交換"},
-"zh-CN":{brandSub:"DSM 网页登录",heading:"登录 {host}",waiting:"正在打开 NAS 登录窗口…若未出现，请点击下方按钮。",exchanging:"正在完成登录…",success:"已登录。可以关闭此窗口，回到终端。",failure:"登录失败。请回到终端查看详细信息。",button:"打开登录窗口",footPassword:"密码只在 NAS 自己的页面输入",footCrypto:"PKCE + Noise 加密的代码交换"},
-ja:{brandSub:"DSM ウェブサインイン",heading:"{host} にサインイン",waiting:"NAS のサインインウィンドウを開いています…表示されない場合は下のボタンを押してください。",exchanging:"サインインを完了しています…",success:"サインインしました。このウィンドウを閉じてターミナルに戻れます。",failure:"サインインに失敗しました。詳細はターミナルをご確認ください。",button:"サインインウィンドウを開く",footPassword:"パスワードは NAS 自身のページでのみ入力されます",footCrypto:"PKCE + Noise 暗号化によるコード交換"},
-de:{brandSub:"DSM-Web-Anmeldung",heading:"Bei {host} anmelden",waiting:"Das NAS-Anmeldefenster wird geöffnet … Falls nichts erscheint, nutzen Sie die Schaltfläche.",exchanging:"Anmeldung wird abgeschlossen …",success:"Angemeldet. Sie können dieses Fenster schließen und zum Terminal zurückkehren.",failure:"Anmeldung fehlgeschlagen. Details finden Sie im Terminal.",button:"Anmeldefenster öffnen",footPassword:"Passwort wird nur auf der Seite des NAS eingegeben",footCrypto:"Code-Austausch mit PKCE + Noise-Verschlüsselung"}
+en:{brandSub:"DSM sign-in",heading:"Sign in to {host}",account:"DSM account",password:"Password",otp:"OTP (only if enabled)",signin:"Sign in",or:"or",weblogin:"Sign in with Web Login",exchanging:"Completing sign-in…",success:"Signed in. You can close this window and return to the terminal.",failure:"Sign-in failed. Check the account and password, or return to the terminal for details.",footWeb:"Web Login enters the password only on the NAS's own page",footPw:"Account + password is sent over the local loopback to dsmctl and stored encrypted"},
+"zh-TW":{brandSub:"DSM 登入",heading:"登入 {host}",account:"DSM 帳號",password:"密碼",otp:"OTP(有啟用才需要)",signin:"登入",or:"或",weblogin:"用 Web Login 登入",exchanging:"正在完成登入…",success:"已登入。可以關閉此視窗，回到終端機。",failure:"登入失敗。請檢查帳號與密碼，或回到終端機查看詳細資訊。",footWeb:"Web Login 只在 NAS 自己的頁面輸入密碼",footPw:"帳號密碼經本機 loopback 傳給 dsmctl,並加密儲存"},
+"zh-CN":{brandSub:"DSM 登录",heading:"登录 {host}",account:"DSM 账号",password:"密码",otp:"OTP(仅启用时需要)",signin:"登录",or:"或",weblogin:"用 Web Login 登录",exchanging:"正在完成登录…",success:"已登录。可以关闭此窗口，回到终端。",failure:"登录失败。请检查账号与密码，或回到终端查看详细信息。",footWeb:"Web Login 只在 NAS 自己的页面输入密码",footPw:"账号密码经本机 loopback 传给 dsmctl，并加密存储"},
+ja:{brandSub:"DSM サインイン",heading:"{host} にサインイン",account:"DSM アカウント",password:"パスワード",otp:"OTP（有効な場合のみ）",signin:"サインイン",or:"または",weblogin:"Web Login でサインイン",exchanging:"サインインを完了しています…",success:"サインインしました。このウィンドウを閉じてターミナルに戻れます。",failure:"サインインに失敗しました。アカウントとパスワードを確認するか、ターミナルをご確認ください。",footWeb:"Web Login はパスワードを NAS 自身のページでのみ入力します",footPw:"アカウントとパスワードはローカルの loopback で dsmctl に送られ、暗号化保存されます"},
+de:{brandSub:"DSM-Anmeldung",heading:"Bei {host} anmelden",account:"DSM-Konto",password:"Passwort",otp:"OTP (nur wenn aktiviert)",signin:"Anmelden",or:"oder",weblogin:"Mit Web Login anmelden",exchanging:"Anmeldung wird abgeschlossen …",success:"Angemeldet. Sie können dieses Fenster schließen und zum Terminal zurückkehren.",failure:"Anmeldung fehlgeschlagen. Prüfen Sie Konto und Passwort oder das Terminal.",footWeb:"Web Login gibt das Passwort nur auf der Seite des NAS ein",footPw:"Konto und Passwort werden über den lokalen Loopback an dsmctl gesendet und verschlüsselt gespeichert"}
 };
 function normalizeLocale(value){var input=String(value||"").toLowerCase();if(input.indexOf("zh-hant")===0||input.indexOf("zh-tw")===0||input.indexOf("zh-hk")===0)return "zh-TW";if(input.indexOf("zh")===0)return "zh-CN";if(input.indexOf("ja")===0)return "ja";if(input.indexOf("de")===0)return "de";return "en"}
 var locale = normalizeLocale(navigator.language);
@@ -159,8 +182,18 @@ for (var nodes = document.querySelectorAll("[data-i18n]"), i = 0; i < nodes.leng
   nodes[i].textContent = table[nodes[i].getAttribute("data-i18n")].replace("{host}", host);
 }
 function setState(s){ document.body.setAttribute("data-state", s); }
+function showErr(msg){ var e = document.getElementById("err"); e.textContent = msg; e.style.display = "block"; }
 function start(){ window.open(loginUrl, "dsmctl_signin", "width=560,height=720"); }
 document.getElementById("go").onclick = start;
+document.getElementById("pwform").onsubmit = function(ev){
+  ev.preventDefault();
+  document.getElementById("err").style.display = "none";
+  setState("exchanging");
+  fetch("/password", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({account:document.getElementById("acc").value, password:document.getElementById("pw").value, otp:document.getElementById("otp").value})})
+    .then(function(r){ if (r.ok) { setState("success"); } else { setState("choose"); showErr(table.failure); } })
+    .catch(function(){ setState("choose"); showErr(table.failure); });
+};
 window.addEventListener("message", function(e){
   if (e.origin !== dsmOrigin) return;
   var d = e.data || {};
@@ -171,7 +204,6 @@ window.addEventListener("message", function(e){
     .then(function(r){ setState(r.ok?"success":"error"); })
     .catch(function(){ setState("error"); });
 });
-window.addEventListener("load", function(){ try { start(); } catch (e) {} });
 </script>
 </body></html>`
 }
