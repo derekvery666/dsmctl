@@ -62,6 +62,7 @@ func New(version string) *cobra.Command {
 		newSurveillanceCommand(opts),
 		newSystemCommand(opts),
 		newSecurityAdvisorCommand(opts),
+		newTaskSchedulerCommand(opts),
 	)
 	return root
 }

@@ -1034,6 +1034,26 @@ type getLogsOutput struct {
 	Logs synology.LogState `json:"logs" jsonschema:"Normalized DSM system log entries and severity counts"`
 }
 
+type getTaskSchedulerInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getTaskSchedulerCapabilitiesOutput struct {
+	NAS          string                             `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.TaskSchedulerCapabilities `json:"capabilities" jsonschema:"Task Scheduler read areas currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport       `json:"report" jsonschema:"Discovered APIs and selected Task Scheduler compatibility backends"`
+}
+
+type getTaskSchedulerTasksOutput struct {
+	NAS   string                               `json:"nas" jsonschema:"NAS profile used for the request"`
+	Tasks synology.TaskSchedulerScheduledTasks `json:"tasks" jsonschema:"Scheduled-task inventory metadata; never a task's command or script body"`
+}
+
+type getTaskSchedulerTriggeredOutput struct {
+	NAS   string                               `json:"nas" jsonschema:"NAS profile used for the request"`
+	Tasks synology.TaskSchedulerTriggeredTasks `json:"tasks" jsonschema:"Triggered-task inventory metadata; never a task's command or script body"`
+}
+
 type getResourceMonitorInput struct {
 	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 }
@@ -3507,6 +3527,45 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getNotificationHistoryOutput{}, err
 		}
 		return nil, getNotificationHistoryOutput{NAS: result.NAS, History: result.History}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_task_scheduler_capabilities",
+		Title:       "Get Task Scheduler capabilities",
+		Description: "Report which DSM Task Scheduler read areas (scheduled tasks, triggered tasks) are available for a NAS and the DSM API backend selected for each. Scheduled and triggered tasks are independent DSM API families. Read-only.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getTaskSchedulerInput) (*mcp.CallToolResult, getTaskSchedulerCapabilitiesOutput, error) {
+		result, err := service.GetTaskSchedulerCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getTaskSchedulerCapabilitiesOutput{}, err
+		}
+		return nil, getTaskSchedulerCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_task_scheduler_tasks",
+		Title:       "List scheduled tasks",
+		Description: "List DSM scheduled tasks (Control Panel > Task Scheduler): for each task its id, name, normalized type, enabled state, run-as identity (flagged when privileged/root), schedule, next run time, and last-run status. Inventory metadata only: a task's command or script body is never returned by this tool. This tool never creates, edits, enables, runs, or deletes a task.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getTaskSchedulerInput) (*mcp.CallToolResult, getTaskSchedulerTasksOutput, error) {
+		result, err := service.GetTaskSchedulerScheduled(ctx, input.NAS)
+		if err != nil {
+			return nil, getTaskSchedulerTasksOutput{}, err
+		}
+		return nil, getTaskSchedulerTasksOutput{NAS: result.NAS, Tasks: result.Tasks}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_task_scheduler_triggered",
+		Title:       "List triggered tasks",
+		Description: "List DSM triggered tasks (boot-up, shutdown, and event-triggered tasks): for each its name, trigger event, enabled state, and run-as identity (flagged when privileged/root). Inventory metadata only: a task's command or script body is never returned. This tool never creates, edits, enables, runs, or deletes a task.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getTaskSchedulerInput) (*mcp.CallToolResult, getTaskSchedulerTriggeredOutput, error) {
+		result, err := service.GetTaskSchedulerTriggered(ctx, input.NAS)
+		if err != nil {
+			return nil, getTaskSchedulerTriggeredOutput{}, err
+		}
+		return nil, getTaskSchedulerTriggeredOutput{NAS: result.NAS, Tasks: result.Tasks}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

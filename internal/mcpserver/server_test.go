@@ -62,8 +62,8 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools() error = %v", err)
 	}
-	if len(tools.Tools) != 229 {
-		t.Fatalf("ListTools() returned %d tools, want 229", len(tools.Tools))
+	if len(tools.Tools) != 232 {
+		t.Fatalf("ListTools() returned %d tools, want 232", len(tools.Tools))
 	}
 	for _, tool := range tools.Tools {
 		if scope, ok := ToolScope(tool.Name); !ok || scope == "" {
@@ -185,6 +185,9 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"get_hyper_backup_vault":                false,
 		"get_hyper_backup_applications":         false,
 		"plan_hyper_backup_task_change":         false,
+		"get_task_scheduler_capabilities":       false,
+		"get_task_scheduler_tasks":              false,
+		"get_task_scheduler_triggered":          false,
 	}
 	mutationTools := map[string]bool{
 		"apply_account_plan":                   false,
