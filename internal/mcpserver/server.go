@@ -461,6 +461,24 @@ type applyControlPanelTimePlanOutput struct {
 	Result application.ControlPanelTimeApplyResult `json:"result" jsonschema:"Time mutation result after stale-state and postcondition checks"`
 }
 
+type planSystemHostnameChangeInput struct {
+	NAS     string                           `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request application.SystemHostnameChange `json:"request" jsonschema:"New DSM server name (hostname)"`
+}
+
+type planSystemHostnameChangeOutput struct {
+	Plan application.SystemHostnamePlan `json:"plan" jsonschema:"Validated plan bound to the observed server name and approval hash"`
+}
+
+type applySystemHostnamePlanInput struct {
+	Plan         application.SystemHostnamePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_system_hostname_change"`
+	ApprovalHash string                         `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved hostname plan"`
+}
+
+type applySystemHostnamePlanOutput struct {
+	Result application.SystemHostnameApplyResult `json:"result" jsonschema:"Hostname change result after stale-state and postcondition checks"`
+}
+
 type getFileServicesInput struct {
 	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 }
@@ -2479,6 +2497,32 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, applyControlPanelTimePlanOutput{}, err
 		}
 		return nil, applyControlPanelTimePlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_system_hostname_change",
+		Title:       "Plan a DSM server-name (hostname) change",
+		Description: "Validate a new DSM server name (hostname) against the current name and return a hash-bound approval plan. A no-op rename is refused. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planSystemHostnameChangeInput) (*mcp.CallToolResult, planSystemHostnameChangeOutput, error) {
+		plan, err := service.PlanSystemHostname(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planSystemHostnameChangeOutput{}, err
+		}
+		return nil, planSystemHostnameChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_system_hostname_plan",
+		Title:       "Apply an approved DSM server-name plan",
+		Description: "Apply an unmodified hostname plan only while its approval hash and the observed server name still match, then verify DSM reports the requested name.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applySystemHostnamePlanInput) (*mcp.CallToolResult, applySystemHostnamePlanOutput, error) {
+		result, err := service.ApplySystemHostnamePlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applySystemHostnamePlanOutput{}, err
+		}
+		return nil, applySystemHostnamePlanOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
