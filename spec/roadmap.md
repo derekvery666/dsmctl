@@ -105,8 +105,8 @@ flowchart LR
 | ID | Priority | Status | Parallel group | Depends on | Summary |
 | --- | --- | --- | --- | --- | --- |
 | [WI-001](work-items/WI-001-storage-mutation-contract.md) | P0 | `done` | A | — | Define storage manifests and hash-bound plan/apply without enabling writes. |
-| [WI-002](work-items/WI-002-storage-pool-management.md) | P0 | `done` | A | WI-001 | Guarded storage-pool create/expand/delete variants. |
-| [WI-003](work-items/WI-003-volume-management.md) | P0 | `done` | A | WI-001, WI-002 | Guarded volume create/update/delete variants. |
+| [WI-002](work-items/WI-002-storage-pool-management.md) | P0 | `done` | A | WI-001 | Guarded storage-pool create/expand/delete variants. **Amended 2026-07-21 (fresh-NAS enablement): accept `sys_partition_normal` fresh-disk status, opt-in `allow_unsupported_disks` for off-HCL drives (plan warning, hash-covered), and the benign `background_optimizing` post-create status. Live: built an all-disk btrfs RAID5 on a fresh DS918+ (DSM 7.3.2, 10.17.37.51).** |
+| [WI-003](work-items/WI-003-volume-management.md) | P0 | `done` | A | WI-001, WI-002 | Guarded volume create/update/delete variants. **Amended 2026-07-21: create on a `background_optimizing` parent pool; volume-create postcondition identifies the new volume by id+pool+filesystem+capacity and tolerates DSM's blank first-volume name.** |
 | [WI-004](work-items/WI-004-san-inventory.md) | P0 | `done` | B | — | Read-only iSCSI target, LUN, and mapping inventory. |
 | [WI-005](work-items/WI-005-san-management.md) | P1 | `done` | B | WI-004, WI-001 | Guarded SAN target/LUN/mapping management. |
 | [WI-006](work-items/WI-006-control-panel-modules.md) | P1 | `done` | C | — | Establish focused Control Panel module boundaries and ship the first read slice. |
