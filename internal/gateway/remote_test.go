@@ -177,7 +177,7 @@ func TestManagedMCPAuthenticatesBeforeInitializeFiltersToolsAndNAS(t *testing.T)
 	planner := remotepolicy.Principal{TokenID: "planner-id", Name: "planner", Scopes: map[string]struct{}{remotepolicy.ScopePlan: {}}, NAS: map[string]struct{}{"allowed": {}}}
 	authenticator := &memoryAuthenticator{principals: map[string]remotepolicy.Principal{"reader-token": reader, "planner-token": planner}}
 	auditor := &memoryAuditor{}
-	server, err := New(Options{MCPServer: mcpserver.NewRemote(service, "test", auditor), MCPAuthenticator: authenticator, MCPAuditor: auditor, OAuthProvider: &memoryOAuthProvider{}, AllowedHosts: []string{"127.0.0.1"}})
+	server, err := New(Options{MCPServer: mcpserver.NewRemote(service, "test", auditor, ""), MCPAuthenticator: authenticator, MCPAuditor: auditor, OAuthProvider: &memoryOAuthProvider{}, AllowedHosts: []string{"127.0.0.1"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +276,7 @@ func TestManagedMCPUnknownToolReturnsErrorWithoutCrashing(t *testing.T) {
 	reader := remotepolicy.Principal{TokenID: "reader-id", Name: "reader", Scopes: map[string]struct{}{remotepolicy.ScopeRead: {}}, NAS: map[string]struct{}{"allowed": {}}}
 	authenticator := &memoryAuthenticator{principals: map[string]remotepolicy.Principal{"reader-token": reader}}
 	auditor := &memoryAuditor{}
-	server, err := New(Options{MCPServer: mcpserver.NewRemote(service, "test", auditor), MCPAuthenticator: authenticator, MCPAuditor: auditor, OAuthProvider: &memoryOAuthProvider{}, AllowedHosts: []string{"127.0.0.1"}})
+	server, err := New(Options{MCPServer: mcpserver.NewRemote(service, "test", auditor, ""), MCPAuthenticator: authenticator, MCPAuditor: auditor, OAuthProvider: &memoryOAuthProvider{}, AllowedHosts: []string{"127.0.0.1"}})
 	if err != nil {
 		t.Fatal(err)
 	}

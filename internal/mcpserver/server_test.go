@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -260,5 +261,26 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 	}
 	if authStatus.IsError {
 		t.Fatalf("CallTool(get_auth_status) returned tool error: %#v", authStatus.Content)
+	}
+}
+
+func TestSnapshotRelationCredentialGuidance(t *testing.T) {
+	// With an admin URL: deep-links to the Credentials page for the destination,
+	// password method only (web login cannot pair), and names the destination.
+	withURL := snapshotRelationCredentialGuidance("https://gw.example", "nas255")
+	if !strings.Contains(withURL, "https://gw.example/admin/?view=credentials&nas=nas255&method=password") {
+		t.Fatalf("guidance missing the credentials deep link: %s", withURL)
+	}
+	if !strings.Contains(withURL, "nas255") || !strings.Contains(withURL, "web login cannot be used") {
+		t.Fatalf("guidance missing dest name or web-login note: %s", withURL)
+	}
+	// Destination names that need escaping are URL-encoded in the link.
+	if escaped := snapshotRelationCredentialGuidance("https://gw.example", "nas a"); !strings.Contains(escaped, "nas=nas+a") {
+		t.Fatalf("destination name not URL-escaped: %s", escaped)
+	}
+	// Without an admin URL: no link, points at the console / CLI, still names the dest.
+	noURL := snapshotRelationCredentialGuidance("", "nas255")
+	if strings.Contains(noURL, "http") || !strings.Contains(noURL, "dsmctl auth login") || !strings.Contains(noURL, "nas255") {
+		t.Fatalf("no-URL guidance is wrong: %s", noURL)
 	}
 }

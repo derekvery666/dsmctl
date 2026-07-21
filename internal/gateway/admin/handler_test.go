@@ -680,6 +680,57 @@ func TestPasswordOTPEnrollmentStoresTrustedDeviceWithoutReturningSecrets(t *test
 	}
 }
 
+func TestPasswordEnrollmentValidateOnlyDoesNotStore(t *testing.T) {
+	var loginCount int
+	dsm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		_ = req.ParseForm()
+		w.Header().Set("Content-Type", "application/json")
+		switch req.Form.Get("api") + "." + req.Form.Get("method") {
+		case "SYNO.API.Info.query":
+			fmt.Fprint(w, `{"success":true,"data":{"SYNO.API.Auth":{"path":"entry.cgi","minVersion":1,"maxVersion":7}}}`)
+		case "SYNO.API.Auth.login":
+			loginCount++
+			fmt.Fprint(w, `{"success":true,"data":{"sid":"temporary-sid"}}`)
+		case "SYNO.API.Auth.logout":
+			fmt.Fprint(w, `{"success":true,"data":{}}`)
+		default:
+			t.Errorf("unexpected DSM call %s.%s", req.Form.Get("api"), req.Form.Get("method"))
+			fmt.Fprint(w, `{"success":false,"error":{"code":102}}`)
+		}
+	}))
+	defer dsm.Close()
+
+	handler, repository, manager, adminSession := newTestHandler(t)
+	defer manager.Close(context.Background())
+	profile, err := repository.CreateProfile(context.Background(), state.ProfileInput{Name: "verify", URL: dsm.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf(`{"account":"operator","expected_revision":%d,"password":"enrollment-password","store":false}`, profile.Revision)
+	response := performJSON(handler, http.MethodPost, "/admin/api/profiles/verify/credentials/password", body, adminSession)
+	if response.Code != http.StatusOK {
+		t.Fatalf("validate-only status = %d, body=%s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"validated":true`) || !strings.Contains(response.Body.String(), `"password_stored":false`) {
+		t.Fatalf("validate-only response = %s", response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "enrollment-password") {
+		t.Fatalf("validate-only response leaked the password: %s", response.Body.String())
+	}
+	if loginCount != 1 {
+		t.Fatalf("DSM login count = %d, want exactly one validation login", loginCount)
+	}
+	// Nothing persisted: the profile keeps no password, binds no account, and its
+	// revision does not advance (no MutateProfile on the validate-only path).
+	updated, err := repository.Profile(context.Background(), "verify")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.PasswordStored || updated.Username != "" || updated.Revision != profile.Revision {
+		t.Fatalf("validate-only mutated the profile: %#v", updated)
+	}
+}
+
 func TestAdminWebLoginEnrollmentStoresRenewableVaultSession(t *testing.T) {
 	dsm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		_ = req.ParseForm()

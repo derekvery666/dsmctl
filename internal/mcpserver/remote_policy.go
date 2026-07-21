@@ -13,9 +13,11 @@ import (
 )
 
 // NewRemote adds enforceable request policy to the complete MCP surface. New
-// remains the local CLI/stdio server and is intentionally unaffected.
-func NewRemote(service *application.Service, version string, auditor remotepolicy.Auditor) *mcp.Server {
-	server := New(service, version)
+// remains the local CLI/stdio server and is intentionally unaffected. adminURL
+// is the gateway console's public origin (may be empty); it is used only to
+// build credential-enrollment deep links in tool guidance, never as a secret.
+func NewRemote(service *application.Service, version string, auditor remotepolicy.Auditor, adminURL string) *mcp.Server {
+	server := New(service, version, WithAdminURL(adminURL))
 	// get_certificate_export is named like a read but writes a certificate
 	// archive containing the PRIVATE KEY to the gateway HOST's filesystem at a
 	// caller-controlled path. The prefix-based ToolScope classifies any get_ tool

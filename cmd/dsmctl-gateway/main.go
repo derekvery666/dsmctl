@@ -158,7 +158,7 @@ func run(arguments []string, logger *slog.Logger) error {
 	}
 	var mcpServer = mcpserver.NewReadOnly(service, buildinfo.Version)
 	if managed {
-		mcpServer = mcpserver.NewRemote(service, buildinfo.Version, repository)
+		mcpServer = mcpserver.NewRemote(service, buildinfo.Version, repository, *adminPublicURL)
 	}
 	gatewayOptions := gateway.Options{
 		MCPServer:      mcpServer,

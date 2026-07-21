@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -1672,7 +1674,42 @@ type applyDriveTeamFolderPlanOutput struct {
 	Result application.DriveTeamFolderApplyResult `json:"result" jsonschema:"Team-folder mutation result after stale-state and postcondition checks"`
 }
 
-func New(service *application.Service, version string) *mcp.Server {
+// Option configures an MCP server built by New.
+type Option func(*serverConfig)
+
+type serverConfig struct {
+	// adminURL is the gateway admin console's public origin, if any. When set, a
+	// tool that fails because a destination credential is missing points the
+	// operator at the console's Credentials page instead of only erroring. It is
+	// a URL, never a secret.
+	adminURL string
+}
+
+// WithAdminURL sets the gateway admin console public URL used to build
+// credential-enrollment deep links in tool guidance.
+func WithAdminURL(rawURL string) Option {
+	return func(c *serverConfig) { c.adminURL = strings.TrimRight(strings.TrimSpace(rawURL), "/") }
+}
+
+// snapshotRelationCredentialGuidance builds the operator guidance shown when a
+// replication apply cannot pair because the destination has no stored
+// credential. When an admin console URL is configured it deep-links to the
+// Credentials page for the destination (password method only — Snapshot
+// Replication pairing cannot use web login). It returns prose and a URL only,
+// never a secret.
+func snapshotRelationCredentialGuidance(adminURL, destNAS string) string {
+	if adminURL != "" {
+		link := adminURL + "/admin/?view=credentials&nas=" + url.QueryEscape(destNAS) + "&method=password"
+		return fmt.Sprintf("The destination %q has no stored credential. Open the gateway console Credentials page to enter and store its DSM admin account and password, then re-run this tool:\n%s\nSnapshot Replication pairing needs an account and password; web login cannot be used for it.", destNAS, link)
+	}
+	return fmt.Sprintf("The destination %q has no stored credential. Store its DSM admin account and password on the gateway console Credentials page (or with `dsmctl auth login`), then re-run this tool. Snapshot Replication pairing needs an account and password; web login cannot be used for it.", destNAS)
+}
+
+func New(service *application.Service, version string, opts ...Option) *mcp.Server {
+	var cfg serverConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	server := mcp.NewServer(&mcp.Implementation{Name: "dsmctl", Version: version}, nil)
 
 	// A single central hook classifies every failed tool result and attaches its
@@ -4192,10 +4229,14 @@ func New(service *application.Service, version string) *mcp.Server {
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applySnapshotRelationInput) (*mcp.CallToolResult, applySnapshotRelationOutput, error) {
 		// MCP never prompts and must never accept a password: always resolve the
 		// destination credential from the vault (nil override). A destination
-		// without a stored credential fails closed with guidance to enroll it or
-		// pair via the CLI.
+		// without a stored credential fails closed with guidance pointing at the
+		// gateway console's Credentials page (or the CLI). Only a link and prose
+		// are added — the password never enters this tool's input or output.
 		result, err := service.ApplySnapshotReplicationRelationPlan(ctx, input.Plan, input.ApprovalHash, nil)
 		if err != nil {
+			if strings.Contains(err.Error(), "no password available") {
+				err = fmt.Errorf("%w\n\n%s", err, snapshotRelationCredentialGuidance(cfg.adminURL, input.Plan.DestNAS))
+			}
 			return nil, applySnapshotRelationOutput{}, err
 		}
 		return nil, applySnapshotRelationOutput{Result: result}, nil

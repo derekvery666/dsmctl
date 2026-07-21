@@ -946,6 +946,7 @@ func (h *Handler) passwordEnrollment(w http.ResponseWriter, req *http.Request, n
 		ExpectedRevision uint64 `json:"expected_revision"`
 		Password         string `json:"password"`
 		OTP              string `json:"otp,omitempty"`
+		Store            *bool  `json:"store,omitempty"`
 	}
 	if err := decodeJSON(req, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -956,6 +957,10 @@ func (h *Handler) passwordEnrollment(w http.ResponseWriter, req *http.Request, n
 		writeError(w, http.StatusBadRequest, "account, expected_revision, and password are required")
 		return
 	}
+	// store defaults to true when the field is absent, preserving the behavior of
+	// callers that always persist. store=false validates the credential against
+	// DSM without writing anything to the vault (a "verify, don't save" check).
+	store := input.Store == nil || *input.Store
 	cfg, err := h.repository.Snapshot(req.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "load profile")
@@ -994,6 +999,12 @@ func (h *Handler) passwordEnrollment(w http.ResponseWriter, req *http.Request, n
 		writeError(w, http.StatusBadGateway, "DSM rejected password enrollment")
 		return
 	}
+	if !store {
+		// Validate-only: the credential authenticated to DSM but the operator did
+		// not opt to store it, so nothing is written to the vault.
+		writeJSON(w, http.StatusOK, map[string]any{"nas": name, "account": strings.TrimSpace(input.Account), "validated": true, "password_stored": false, "trusted_device_stored": false})
+		return
+	}
 	if device.ID == "" {
 		device = credentials.TrustedDevice{}
 	}
@@ -1005,7 +1016,7 @@ func (h *Handler) passwordEnrollment(w http.ResponseWriter, req *http.Request, n
 		writeRepositoryError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"nas": name, "account": strings.TrimSpace(input.Account), "password_stored": true, "trusted_device_stored": device.ID != ""})
+	writeJSON(w, http.StatusOK, map[string]any{"nas": name, "account": strings.TrimSpace(input.Account), "validated": true, "password_stored": true, "trusted_device_stored": device.ID != ""})
 }
 
 func (h *Handler) removeSession(w http.ResponseWriter, req *http.Request, name string) {
