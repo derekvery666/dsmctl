@@ -99,17 +99,24 @@ dsmctl snapshot relation apply --nas nas51 -f plan.json --approve <hash>
 dsmctl snapshot relation delete --nas nas51 --plan-id <id>
 ```
 
-> **Live status:** the operation is implemented, adversarially reviewed, and
-> unit-tested; on the nas51↔nas255 pair the apply runs end-to-end and mints the
-> destination session from its vault profile with **no secret in the plan**
-> (verified), but DSM's `SYNO.DR.Node.Credential temp_create` rejects a
-> forwarded session (error 528). DSM 7.4.7 mints the durable pairing credential
-> only through its `synocredential` OAuth2 (auth-code + PKCE) broker, which
-> dsmctl cannot drive headlessly yet. Until a headless-`synocredential`
-> follow-on lands (lead: `SYNO.Remote.Credential.Challenge/.Info`), establish
-> the relation once in the DSM UI; dsmctl reads and manages it thereafter. The
-> failover/switchover/reprotect family is surfaced read-only (`can_*`) and is
-> never executable here.
+Once a relation exists, `snapshot relation sync` (manual sync),
+`snapshot relation stop` (pause), and `snapshot relation delete` operate on it
+by plan id (guarded by a relation-exists check), and `snapshot replication`
+reads it back with both site blocks, `can_*` capability flags, and last-sync
+time/bytes. These reads and management ops are **live-verified** against a real
+nas51→nas255 relation (a sync moved real data; pause and delete succeeded).
+
+> **Live status — creating a relation:** the operation is implemented,
+> adversarially reviewed, and unit-tested; on the nas51↔nas255 pair the apply
+> runs end-to-end with **no secret in the plan** (verified). But DSM's
+> `SYNO.DR.Node.Credential temp_create` rejects a forwarded session (error 528)
+> — proven for a resumed vault session AND a fresh browser-OAuth session
+> (`--web-login`). DSM 7.4.7 mints the durable pairing credential only through
+> its `synocredential` broker's extra registration step, which dsmctl cannot
+> reproduce headlessly yet (lead: `SYNO.Remote.Credential.Challenge/.Info`).
+> **Until then, create the relation once in the DSM UI; dsmctl reads and
+> manages it thereafter** (all live-verified). The failover/switchover/reprotect
+> family is surfaced read-only (`can_*`) and is never executable here.
 
 ## Deferred
 

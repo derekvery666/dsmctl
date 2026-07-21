@@ -245,9 +245,12 @@ model the model must not resolve a vault password itself; a throwaway harness
 that did so was correctly refused by the safety classifier. The follow-on work
 item must express the remote credential as a `credential_ref` resolved by the
 existing audited resolver at apply time (never by the model, never printed), or
-require the operator to establish the relation first. **The per-plan DR.Plan
-read fields therefore remain source-derived / WIRE-UNVERIFIED** until a real
-relation exists — the one open item from this exploration.
+require the operator to establish the relation first. **Update (WI-090,
+2026-07-21): the per-plan DR.Plan read fields are now LIVE-VERIFIED** against a
+real operator-paired nas51→nas255 relation — the decoder was corrected (the
+enrichment blocks are nested under an `additional` sub-object) and reads
+id/role/sites/can_do/last-sync correctly. Headless pairing remains the open
+piece (see [WI-090](WI-090-snapshot-replication-mutation.md)).
 
 ## Coordination
 

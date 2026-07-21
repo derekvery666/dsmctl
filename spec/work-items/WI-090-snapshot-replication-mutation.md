@@ -125,12 +125,21 @@ One guarded operation plus its read-back, all package-gated on
       would bypass the gateway approval gate that only fires on `"high"`); the
       read-only gateway strips both tools; remote apply requires single-use
       approval; `server_test` tool count (198→200) + allowlists updated.
-- [ ] Replication read decoder upgraded to **live-verified** per-plan fields
-      from a real relation — **BLOCKED**: no relation could be created live
-      (see Live outcome). The enriched decoder (role/sites/sync_report/can_do)
-      is implemented and unit-tested against the map's field list, but the
-      populated shape is still WIRE-UNVERIFIED.
+- [x] Replication read decoder upgraded to **live-verified** per-plan fields
+      from a real relation. An operator paired a real nas51→nas255 share
+      relation in the DSM UI; reading it back exposed and fixed the decoder bug
+      (enrichment blocks — site info, can_do, sync_report, snapshot_count — are
+      nested under an `additional` sub-object, not top-level) and the trailing
+      newline on `readable_begin_time`. id/role(main/dr)/target/type/both
+      sites/can_do/last-sync-time+bytes now all decode from real data; the
+      WIRE-UNVERIFIED caveat is cleared.
 - [x] `snapshot relation delete` removes a relation by plan id (guarded, CLI).
+      **Live-verified** against the real relation (both NASes returned to 0
+      plans).
+- [x] Management ops `snapshot relation sync` / `stop` (`SYNO.DR.Plan`
+      sync/pause v1, by plan id, relation-exists guard) **live-verified**
+      against the real relation: sync moved 8990 bytes nas51→nas255; pause
+      succeeded.
 - [x] Failover family exposed as read-only `can_*` reporting only; no
       executable failover/switchover/reprotect in this slice.
 - [x] Unit: request-capture for temp_create/check_remote_conn/create-v3/
@@ -176,10 +185,28 @@ Concrete follow-on lead: DSM exposes `SYNO.Remote.Credential` +
 `SYNO.Core.OAuth.Server` — very likely the backend `synocredential` wraps and
 the headless-capable challenge/response path. Pinning its params needs the
 `synocredential` source (not in the DR bundle; served path not found by probe)
-or authenticated probing. The alternative that needs no headless OAuth: the
-operator establishes one relation in the DSM UI (synocredential runs in their
-browser), after which dsmctl reads/manages it — which also unblocks the
-populated-decoder criterion above.
+or authenticated probing.
+
+**`--web-login` update (2026-07-21):** built `snapshot relation apply
+--web-login` (the destination login via `internal/weblogin`, the same
+auth-code+PKCE flow `synocredential` performs) and RAN it. Two proven facts:
+(1) the loopback return path works even for an agent-run flow — the Claude Code
+Windows sandbox shares the host loopback, so a `127.0.0.1` listener started in
+the sandbox is reachable from the user's real browser (verified). (2) weblogin
+returns a genuine fresh full-OAuth destination session — yet `temp_create`
+still returns **528**. So `temp_create`'s `session` accepts **no DSM sid**
+(resumed, fresh-OAuth, or renamed); it requires the numeric broker id
+`synocredential.Issue` returns from an EXTRA registration step. Reproducing
+that step is the sole remaining blocker for headless pairing; the `--web-login`
+scaffolding is kept for when it is cracked. Browser reverse-engineering of the
+step is currently blocked (synocredential.js 404s; automation cannot pass the
+self-signed-cert interstitial; `read_network_requests` returns no bodies;
+`javascript_tool` in the authenticated DSM session is classifier-fenced).
+
+**Operator-pairing path SUCCEEDED (this unblocked the read + management
+criteria above):** the operator paired one relation in the DSM UI; dsmctl then
+read it back (decoder fixed live), synced it (8990 bytes moved), paused it, and
+deleted it — all live-verified — then both throwaway shares were removed.
 
 ## Verification
 
