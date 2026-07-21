@@ -41,6 +41,7 @@ func New(version string) *cobra.Command {
 		newControlPanelCommand(opts),
 		newDiscoverCommand(opts),
 		newDownloadCommand(opts),
+		newDSMUpdateCommand(opts),
 		newCertificateCommand(opts),
 		newDriveCommand(opts),
 		newExternalAccessCommand(opts),

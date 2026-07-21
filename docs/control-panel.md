@@ -571,6 +571,76 @@ alias/port, reverse-proxy rule CRUD) are a deferred follow-on and are **HIGH
 risk** — each changes how DSM itself is reached — and, like the other guarded
 modules, will be excluded from the read-only gateway.
 
+## DSM Update & Restore (read-only)
+
+DSM's Control Panel → Update & Restore page carries two independent DSM API
+families with independent failure boundaries: the DSM-update family
+(`SYNO.Core.Upgrade`, `SYNO.Core.Upgrade.Server`, `SYNO.Core.Upgrade.Setting`)
+and the configuration-backup family (`SYNO.Backup.Config.AutoBackup`). One being
+absent reports `(not supported)` without disabling the others, and the
+update-server offered-update check — a network egress to Synology's update
+server — reports availability as `(unknown)` rather than erroring the module
+when the server is unreachable.
+
+```console
+dsmctl dsm-update capabilities --nas office
+dsmctl dsm-update status --nas office --json
+dsmctl dsm-update available --nas office --json
+dsmctl dsm-update policy --nas office --json
+dsmctl dsm-update config-backup --nas office --json
+```
+
+- **Update status** reads `SYNO.Core.Upgrade` (`status`) → whether an upgrade is
+  allowed and the local update state (`none`, downloading, downloaded,
+  installing). The installed DSM version/build is merged from the discovered
+  compatibility target, since the status method does not return it.
+- **Available update** checks `SYNO.Core.Upgrade.Server` (`check`, matching the
+  DSM WebUI's `need_auto_smallupdate:true` parameter) → whether the update server
+  offers an update. The response decoder tolerates both the flat v1
+  (`{available}`) and the wrapped v2+ (`{update:{available, rss_result}}`) shapes.
+  When an update is available DSM returns the offered version and its
+  restart/criticality flags inside the nested object; those detail fields were
+  not observable on the lab (no update was pending), so they are surfaced
+  verbatim under `details` by their raw DSM key rather than through a guessed
+  typed decoder — nothing is fabricated and nothing is dropped.
+- **Auto-update policy** reads `SYNO.Core.Upgrade.Setting` (`get`). v2 is
+  selected deliberately: it carries the complete policy (`autoupdate_enable`,
+  `autoupdate_type`, `schedule`, `smart_nano_enabled`, `upgrade_type`), while the
+  v1 fallback only reports the older `auto_download`/`upgrade_type` pair.
+  Version-specific fields are pointer-typed, so "off" is never confused with "not
+  reported by this DSM version".
+- **Configuration backup** reads `SYNO.Backup.Config.AutoBackup` (`get`) → whether
+  the scheduled backup to the Synology account is enabled, the destination
+  account and encryption mode, and the last-backup result, enriched with the
+  stored backup history (`list`) when available. The history enrichment is
+  secondary: a NAS whose `list` method is absent or fails still returns the
+  settings.
+
+**Secret suppression is mandatory on read.** The config-backup settings response
+carries the destination account password (`pwd`); the decoder **never references
+it**, so it cannot be learned or leaked. The destination account identifier is
+surfaced (like an SMTP auth user) so an operator can see where the configuration
+is backed up. A unit test injects a password canary and asserts the re-encoded
+model carries no trace, and a live `--json` grep confirms no password leak.
+
+MCP exposes the same reads through `get_dsm_update_capabilities`,
+`get_dsm_update_status`, `get_dsm_update_available`, `get_dsm_update_policy`, and
+`get_dsm_update_config_backup`. All are read-only.
+
+Verified live on DSM 7.3: `SYNO.Core.Upgrade` v2 `status`
+(`allow_upgrade`, `status`), `SYNO.Core.Upgrade.Server` v3 `check`
+(`update.available`, `update.rss_result`), `SYNO.Core.Upgrade.Setting` v2 `get`
+(the five policy fields above), and `SYNO.Backup.Config.AutoBackup` v1 `get`
+(`enable`, `enc_method`, `last_status`, `myds_account`; `pwd` deliberately never
+read) and `list` (the stored-backup version history). Installing a DSM update
+(`SYNO.Core.Upgrade.Server.Download` / `.Patch`) and restoring a configuration
+(`SYNO.Backup.Config.Restore`) are deliberately **not** implemented: both reboot
+or overwrite the whole system and are deferred with reason (a DSM-update install
+reboots the entire NAS so its plan/apply postcondition cannot be verified in the
+same session; a config restore overwrites the system configuration wholesale and
+can lock the administrator out). No install or restore path is exposed on any
+surface — CLI, MCP, or the read-only gateway.
+
 ## Adding another module
 
 Add a dedicated type under `internal/domain/controlpanel`, an operation package
