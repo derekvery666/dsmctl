@@ -99,9 +99,11 @@ Share-snapshot lifecycle only, all through the mutation-safety contract:
 ## Non-goals
 
 - **Replication mutations**: creating/editing/deleting replication relations,
-  sync-now, failover, switchover, test-failover, and re-protect. These need a
-  second prepared NAS as a replication target and carry extreme risk; they are
-  a follow-on item once a target NAS exists in the lab.
+  sync-now, failover, switchover, test-failover, and re-protect. These carry
+  extreme risk and require a server-to-server trust handshake whose only
+  bootstrap secret is the remote NAS's admin password — a human-gated vault
+  secret the model must not resolve itself. Deferred to a dedicated work item;
+  the full wire flow is mapped in the exploration note below.
 - **Restore paths**: in-place rollback of a share to a snapshot and
   clone-snapshot-to-new-share are destructive restore surfaces deferred to a
   dedicated item (the FileStation `#snapshot` browse path already gives
@@ -195,6 +197,57 @@ Completed 2026-07-21 on the DSM 7.3-81168 lab (DS3018xs, btrfs `/volume1`):
   — the 7.4.7 SPK is a signed envelope and was only used for its INFO). The
   `SYNO.DR.Plan list` additional set and per-plan fields remain
   source-derived (package uninstallable on this DSM build).
+
+## Replication exploration (nas51 ↔ nas255, 2026-07-21)
+
+The DSM 7.3-81168 package deadlock does not affect the two DS918+ test units:
+`ReplicationService 1.3.0-0600` + `SnapshotReplication 7.4.7-1859` installed and
+run on **nas51** (DSM 7.3.2-86009) and **nas255** (DSM 7.3.1-86003) via local
+`.spk` upload. With the package present, the module's replication read now
+selects a real backend and returns `0 plans` cleanly, and `SYNO.DR.Node info`
+decodes live (hostname + node UUID). The 15-API DR family is present:
+`SYNO.DR.Node[.Credential/.Session]`, `SYNO.DR.Plan[.Site/.MainSite/.DRSite]`,
+`SYNO.DR.Topology`, `SYNO.DR.Credential`, `SYNO.Replica.Share/.Volume`,
+`SYNO.Btrfs.Replica[.Core]`, `SYNO.DisasterRecovery.Log/.Retention`.
+
+**Full create flow, mapped from the 7.4.7 `disaster_recovery.js` (blueprint for
+the replication-mutation follow-on):**
+
+1. **Pair** — the source logs the operator into the *destination* NAS
+   (`synocredential.Issue` → a browser login to the remote yielding a remote
+   `sid`), then trades it for a persistent credential:
+   `SYNO.DR.Node.Credential temp_create` v1
+   `{conn:{addr,port,protocol}, auth:"session", session:<remote-sid>}` →
+   `{cred_id}`. Thereafter calls use `auth:"cred_id", cred_id:<id>`.
+2. **Test** — `SYNO.DR.Plan check_remote_conn` v1 `{src_to_dst_conns:[…]}`.
+3. **Create** — `SYNO.DR.Plan create` **v3**, one compound entry per target:
+   `{nowait:true, auto_remove:false, is_to_local:false, solution_type:1,
+   target:{target_id:<share>, target_type:2}, dst_volume:"/volumeN",
+   sync_policy:{enabled, mode:2, schedule:{…}, is_send_encrypted,
+   is_sync_local_snapshots, is_app_aware, sync_window},
+   src_to_dst_conns:[{cred:{conn:{addr,port,protocol}, auth:"cred_id",
+   cred_id}, replica_conn:{replica_addr:"_AUTO_FILL_", replica_port:5566,
+   replica_type:2}}], dst_to_src_conns?, src_output_conns?, dst_output_conns?}`
+   → `{task_id}`, polled via `SYNO.DR.Plan get_poll_task`.
+   Constants: `TARGET_TYPE_SHARE=2`, `TARGET_TYPE_LUN=1`,
+   `REPLICA_TYPE_BTRFS=2`, `REPLICA_PORT_BTRFS=5566`, `SOLUTION_SYNOLOGY_DR=1`,
+   protocol `http`/`https`, addr `_AUTO_FILL_` = wizard auto-detect.
+4. **Read** — `SYNO.DR.Plan list` v1 with `additional=[sync_policy, sync_report,
+   main_site_info, dr_site_info, can_do, op_info, last_op_info, topology,
+   testfailover_info, retention_lock_report]`; `info`/`get`.
+5. **Operate** — `sync`/`stop`/`pause`; failover family guarded by `can_*`
+   predicates (`can_switchover`/`can_failover`/`can_reprotect`/…) before
+   `switchover`/`failover`/`reprotect`/`commit_failover`/`undo_failover`.
+
+**Blocked at step 1 for automation.** Pairing's only bootstrap secret is the
+destination NAS's admin password (to obtain the remote `sid`). Per the security
+model the model must not resolve a vault password itself; a throwaway harness
+that did so was correctly refused by the safety classifier. The follow-on work
+item must express the remote credential as a `credential_ref` resolved by the
+existing audited resolver at apply time (never by the model, never printed), or
+require the operator to establish the relation first. **The per-plan DR.Plan
+read fields therefore remain source-derived / WIRE-UNVERIFIED** until a real
+relation exists — the one open item from this exploration.
 
 ## Coordination
 
