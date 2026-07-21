@@ -888,7 +888,11 @@ func planSnapshotReplicationRelationWithClients(ctx context.Context, sourceName 
 	return plan, nil
 }
 
-func (s *Service) ApplySnapshotReplicationRelationPlan(ctx context.Context, plan SnapshotReplicationRelationPlan, approvalHash string) (SnapshotReplicationRelationApplyResult, error) {
+// ApplySnapshotReplicationRelationPlan applies a validated relation plan. When
+// destSession is non-nil the destination pairing session is taken from it (the
+// CLI web-login path); otherwise it is minted from the destination vault
+// profile inside the tool.
+func (s *Service) ApplySnapshotReplicationRelationPlan(ctx context.Context, plan SnapshotReplicationRelationPlan, approvalHash string, destSession *SnapshotReplicationDestSession) (SnapshotReplicationRelationApplyResult, error) {
 	if err := validateSnapshotReplicationRelationPlan(plan, approvalHash); err != nil {
 		return SnapshotReplicationRelationApplyResult{}, err
 	}
@@ -915,10 +919,23 @@ func (s *Service) ApplySnapshotReplicationRelationPlan(ctx context.Context, plan
 	if sourceName != plan.SourceNAS || destName != plan.DestNAS {
 		return SnapshotReplicationRelationApplyResult{}, fmt.Errorf("replication plan NAS profiles resolved differently at apply")
 	}
-	return applySnapshotReplicationRelationWithClients(ctx, sourceName, sourceClient, destName, destClient, plan)
+	return applySnapshotReplicationRelationWithClients(ctx, sourceName, sourceClient, destName, destClient, plan, destSession)
 }
 
-func applySnapshotReplicationRelationWithClients(ctx context.Context, sourceName string, sourceClient snapshotReplicationClient, destName string, destClient snapshotReplicationClient, plan SnapshotReplicationRelationPlan) (SnapshotReplicationRelationApplyResult, error) {
+// SnapshotReplicationDestSession overrides how the destination pairing session
+// is obtained at apply. When supplied (by the CLI web-login path), dsmctl uses
+// this freshly web-logged-in destination session — the same OAuth2 auth-code +
+// PKCE flow DSM's own `synocredential` broker performs — instead of the
+// vault-resumed session. It carries only session material (a sid), never the
+// account password.
+type SnapshotReplicationDestSession struct {
+	Addr  string
+	Port  int
+	HTTPS bool
+	SID   string
+}
+
+func applySnapshotReplicationRelationWithClients(ctx context.Context, sourceName string, sourceClient snapshotReplicationClient, destName string, destClient snapshotReplicationClient, plan SnapshotReplicationRelationPlan, destSession *SnapshotReplicationDestSession) (SnapshotReplicationRelationApplyResult, error) {
 	// TOCTOU close: re-plan against live two-site state and compare.
 	current, err := planSnapshotReplicationRelationWithClients(ctx, sourceName, sourceClient, destName, destClient, plan.Request)
 	if err != nil {
@@ -933,14 +950,25 @@ func applySnapshotReplicationRelationWithClients(ctx context.Context, sourceName
 		return SnapshotReplicationRelationApplyResult{}, fmt.Errorf("replication plan is stale; create a new plan")
 	}
 
-	// Mint the destination session from its own vault profile (inside the tool).
-	endpoint, err := destClient.ReplicationPairingEndpoint(ctx)
-	if err != nil {
-		return SnapshotReplicationRelationApplyResult{}, authenticationError(destName, err)
+	// Obtain the destination pairing session. The web-login override (a fresh
+	// browser OAuth session, matching DSM's synocredential broker) takes
+	// precedence; otherwise mint it from the destination vault profile inside
+	// the tool. Either way only a sid is forwarded, never the password.
+	var pairEndpoint synology.SnapshotReplicationPairEndpoint
+	var destSID string
+	if destSession != nil {
+		pairEndpoint = synology.SnapshotReplicationPairEndpoint{Addr: destSession.Addr, Port: destSession.Port, HTTPS: destSession.HTTPS}
+		destSID = destSession.SID
+	} else {
+		endpoint, err := destClient.ReplicationPairingEndpoint(ctx)
+		if err != nil {
+			return SnapshotReplicationRelationApplyResult{}, authenticationError(destName, err)
+		}
+		pairEndpoint = synology.SnapshotReplicationPairEndpoint{Addr: endpoint.Addr, Port: endpoint.Port, HTTPS: endpoint.HTTPS}
+		destSID = endpoint.SID
 	}
-	pairEndpoint := synology.SnapshotReplicationPairEndpoint{Addr: endpoint.Addr, Port: endpoint.Port, HTTPS: endpoint.HTTPS}
 
-	credID, err := sourceClient.PairReplicationCredential(ctx, pairEndpoint, endpoint.SID)
+	credID, err := sourceClient.PairReplicationCredential(ctx, pairEndpoint, destSID)
 	if err != nil {
 		return SnapshotReplicationRelationApplyResult{}, authenticationError(sourceName, err)
 	}

@@ -134,7 +134,7 @@ func TestApplyReplicationRelationBrokersSecretAtApply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan error = %v", err)
 	}
-	result, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan)
+	result, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan, nil)
 	if err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
@@ -164,7 +164,7 @@ func TestApplyReplicationRelationStaleRejected(t *testing.T) {
 	}
 	// Destination free space changes out-of-band → observed fingerprint drifts.
 	dest.volAvail = 1 << 39
-	if _, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan); err == nil || !strings.Contains(err.Error(), "stale") {
+	if _, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan, nil); err == nil || !strings.Contains(err.Error(), "stale") {
 		t.Fatalf("expected a stale-plan error when dest state drifts, got %v", err)
 	}
 }
@@ -181,7 +181,7 @@ func TestApplyReplicationRelationConfirmsByPlanID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan error = %v", err)
 	}
-	if _, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan); err == nil || !strings.Contains(err.Error(), "is not listed") {
+	if _, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan, nil); err == nil || !strings.Contains(err.Error(), "is not listed") {
 		t.Fatalf("apply must reject a plan-id mismatch, got %v", err)
 	}
 	// The temporary credential must be cleaned up on this failure.
@@ -198,7 +198,7 @@ func TestApplyReplicationRelationCleansUpOnTaskFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan error = %v", err)
 	}
-	if _, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan); err == nil || !strings.Contains(err.Error(), "out of space") {
+	if _, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan, nil); err == nil || !strings.Contains(err.Error(), "out of space") {
 		t.Fatalf("apply error = %v", err)
 	}
 	// A failed async task must still trigger temp-credential cleanup.
@@ -233,7 +233,7 @@ func TestApplyReplicationRelationCleansUpCredentialOnCheckFailure(t *testing.T) 
 	if err != nil {
 		t.Fatalf("plan error = %v", err)
 	}
-	if _, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan); err == nil || !strings.Contains(err.Error(), "cannot reach") {
+	if _, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan, nil); err == nil || !strings.Contains(err.Error(), "cannot reach") {
 		t.Fatalf("apply error = %v", err)
 	}
 	if len(source.deletedCreds) != 1 || source.deletedCreds[0] != "dest-cred-abc" {
