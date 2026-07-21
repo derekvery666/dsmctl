@@ -16,29 +16,56 @@ description: >-
 
 # Bring up a fresh Synology NAS (install DSM → first admin → storage)
 
-Goal: take a NAS that has no usable DSM all the way to **fully ready to use** —
-DSM installed, first administrator created (password in the OS credential store),
-the DSM setup wizard finished (built-in `admin` disabled), and one storage volume
-built across all disks. Everything is a `dsmctl` invocation; this skill is the
-order of operations and the decision points. **Installing DSM and creating a
-volume both erase the device's disks — destructive and irreversible. Confirm the
-target with the user before `--install` / `--create-volume`.**
+Goal: take a NAS that has no usable DSM to a working, manageable DSM (installed,
+first administrator created, setup wizard finished, built-in `admin` disabled),
+and then — as a **separate, deliberate step** — build its storage. Everything is
+a `dsmctl` invocation; this skill is the order of operations and the decision
+points. **Installing DSM and creating a volume both erase the device's disks —
+destructive and irreversible. Confirm the target with the user before
+`--install` / `--create-volume`.**
 
-## The one command (full bring-up)
+## Two ways to run it — prefer STAGED
 
-`dsmctl install` chains the whole sequence when given `--admin-user` (install →
-create admin → disable built-in admin → finish wizard) and `--create-volume`
-(build one all-disk volume). For a lab NAS with an internet route:
+The steps are separate commands, so run them as distinct stages or chain them.
+**Storage is a decision, not a default:** how to lay out the disks (RAID level,
+SHR, one pool vs several, SSD cache, spare) usually needs a human/MIS call, and
+it should not be rushed inside a long-running install. So keep it its own stage —
+especially on higher-end machines with many bays.
+
+**Staged (recommended).** Bring the box up to a working, inspectable NAS first,
+then decide storage separately when you and the operator are ready:
+
+```console
+# 1. Install DSM. This blocks through download + reboot (minutes); run it in the
+#    background and monitor if the harness has a timeout. It stops at "DSM up".
+dsmctl install --url http://<ip>:5000 --install --yes
+
+# 2. Create the first admin + finish the wizard (fast). Now it is a working NAS
+#    you can log into and inspect.
+dsmctl provision <name> --url https://<ip>:5001 --admin-user <user> --insecure-skip-tls-verify
+
+# 3. Read the disks and DECIDE the layout with the operator, THEN build storage
+#    (follow the nas-storage-setup skill — it asks how to build the volume):
+dsmctl --nas <name> storage inventory       # disks present
+dsmctl --nas <name> storage capabilities    # which RAID types this model supports
+```
+
+(You can fold step 2 into step 1 with `dsmctl install --admin-user <user>`; the
+box still stops before storage.)
+
+**One-shot (simple / low-end / unattended only).** When the layout is a foregone
+conclusion — e.g. a small box you always build as one all-disk btrfs RAID5 — you
+*can* chain everything. Note this single command blocks through install, reboot,
+first-setup, AND volume creation, so use it only when no storage discussion is
+needed:
 
 ```console
 dsmctl install --url http://<ip>:5000 --install --yes \
     --admin-user <user> --create-volume
-# add --allow-unsupported-disks if the drives are not on Synology's HCL (lab drives)
-# --raid raid5 (default) / --filesystem btrfs (default) to change the layout
+# --raid raid5 / --filesystem btrfs (defaults); --allow-unsupported-disks for lab drives
 ```
 
-That is the CMS-style mass-deploy path. The sections below are the same steps
-run individually, and the decision points behind each flag.
+The sections below are each step in detail, and the decision points behind each flag.
 
 ## 1. Find the device and its Web Assistant URL
 

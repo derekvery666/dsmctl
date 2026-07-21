@@ -32,13 +32,14 @@ func newInstallCommand(opts *options) *cobra.Command {
 			"writes the OS to the device's disks, so it requires --install and a\n" +
 			"confirmation (--yes to skip the prompt). Without --install the command\n" +
 			"only reports state and changes nothing.\n\n" +
-			"This is the end-to-end bring-up: adding --admin-user creates the first\n" +
-			"administrator and finishes the DSM setup wizard (including disabling the\n" +
-			"built-in admin) after the install, and adding --create-volume then builds\n" +
-			"one storage volume across all disks (default all-disk btrfs RAID5). With\n" +
-			"all three, one command takes bare hardware to a fully usable NAS:\n" +
-			"    dsmctl install --url http://<ip>:5000 --install --yes \\\n" +
-			"        --admin-user <user> --create-volume",
+			"Prefer to run bring-up in stages: install here, then 'dsmctl provision'\n" +
+			"for the first administrator, then storage separately once the disk layout\n" +
+			"is decided (storage is a deliberate choice, not a default). For a\n" +
+			"simple/unattended box you can chain them: --admin-user also creates the\n" +
+			"first administrator and finishes the wizard after install, and\n" +
+			"--create-volume then builds one all-disk volume (default btrfs RAID5) —\n" +
+			"but that single command blocks through install, reboot, setup, and volume\n" +
+			"creation, so use it only when no storage discussion is needed.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if strings.TrimSpace(targetURL) == "" {
