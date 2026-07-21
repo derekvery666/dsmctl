@@ -130,6 +130,33 @@ func (c *fakeSnapshotReplicationClient) ApplySnapshotReplicationChange(_ context
 	return result, nil
 }
 
+// Relation-create interface stubs: the single-NAS snapshot tests never call
+// these; the relation flow is exercised by fakeReplicationRelationClient.
+func (c *fakeSnapshotReplicationClient) StorageState(context.Context) (synology.StorageState, error) {
+	return synology.StorageState{}, nil
+}
+func (c *fakeSnapshotReplicationClient) ReplicationPairingEndpoint(context.Context) (synology.PairingEndpoint, error) {
+	return synology.PairingEndpoint{}, fmt.Errorf("not implemented")
+}
+func (c *fakeSnapshotReplicationClient) PairReplicationCredential(context.Context, synology.SnapshotReplicationPairEndpoint, string) (string, error) {
+	return "", fmt.Errorf("not implemented")
+}
+func (c *fakeSnapshotReplicationClient) CheckReplicationRemoteConn(context.Context, synology.SnapshotReplicationPairEndpoint, string) error {
+	return fmt.Errorf("not implemented")
+}
+func (c *fakeSnapshotReplicationClient) CreateReplicationPlan(context.Context, snapshotreplication.RelationCreate, synology.SnapshotReplicationPairEndpoint, string) (string, error) {
+	return "", fmt.Errorf("not implemented")
+}
+func (c *fakeSnapshotReplicationClient) PollReplicationTask(context.Context, string) (snapshotreplication.RelationTaskStatus, error) {
+	return snapshotreplication.RelationTaskStatus{}, fmt.Errorf("not implemented")
+}
+func (c *fakeSnapshotReplicationClient) DeleteReplicationPlan(context.Context, string) error {
+	return fmt.Errorf("not implemented")
+}
+func (c *fakeSnapshotReplicationClient) DeleteReplicationCredential(context.Context, string) error {
+	return fmt.Errorf("not implemented")
+}
+
 func TestValidateSnapshotReplicationChange(t *testing.T) {
 	lock := true
 	cases := []struct {

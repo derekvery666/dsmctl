@@ -70,16 +70,64 @@ type NodeIdentity struct {
 	Serial   string `json:"serial,omitempty" jsonschema:"NAS serial number"`
 }
 
-// ReplicationPlan is one replication relation. Per-plan fields are decoded
-// tolerantly: the lab this module was verified against cannot install the
-// SnapshotReplication package (DSM 7.3-81168 feed pairing), so plan fields are
-// source-derived and marked wire-unverified until read against a populated
-// installation.
+// ReplicationSiteInfo is one end of a replication relation (main or DR site).
+type ReplicationSiteInfo struct {
+	Hostname   string `json:"hostname,omitempty" jsonschema:"Site NAS hostname"`
+	NodeID     string `json:"node_id,omitempty" jsonschema:"Site replication node UUID"`
+	TargetName string `json:"target_name,omitempty" jsonschema:"Replicated target name at this site"`
+	Status     string `json:"status,omitempty" jsonschema:"Site status when reported (DR site)"`
+}
+
+// ReplicationCapabilities reports which role-flipping operations DSM says are
+// currently possible for a relation. This module surfaces them read-only —
+// executing failover/switchover/reprotect is deliberately out of scope.
+type ReplicationCapabilities struct {
+	CanSync       bool `json:"can_sync" jsonschema:"Whether a manual sync is currently possible"`
+	CanEdit       bool `json:"can_edit" jsonschema:"Whether the relation can be edited"`
+	CanDelete     bool `json:"can_delete" jsonschema:"Whether the relation can be deleted"`
+	CanSwitchover bool `json:"can_switchover" jsonschema:"Whether a planned switchover is currently possible (not executable here)"`
+	CanFailover   bool `json:"can_failover" jsonschema:"Whether a failover is currently possible (not executable here)"`
+	CanReprotect  bool `json:"can_reprotect" jsonschema:"Whether re-protect is currently possible (not executable here)"`
+	CanTestFailover bool `json:"can_test_failover" jsonschema:"Whether a test failover is currently possible (not executable here)"`
+}
+
+// ReplicationPlan is one replication relation, live-verified against a real
+// nas51→nas255 relation on DSM 7.3.2/7.3.1. Per-plan fields decode tolerantly
+// (every additional block is null-guarded in the DSM UI).
 type ReplicationPlan struct {
-	ID         string `json:"id,omitempty" jsonschema:"Replication plan identifier (wire-unverified)"`
-	Name       string `json:"name,omitempty" jsonschema:"Plan display name when reported (wire-unverified)"`
-	TargetType string `json:"target_type,omitempty" jsonschema:"Protected target type, for example share or lun (wire-unverified)"`
-	Status     string `json:"status,omitempty" jsonschema:"Plan status as reported by DSM (wire-unverified)"`
+	ID            string                  `json:"id,omitempty" jsonschema:"Replication plan identifier"`
+	RemoteID      string                  `json:"remote_id,omitempty" jsonschema:"Plan identifier at the remote site"`
+	Role          string                  `json:"role,omitempty" jsonschema:"This NAS's role in the relation: main or dr"`
+	Status        string                  `json:"status,omitempty" jsonschema:"Plan status as reported by DSM"`
+	TargetName    string                  `json:"target_name,omitempty" jsonschema:"Replicated shared-folder (or LUN) name"`
+	TargetType    string                  `json:"target_type,omitempty" jsonschema:"Protected target type: share or lun"`
+	SnapshotCount int                     `json:"snapshot_count,omitempty" jsonschema:"Replicated snapshot count when reported"`
+	MainSite      ReplicationSiteInfo     `json:"main_site" jsonschema:"The main (source) site"`
+	DRSite        ReplicationSiteInfo     `json:"dr_site" jsonschema:"The DR (destination) site"`
+	LastSyncTime  string                  `json:"last_sync_time,omitempty" jsonschema:"Most recent successful sync time when reported"`
+	LastSyncBytes int64                   `json:"last_sync_bytes,omitempty" jsonschema:"Bytes moved in the most recent successful sync"`
+	Can           ReplicationCapabilities `json:"can" jsonschema:"Operations DSM currently reports as possible (read-only)"`
+}
+
+// RelationTaskStatus is one poll of an in-flight create task.
+type RelationTaskStatus struct {
+	Finished     bool   `json:"finished" jsonschema:"Whether the create task has finished"`
+	Success      bool   `json:"success" jsonschema:"Whether the finished task succeeded"`
+	PlanID       string `json:"plan_id,omitempty" jsonschema:"Created plan id (present on success)"`
+	RemotePlanID string `json:"remote_plan_id,omitempty" jsonschema:"Created plan id at the remote site (present on success)"`
+	TargetID     string `json:"target_id,omitempty" jsonschema:"Target id this task created a relation for"`
+	Error        string `json:"error,omitempty" jsonschema:"Task error text when the task failed"`
+}
+
+// RelationCreate is the guarded intent to create a shared-folder replication
+// relation from a source NAS to a destination NAS. The source and destination
+// are named by profile in the application plan; this carries only the
+// replication parameters. There is no credential field: the destination
+// credential is resolved from its own vault profile at apply time.
+type RelationCreate struct {
+	SourceShare  string `json:"source_share" jsonschema:"Shared folder on the source NAS to replicate"`
+	DestVolume   string `json:"dest_volume" jsonschema:"Destination volume path that will hold the replica, for example /volume1"`
+	SendEncrypted *bool `json:"send_encrypted,omitempty" jsonschema:"Encrypt replication traffic; defaults to true when the destination is reached over HTTPS"`
 }
 
 // ReplicationPlans is the replication relation inventory.
@@ -152,4 +200,6 @@ type Capabilities struct {
 	SnapshotSetAttributes bool            `json:"snapshot_set_attributes" jsonschema:"Whether snapshot description/lock can be edited through guarded plan/apply"`
 	SnapshotDelete        bool            `json:"snapshot_delete" jsonschema:"Whether snapshots can be deleted through guarded plan/apply"`
 	ShareConfigSet        bool            `json:"share_config_set" jsonschema:"Whether per-share snapshot configuration can be changed through guarded plan/apply"`
+	ReplicationPair       bool            `json:"replication_pair" jsonschema:"Whether the DR pairing credential API is available (requires the package)"`
+	ReplicationCreate     bool            `json:"replication_create" jsonschema:"Whether a replication relation can be created through guarded plan/apply (requires the package)"`
 }

@@ -201,7 +201,7 @@ var planListOperation = compatibility.Operation[Input, snapshotreplication.Repli
 }
 
 func APINames() []string {
-	return []string{ShareSnapshotAPIName, RetentionAPIName, LogAPIName, NodeAPIName, PlanAPIName}
+	return []string{ShareSnapshotAPIName, RetentionAPIName, LogAPIName, NodeAPIName, PlanAPIName, NodeCredentialAPIName}
 }
 
 func SelectSnapshots(target compatibility.Target) (compatibility.Selection, error) {

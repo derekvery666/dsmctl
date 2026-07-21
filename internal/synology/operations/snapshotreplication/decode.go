@@ -165,16 +165,185 @@ func decodeReplicationPlans(data json.RawMessage) (snapshotreplication.Replicati
 	}
 	plans := make([]snapshotreplication.ReplicationPlan, 0, len(entries))
 	for _, entry := range entries {
-		plans = append(plans, snapshotreplication.ReplicationPlan{
-			ID:         firstString(entry, "plan_id", "id"),
-			Name:       firstString(entry, "name", "display_name"),
-			TargetType: firstString(entry, "target_type", "type"),
-			Status:     firstString(entry, "status", "state"),
-		})
+		plans = append(plans, decodeReplicationPlan(entry))
 	}
 	result := snapshotreplication.ReplicationPlans{Plans: plans}
 	result.Total = intOr(raw, "total", len(plans))
 	return result, nil
+}
+
+// decodeReplicationPlan decodes one plan. Every field is optional — the DSM UI
+// null-guards each additional block — so a missing block never fails the read.
+func decodeReplicationPlan(entry map[string]json.RawMessage) snapshotreplication.ReplicationPlan {
+	plan := snapshotreplication.ReplicationPlan{
+		ID:         firstString(entry, "plan_id", "id"),
+		RemoteID:   firstString(entry, "remote_plan_id"),
+		Role:       decodeRole(entry),
+		Status:     decodeStatus(entry),
+		TargetName: firstString(entry, "target_name", "target_id"),
+		TargetType: decodeTargetType(entry),
+	}
+	plan.SnapshotCount = int(firstInt64(entry, "snapshot_count"))
+	plan.MainSite = decodeSiteInfo(entry, "main_site_info")
+	plan.DRSite = decodeSiteInfo(entry, "dr_site_info")
+	// target_name may only be resolvable from the site blocks.
+	if plan.TargetName == "" {
+		if plan.MainSite.TargetName != "" {
+			plan.TargetName = plan.MainSite.TargetName
+		} else if plan.DRSite.TargetName != "" {
+			plan.TargetName = plan.DRSite.TargetName
+		}
+	}
+	plan.LastSyncTime, plan.LastSyncBytes = decodeSyncReport(entry)
+	plan.Can = decodeCanDo(entry)
+	return plan
+}
+
+func decodeRole(entry map[string]json.RawMessage) string {
+	switch firstInt64(entry, "role") {
+	case 1:
+		return "main"
+	case 2:
+		return "dr"
+	}
+	return firstString(entry, "role")
+}
+
+func decodeTargetType(entry map[string]json.RawMessage) string {
+	switch firstInt64(entry, "target_type") {
+	case 2:
+		return "share"
+	case 1:
+		return "lun"
+	}
+	return firstString(entry, "target_type", "type")
+}
+
+// decodeStatus tolerates both an integer status and a string state.
+func decodeStatus(entry map[string]json.RawMessage) string {
+	if s := firstString(entry, "status", "state"); s != "" {
+		return s
+	}
+	if value, ok := entry["status"]; ok {
+		if n, ok := parseInt64(value); ok {
+			return strconv.FormatInt(n, 10)
+		}
+	}
+	return ""
+}
+
+func decodeSiteInfo(entry map[string]json.RawMessage, key string) snapshotreplication.ReplicationSiteInfo {
+	block, ok := entry[key]
+	if !ok {
+		return snapshotreplication.ReplicationSiteInfo{}
+	}
+	var raw map[string]json.RawMessage
+	if json.Unmarshal(block, &raw) != nil {
+		return snapshotreplication.ReplicationSiteInfo{}
+	}
+	return snapshotreplication.ReplicationSiteInfo{
+		Hostname:   firstString(raw, "hostname", "location_hostname"),
+		NodeID:     firstString(raw, "node_id"),
+		TargetName: firstString(raw, "target_name"),
+		Status:     firstString(raw, "status"),
+	}
+}
+
+func decodeSyncReport(entry map[string]json.RawMessage) (string, int64) {
+	block, ok := entry["sync_report"]
+	if !ok {
+		return "", 0
+	}
+	var report struct {
+		Recent []map[string]json.RawMessage `json:"recent_records"`
+	}
+	if json.Unmarshal(block, &report) != nil || len(report.Recent) == 0 {
+		return "", 0
+	}
+	first := report.Recent[0]
+	return firstString(first, "readable_begin_time", "finish_time"), firstInt64(first, "sync_size_byte")
+}
+
+func decodeCanDo(entry map[string]json.RawMessage) snapshotreplication.ReplicationCapabilities {
+	block, ok := entry["can_do"]
+	if !ok {
+		return snapshotreplication.ReplicationCapabilities{}
+	}
+	var raw map[string]json.RawMessage
+	if json.Unmarshal(block, &raw) != nil {
+		return snapshotreplication.ReplicationCapabilities{}
+	}
+	return snapshotreplication.ReplicationCapabilities{
+		CanSync:         optionalBool(raw, "can_sync"),
+		CanEdit:         optionalBool(raw, "can_edit"),
+		CanDelete:       optionalBool(raw, "can_delete"),
+		CanSwitchover:   optionalBool(raw, "can_switchover"),
+		CanFailover:     optionalBool(raw, "can_failover"),
+		CanReprotect:    optionalBool(raw, "can_reprotect"),
+		CanTestFailover: optionalBool(raw, "can_testfailover"),
+	}
+}
+
+func decodeCredID(data json.RawMessage) (string, error) {
+	raw, err := decodeObject(data, "pairing credential")
+	if err != nil {
+		return "", err
+	}
+	credID := firstString(raw, "cred_id")
+	if credID == "" {
+		return "", fmt.Errorf("decode pairing credential: no cred_id returned")
+	}
+	return credID, nil
+}
+
+func decodeTaskID(data json.RawMessage) (string, error) {
+	raw, err := decodeObject(data, "replication create")
+	if err != nil {
+		return "", err
+	}
+	taskID := firstString(raw, "task_id")
+	if taskID == "" {
+		return "", fmt.Errorf("decode replication create: no task_id returned")
+	}
+	return taskID, nil
+}
+
+func decodePollTask(data json.RawMessage) (snapshotreplication.RelationTaskStatus, error) {
+	raw, err := decodeObject(data, "replication task poll")
+	if err != nil {
+		return snapshotreplication.RelationTaskStatus{}, err
+	}
+	status := snapshotreplication.RelationTaskStatus{
+		Finished:     optionalBool(raw, "finish"),
+		Success:      optionalBool(raw, "success"),
+		PlanID:       firstString(raw, "plan_id"),
+		RemotePlanID: firstString(raw, "remote_plan_id"),
+		Error:        firstString(raw, "error", "error_msg"),
+	}
+	if info, ok := raw["info"]; ok {
+		var infoRaw struct {
+			Param struct {
+				Target struct {
+					TargetID string `json:"target_id"`
+				} `json:"target"`
+			} `json:"param"`
+		}
+		if json.Unmarshal(info, &infoRaw) == nil {
+			status.TargetID = infoRaw.Param.Target.TargetID
+		}
+	}
+	return status, nil
+}
+
+func firstInt64(raw map[string]json.RawMessage, names ...string) int64 {
+	for _, name := range names {
+		if value, ok := raw[name]; ok {
+			if n, ok := parseInt64(value); ok {
+				return n
+			}
+		}
+	}
+	return 0
 }
 
 // decodeCreatedSnapshot reads the create response: DSM returns the new

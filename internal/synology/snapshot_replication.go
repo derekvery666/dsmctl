@@ -194,6 +194,8 @@ func (c *Client) SnapshotReplicationModuleCapabilities(ctx context.Context) (Sna
 		snapshotops.SelectSnapshotSet,
 		snapshotops.SelectSnapshotDelete,
 		snapshotops.SelectShareConfigSet,
+		snapshotops.SelectReplicationPair,
+		snapshotops.SelectReplicationCreate,
 	}
 	selections := make([]compatibility.Selection, 0, len(selectors))
 	for _, selectOperation := range selectors {
@@ -215,6 +217,8 @@ func (c *Client) SnapshotReplicationModuleCapabilities(ctx context.Context) (Sna
 		snapshotops.SnapshotSetAttributesCapabilityName,
 		snapshotops.SnapshotDeleteCapabilityName,
 		snapshotops.ShareConfigSetCapabilityName,
+		snapshotops.ReplicationPairCapabilityName,
+		snapshotops.ReplicationCreateCapabilityName,
 	}
 	for index, name := range capabilityNames {
 		if supported(index) {
@@ -234,6 +238,8 @@ func (c *Client) SnapshotReplicationModuleCapabilities(ctx context.Context) (Sna
 		SnapshotSetAttributes: supported(7),
 		SnapshotDelete:        supported(8),
 		ShareConfigSet:        supported(9),
+		ReplicationPair:       supported(10),
+		ReplicationCreate:     supported(11),
 	}
 	return capabilities, c.target.Report(selections...), nil
 }

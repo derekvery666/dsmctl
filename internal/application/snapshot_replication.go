@@ -5,10 +5,23 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/ychiu1211/dsmctl/internal/domain/snapshotreplication"
 	"github.com/ychiu1211/dsmctl/internal/synology"
 )
+
+// sleepContext is a context-cancellable pause used by the async task poller.
+func sleepContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
 
 const snapshotReplicationAPIVersion = "dsmctl.io/v1alpha1"
 
@@ -82,6 +95,15 @@ type snapshotReplicationClient interface {
 	SnapshotReplicationPlans(context.Context) (synology.SnapshotReplicationPlans, error)
 	SnapshotReplicationModuleCapabilities(context.Context) (synology.SnapshotReplicationCapabilities, synology.CompatibilityReport, error)
 	ApplySnapshotReplicationChange(context.Context, snapshotreplication.Change) (synology.SnapshotReplicationMutationResult, error)
+	// Cross-NAS replication relation create (WI-090).
+	StorageState(context.Context) (synology.StorageState, error)
+	ReplicationPairingEndpoint(context.Context) (synology.PairingEndpoint, error)
+	PairReplicationCredential(context.Context, synology.SnapshotReplicationPairEndpoint, string) (string, error)
+	CheckReplicationRemoteConn(context.Context, synology.SnapshotReplicationPairEndpoint, string) error
+	CreateReplicationPlan(context.Context, snapshotreplication.RelationCreate, synology.SnapshotReplicationPairEndpoint, string) (string, error)
+	PollReplicationTask(context.Context, string) (snapshotreplication.RelationTaskStatus, error)
+	DeleteReplicationPlan(context.Context, string) error
+	DeleteReplicationCredential(context.Context, string) error
 }
 
 func (s *Service) snapshotReplicationClient(ctx context.Context, requestedNAS string) (string, snapshotReplicationClient, error) {
@@ -599,3 +621,407 @@ func snapshotReplicationPlanHash(plan SnapshotReplicationPlan) (string, error) {
 }
 
 var _ snapshotReplicationClient = (*synology.Client)(nil)
+
+// ---- WI-090: guarded replication relation create (source NAS -> dest NAS) ----
+
+// SnapshotReplicationRelationObserved is the two-site state a relation plan is
+// bound to. Both sides are fingerprinted so a change on either NAS invalidates
+// the plan.
+type SnapshotReplicationRelationObserved struct {
+	SourceShareExists    bool   `json:"source_share_exists" jsonschema:"Whether the source share exists"`
+	SourceSnapshotCapable bool  `json:"source_snapshot_capable" jsonschema:"Whether the source share supports snapshots (btrfs)"`
+	SourceVolumePath     string `json:"source_volume_path,omitempty" jsonschema:"Volume containing the source share"`
+	DestVolumeExists     bool   `json:"dest_volume_exists" jsonschema:"Whether the destination volume exists"`
+	DestVolumeBtrfs      bool   `json:"dest_volume_btrfs" jsonschema:"Whether the destination volume is btrfs"`
+	DestVolumeWritable   bool   `json:"dest_volume_writable" jsonschema:"Whether the destination volume is writable and idle"`
+	DestVolumeAvailBytes uint64 `json:"dest_volume_available_bytes" jsonschema:"Destination volume free bytes at planning time"`
+	SourceUsedBytes      uint64 `json:"source_used_bytes" jsonschema:"Source volume used bytes at planning time (space heuristic)"`
+	DestShareCollision   bool   `json:"dest_share_collision" jsonschema:"Whether a share of the same name already exists on the destination"`
+	DestRelationExists   bool   `json:"dest_relation_exists" jsonschema:"Whether the destination already has a replication relation for this target"`
+}
+
+type SnapshotReplicationRelationPlan struct {
+	APIVersion            string                              `json:"api_version" jsonschema:"Plan schema version"`
+	SourceNAS             string                              `json:"source_nas" jsonschema:"Source NAS profile (the replicated-from side)"`
+	SourceProfileRevision uint64                              `json:"source_profile_revision,omitempty" jsonschema:"Persistent gateway revision of the source profile at planning"`
+	DestNAS               string                              `json:"dest_nas" jsonschema:"Destination NAS profile (the replicated-to side); its vault credential is resolved only at apply"`
+	DestProfileRevision   uint64                              `json:"dest_profile_revision,omitempty" jsonschema:"Persistent gateway revision of the destination profile at planning"`
+	Request               snapshotreplication.RelationCreate  `json:"request" jsonschema:"Validated replication relation intent"`
+	Observed              SnapshotReplicationRelationObserved `json:"observed" jsonschema:"Two-site state observed during planning"`
+	ObservedFingerprint   string                              `json:"observed_fingerprint" jsonschema:"SHA-256 hash of the observed two-site state"`
+	Risk                  string                              `json:"risk" jsonschema:"Plan risk level (always high for a relation create)"`
+	Destructive           bool                                `json:"destructive" jsonschema:"Whether the plan writes data onto the destination"`
+	Warnings              []string                            `json:"warnings" jsonschema:"Data-movement and exposure warnings"`
+	Summary               []string                            `json:"summary" jsonschema:"Human-readable operations the plan will perform"`
+	Hash                  string                              `json:"hash" jsonschema:"SHA-256 approval hash; never covers any secret (the dest credential stays in the vault)"`
+}
+
+type SnapshotReplicationRelationApplyResult struct {
+	SourceNAS    string `json:"source_nas" jsonschema:"Source NAS profile"`
+	DestNAS      string `json:"dest_nas" jsonschema:"Destination NAS profile"`
+	PlanHash     string `json:"plan_hash" jsonschema:"Approved plan hash"`
+	Applied      bool   `json:"applied" jsonschema:"Whether the relation was created and confirmed present"`
+	PlanID       string `json:"plan_id,omitempty" jsonschema:"Created replication plan id on the source"`
+	RemotePlanID string `json:"remote_plan_id,omitempty" jsonschema:"Created replication plan id on the destination"`
+}
+
+func validateSnapshotReplicationRelation(request snapshotreplication.RelationCreate) error {
+	if strings.TrimSpace(request.SourceShare) == "" {
+		return fmt.Errorf("source_share is required")
+	}
+	if strings.TrimSpace(request.DestVolume) == "" {
+		return fmt.Errorf("dest_volume is required (for example /volume1)")
+	}
+	if !strings.HasPrefix(request.DestVolume, "/volume") {
+		return fmt.Errorf("dest_volume must be a DSM volume path, for example /volume1")
+	}
+	return nil
+}
+
+func (s *Service) PlanSnapshotReplicationRelation(ctx context.Context, sourceNAS, destNAS string, request snapshotreplication.RelationCreate) (SnapshotReplicationRelationPlan, error) {
+	if err := validateSnapshotReplicationRelation(request); err != nil {
+		return SnapshotReplicationRelationPlan{}, err
+	}
+	if strings.TrimSpace(destNAS) == "" {
+		return SnapshotReplicationRelationPlan{}, fmt.Errorf("a destination NAS profile is required")
+	}
+	sourceName, sourceClient, err := s.snapshotReplicationClient(ctx, sourceNAS)
+	if err != nil {
+		return SnapshotReplicationRelationPlan{}, err
+	}
+	destName, destClient, err := s.snapshotReplicationClient(ctx, destNAS)
+	if err != nil {
+		return SnapshotReplicationRelationPlan{}, err
+	}
+	if sourceName == destName {
+		return SnapshotReplicationRelationPlan{}, fmt.Errorf("source and destination resolve to the same NAS profile %q", sourceName)
+	}
+	plan, err := planSnapshotReplicationRelationWithClients(ctx, sourceName, sourceClient, destName, destClient, request)
+	if err != nil {
+		return SnapshotReplicationRelationPlan{}, err
+	}
+	if plan.SourceProfileRevision, err = s.profileRevision(ctx, sourceName); err != nil {
+		return SnapshotReplicationRelationPlan{}, err
+	}
+	if plan.DestProfileRevision, err = s.profileRevision(ctx, destName); err != nil {
+		return SnapshotReplicationRelationPlan{}, err
+	}
+	if plan.Hash, err = snapshotReplicationRelationPlanHash(plan); err != nil {
+		return SnapshotReplicationRelationPlan{}, err
+	}
+	return plan, nil
+}
+
+func planSnapshotReplicationRelationWithClients(ctx context.Context, sourceName string, sourceClient snapshotReplicationClient, destName string, destClient snapshotReplicationClient, request snapshotreplication.RelationCreate) (SnapshotReplicationRelationPlan, error) {
+	// Package gate: both NASes must expose a verified create backend.
+	sourceCaps, _, err := sourceClient.SnapshotReplicationModuleCapabilities(ctx)
+	if err != nil {
+		return SnapshotReplicationRelationPlan{}, authenticationError(sourceName, err)
+	}
+	if !sourceCaps.ReplicationCreate || !sourceCaps.ReplicationPair {
+		return SnapshotReplicationRelationPlan{}, fmt.Errorf("source NAS %q does not expose a verified replication create backend (is the SnapshotReplication package installed and running?)", sourceName)
+	}
+	destCaps, _, err := destClient.SnapshotReplicationModuleCapabilities(ctx)
+	if err != nil {
+		return SnapshotReplicationRelationPlan{}, authenticationError(destName, err)
+	}
+	if !destCaps.ReplicationRead {
+		return SnapshotReplicationRelationPlan{}, fmt.Errorf("destination NAS %q does not expose the SnapshotReplication package (install and run it there first)", destName)
+	}
+
+	observed := SnapshotReplicationRelationObserved{}
+
+	// Source: the share must exist and be snapshot-capable (btrfs).
+	sourceShares, err := sourceClient.ShareState(ctx, false)
+	if err != nil {
+		return SnapshotReplicationRelationPlan{}, authenticationError(sourceName, err)
+	}
+	for _, share := range sourceShares.Shares {
+		if share.Name == request.SourceShare {
+			observed.SourceShareExists = true
+			observed.SourceSnapshotCapable = share.SnapshotSupported
+			observed.SourceVolumePath = share.VolumePath
+		}
+	}
+	if !observed.SourceShareExists {
+		return SnapshotReplicationRelationPlan{}, fmt.Errorf("source share %q does not exist on %q", request.SourceShare, sourceName)
+	}
+	if !observed.SourceSnapshotCapable {
+		return SnapshotReplicationRelationPlan{}, fmt.Errorf("source share %q on %q is not snapshot-capable (btrfs required for replication)", request.SourceShare, sourceName)
+	}
+
+	// Source volume used bytes: a best-effort space heuristic, read from the
+	// source's own storage.
+	if observed.SourceVolumePath != "" {
+		sourceStorage, err := sourceClient.StorageState(ctx)
+		if err != nil {
+			return SnapshotReplicationRelationPlan{}, authenticationError(sourceName, err)
+		}
+		for _, volume := range sourceStorage.Volumes {
+			if volume.Path == observed.SourceVolumePath {
+				observed.SourceUsedBytes = volume.UsedBytes
+			}
+		}
+	}
+
+	// Destination volume: exists, btrfs, writable, idle.
+	destStorage, err := destClient.StorageState(ctx)
+	if err != nil {
+		return SnapshotReplicationRelationPlan{}, authenticationError(destName, err)
+	}
+	for _, volume := range destStorage.Volumes {
+		if volume.Path == request.DestVolume {
+			observed.DestVolumeExists = true
+			observed.DestVolumeBtrfs = volume.FileSystem == "btrfs"
+			observed.DestVolumeWritable = volume.Writable && !volume.ReadOnly && !volume.Actioning
+			observed.DestVolumeAvailBytes = volume.AvailableBytes
+		}
+	}
+	if !observed.DestVolumeExists {
+		return SnapshotReplicationRelationPlan{}, fmt.Errorf("destination volume %q does not exist on %q", request.DestVolume, destName)
+	}
+	if !observed.DestVolumeBtrfs {
+		return SnapshotReplicationRelationPlan{}, fmt.Errorf("destination volume %q on %q is not btrfs (required for share replication)", request.DestVolume, destName)
+	}
+	if !observed.DestVolumeWritable {
+		return SnapshotReplicationRelationPlan{}, fmt.Errorf("destination volume %q on %q is read-only or busy", request.DestVolume, destName)
+	}
+
+	// Never overwrite destination data: refuse a same-named share or an existing
+	// inbound relation for this target on the destination.
+	destShares, err := destClient.ShareState(ctx, false)
+	if err != nil {
+		return SnapshotReplicationRelationPlan{}, authenticationError(destName, err)
+	}
+	for _, share := range destShares.Shares {
+		if share.Name == request.SourceShare {
+			observed.DestShareCollision = true
+		}
+	}
+	if observed.DestShareCollision {
+		return SnapshotReplicationRelationPlan{}, fmt.Errorf("destination %q already has a share named %q; refusing to overwrite it", destName, request.SourceShare)
+	}
+	destPlans, err := destClient.SnapshotReplicationPlans(ctx)
+	if err != nil {
+		return SnapshotReplicationRelationPlan{}, authenticationError(destName, err)
+	}
+	for _, plan := range destPlans.Plans {
+		if plan.TargetName == request.SourceShare {
+			observed.DestRelationExists = true
+		}
+	}
+	if observed.DestRelationExists {
+		return SnapshotReplicationRelationPlan{}, fmt.Errorf("destination %q already has a replication relation for target %q", destName, request.SourceShare)
+	}
+
+	plan := SnapshotReplicationRelationPlan{
+		APIVersion:  snapshotReplicationAPIVersion,
+		SourceNAS:   sourceName,
+		DestNAS:     destName,
+		Request:     request,
+		Observed:    observed,
+		Risk:        "high",
+		Destructive: true,
+	}
+	if plan.ObservedFingerprint, err = hashJSON(plan.Observed); err != nil {
+		return SnapshotReplicationRelationPlan{}, err
+	}
+	plan.Warnings = []string{
+		fmt.Sprintf("this writes a replica of share %q onto %q volume %q and starts ongoing cross-site data movement", request.SourceShare, destName, request.DestVolume),
+		"the destination admin credential is resolved from its vault profile only at apply time; it never enters this plan, its hash, logs, or MCP arguments",
+	}
+	if observed.SourceUsedBytes > 0 && observed.DestVolumeAvailBytes > 0 && observed.SourceUsedBytes > observed.DestVolumeAvailBytes {
+		plan.Warnings = append(plan.Warnings, fmt.Sprintf("source data (%d bytes used) may exceed destination free space (%d bytes)", observed.SourceUsedBytes, observed.DestVolumeAvailBytes))
+	}
+	plan.Summary = []string{
+		fmt.Sprintf("pair %q -> %q (temporary DR credential from the destination vault profile)", sourceName, destName),
+		fmt.Sprintf("verify source→destination reachability, then create a share replication relation for %q to %q:%s", request.SourceShare, destName, request.DestVolume),
+		"poll the create task to completion and confirm the relation is listed on the source",
+	}
+	if plan.Hash, err = snapshotReplicationRelationPlanHash(plan); err != nil {
+		return SnapshotReplicationRelationPlan{}, err
+	}
+	return plan, nil
+}
+
+func (s *Service) ApplySnapshotReplicationRelationPlan(ctx context.Context, plan SnapshotReplicationRelationPlan, approvalHash string) (SnapshotReplicationRelationApplyResult, error) {
+	if err := validateSnapshotReplicationRelationPlan(plan, approvalHash); err != nil {
+		return SnapshotReplicationRelationApplyResult{}, err
+	}
+	// Remote single-use approval + revision checks are bound to the SOURCE (the
+	// NAS that performs the write); the destination revision is verified too so
+	// a dest credential/URL change after planning invalidates the plan.
+	if err := s.authorizeRemoteApply(ctx, plan.SourceNAS, plan.SourceProfileRevision, plan.Hash, plan.Risk); err != nil {
+		return SnapshotReplicationRelationApplyResult{}, err
+	}
+	if err := s.verifyProfileRevision(ctx, plan.SourceNAS, plan.SourceProfileRevision); err != nil {
+		return SnapshotReplicationRelationApplyResult{}, err
+	}
+	if err := s.verifyProfileRevision(ctx, plan.DestNAS, plan.DestProfileRevision); err != nil {
+		return SnapshotReplicationRelationApplyResult{}, err
+	}
+	sourceName, sourceClient, err := s.snapshotReplicationClient(ctx, plan.SourceNAS)
+	if err != nil {
+		return SnapshotReplicationRelationApplyResult{}, err
+	}
+	destName, destClient, err := s.snapshotReplicationClient(ctx, plan.DestNAS)
+	if err != nil {
+		return SnapshotReplicationRelationApplyResult{}, err
+	}
+	if sourceName != plan.SourceNAS || destName != plan.DestNAS {
+		return SnapshotReplicationRelationApplyResult{}, fmt.Errorf("replication plan NAS profiles resolved differently at apply")
+	}
+	return applySnapshotReplicationRelationWithClients(ctx, sourceName, sourceClient, destName, destClient, plan)
+}
+
+func applySnapshotReplicationRelationWithClients(ctx context.Context, sourceName string, sourceClient snapshotReplicationClient, destName string, destClient snapshotReplicationClient, plan SnapshotReplicationRelationPlan) (SnapshotReplicationRelationApplyResult, error) {
+	// TOCTOU close: re-plan against live two-site state and compare.
+	current, err := planSnapshotReplicationRelationWithClients(ctx, sourceName, sourceClient, destName, destClient, plan.Request)
+	if err != nil {
+		return SnapshotReplicationRelationApplyResult{}, fmt.Errorf("replication plan precondition no longer holds: %w", err)
+	}
+	current.SourceProfileRevision = plan.SourceProfileRevision
+	current.DestProfileRevision = plan.DestProfileRevision
+	if current.Hash, err = snapshotReplicationRelationPlanHash(current); err != nil {
+		return SnapshotReplicationRelationApplyResult{}, err
+	}
+	if current.ObservedFingerprint != plan.ObservedFingerprint || current.Hash != plan.Hash {
+		return SnapshotReplicationRelationApplyResult{}, fmt.Errorf("replication plan is stale; create a new plan")
+	}
+
+	// Mint the destination session from its own vault profile (inside the tool).
+	endpoint, err := destClient.ReplicationPairingEndpoint(ctx)
+	if err != nil {
+		return SnapshotReplicationRelationApplyResult{}, authenticationError(destName, err)
+	}
+	pairEndpoint := synology.SnapshotReplicationPairEndpoint{Addr: endpoint.Addr, Port: endpoint.Port, HTTPS: endpoint.HTTPS}
+
+	credID, err := sourceClient.PairReplicationCredential(ctx, pairEndpoint, endpoint.SID)
+	if err != nil {
+		return SnapshotReplicationRelationApplyResult{}, authenticationError(sourceName, err)
+	}
+	// On any failure past this point, best-effort clean up the temporary cred.
+	committed := false
+	defer func() {
+		if !committed {
+			_ = sourceClient.DeleteReplicationCredential(ctx, credID)
+		}
+	}()
+
+	if err := sourceClient.CheckReplicationRemoteConn(ctx, pairEndpoint, credID); err != nil {
+		return SnapshotReplicationRelationApplyResult{}, fmt.Errorf("source %q cannot reach destination %q: %w", sourceName, destName, err)
+	}
+
+	taskID, err := sourceClient.CreateReplicationPlan(ctx, plan.Request, pairEndpoint, credID)
+	if err != nil {
+		return SnapshotReplicationRelationApplyResult{}, authenticationError(sourceName, err)
+	}
+	committed = true // the create consumed the credential into the plan
+
+	status, err := awaitReplicationCreate(ctx, sourceClient, taskID)
+	if err != nil {
+		return SnapshotReplicationRelationApplyResult{}, err
+	}
+
+	// Confirm independently: the relation must be listed on the source.
+	confirmed, err := sourceClient.SnapshotReplicationPlans(ctx)
+	if err != nil {
+		return SnapshotReplicationRelationApplyResult{}, fmt.Errorf("verify replication relation: %w", err)
+	}
+	found := false
+	for _, relation := range confirmed.Plans {
+		if relation.TargetName == plan.Request.SourceShare {
+			found = true
+		}
+	}
+	if !found {
+		return SnapshotReplicationRelationApplyResult{}, fmt.Errorf("replication relation for %q is not listed on %q after create", plan.Request.SourceShare, sourceName)
+	}
+	return SnapshotReplicationRelationApplyResult{
+		SourceNAS:    sourceName,
+		DestNAS:      destName,
+		PlanHash:     plan.Hash,
+		Applied:      true,
+		PlanID:       status.PlanID,
+		RemotePlanID: status.RemotePlanID,
+	}, nil
+}
+
+// awaitReplicationCreate polls the create task to a terminal state, mirroring
+// the package-install poller: an explicit task error is fatal, a poll read
+// error is best-effort, and success requires a bounded deadline.
+func awaitReplicationCreate(ctx context.Context, client snapshotReplicationClient, taskID string) (snapshotreplication.RelationTaskStatus, error) {
+	deadline := time.Now().Add(15 * time.Minute)
+	for {
+		if err := ctx.Err(); err != nil {
+			return snapshotreplication.RelationTaskStatus{}, err
+		}
+		status, err := client.PollReplicationTask(ctx, taskID)
+		if err == nil {
+			if status.Error != "" {
+				return snapshotreplication.RelationTaskStatus{}, fmt.Errorf("replication create task failed: %s", status.Error)
+			}
+			if status.Finished {
+				if !status.Success || status.PlanID == "" || status.RemotePlanID == "" {
+					return snapshotreplication.RelationTaskStatus{}, fmt.Errorf("replication create task finished without a confirmed plan id")
+				}
+				return status, nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return snapshotreplication.RelationTaskStatus{}, fmt.Errorf("replication create did not complete within the timeout")
+		}
+		if err := sleepContext(ctx, 3*time.Second); err != nil {
+			return snapshotreplication.RelationTaskStatus{}, err
+		}
+	}
+}
+
+// DeleteSnapshotReplicationRelation removes a replication relation by plan id
+// (teardown). It is guarded but not hash-bound: it targets an explicit plan id
+// and does not delete replicated data (is_data_deleted=false).
+func (s *Service) DeleteSnapshotReplicationRelation(ctx context.Context, requestedNAS, planID string) (SnapshotReplicationRelationApplyResult, error) {
+	if strings.TrimSpace(planID) == "" {
+		return SnapshotReplicationRelationApplyResult{}, fmt.Errorf("plan_id is required")
+	}
+	name, client, err := s.snapshotReplicationClient(ctx, requestedNAS)
+	if err != nil {
+		return SnapshotReplicationRelationApplyResult{}, err
+	}
+	if err := client.DeleteReplicationPlan(ctx, planID); err != nil {
+		return SnapshotReplicationRelationApplyResult{}, authenticationError(name, err)
+	}
+	return SnapshotReplicationRelationApplyResult{SourceNAS: name, PlanID: planID, Applied: true}, nil
+}
+
+func validateSnapshotReplicationRelationPlan(plan SnapshotReplicationRelationPlan, approvalHash string) error {
+	if strings.TrimSpace(approvalHash) == "" || approvalHash != plan.Hash {
+		return fmt.Errorf("approval hash does not match the replication plan")
+	}
+	if plan.APIVersion != snapshotReplicationAPIVersion || strings.TrimSpace(plan.SourceNAS) == "" || strings.TrimSpace(plan.DestNAS) == "" {
+		return fmt.Errorf("invalid replication plan metadata")
+	}
+	if plan.Risk != "high" {
+		return fmt.Errorf("a replication relation create must be classified high risk")
+	}
+	if err := validateSnapshotReplicationRelation(plan.Request); err != nil {
+		return err
+	}
+	expectedFingerprint, err := hashJSON(plan.Observed)
+	if err != nil || expectedFingerprint != plan.ObservedFingerprint {
+		return fmt.Errorf("replication plan observed state was modified")
+	}
+	expectedHash, err := snapshotReplicationRelationPlanHash(plan)
+	if err != nil {
+		return err
+	}
+	if expectedHash != plan.Hash {
+		return fmt.Errorf("replication plan contents were modified after planning")
+	}
+	return nil
+}
+
+func snapshotReplicationRelationPlanHash(plan SnapshotReplicationRelationPlan) (string, error) {
+	plan.Hash = ""
+	return hashJSON(plan)
+}

@@ -837,6 +837,25 @@ type applySnapshotPlanOutput struct {
 	Result application.SnapshotReplicationApplyResult `json:"result" jsonschema:"Snapshot mutation result after stale-state and postcondition checks; carries the created snapshot time name for create"`
 }
 
+type planSnapshotRelationInput struct {
+	SourceNAS string                             `json:"source_nas,omitempty" jsonschema:"Source NAS profile (replicated-from); omit to use the configured default"`
+	DestNAS   string                             `json:"dest_nas" jsonschema:"Destination NAS profile (replicated-to); its vault credential is resolved only at apply, never surfaced"`
+	Request   snapshotreplication.RelationCreate `json:"request" jsonschema:"Replication relation intent: source_share, dest_volume, optional send_encrypted"`
+}
+
+type planSnapshotRelationOutput struct {
+	Plan application.SnapshotReplicationRelationPlan `json:"plan" jsonschema:"Validated two-site plan bound to source+destination observed state and approval hash; contains no secret"`
+}
+
+type applySnapshotRelationInput struct {
+	Plan         application.SnapshotReplicationRelationPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_snapshot_replication_create"`
+	ApprovalHash string                                     `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved replication plan"`
+}
+
+type applySnapshotRelationOutput struct {
+	Result application.SnapshotReplicationRelationApplyResult `json:"result" jsonschema:"Replication relation create result after stale-state and postcondition checks"`
+}
+
 type getStorageInput struct {
 	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 }
@@ -4150,6 +4169,32 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, applySnapshotPlanOutput{}, err
 		}
 		return nil, applySnapshotPlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_snapshot_replication_create",
+		Title:       "Plan a replication relation (source NAS → dest NAS)",
+		Description: "Validate creating a shared-folder replication relation from a source NAS profile to a destination NAS profile, bind it to both sites' observed state (source share snapshot-capable, destination volume btrfs/writable, no destination name collision), and return a high-risk hash-bound approval plan. The destination admin credential is resolved from its own vault profile ONLY at apply time — it never enters this plan, its hash, logs, or these arguments. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planSnapshotRelationInput) (*mcp.CallToolResult, planSnapshotRelationOutput, error) {
+		plan, err := service.PlanSnapshotReplicationRelation(ctx, input.SourceNAS, input.DestNAS, input.Request)
+		if err != nil {
+			return nil, planSnapshotRelationOutput{}, err
+		}
+		return nil, planSnapshotRelationOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_snapshot_replication_create",
+		Title:       "Apply an approved replication relation plan",
+		Description: "Apply an unmodified replication relation plan only while its approval hash and both sites' observed state still match. At apply, dsmctl resolves the destination credential from its vault profile, pairs the two NASes, verifies reachability, creates the relation, polls the task to completion, and confirms the relation is listed. High risk: writes a replica onto the destination and starts ongoing cross-site data movement.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applySnapshotRelationInput) (*mcp.CallToolResult, applySnapshotRelationOutput, error) {
+		result, err := service.ApplySnapshotReplicationRelationPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applySnapshotRelationOutput{}, err
+		}
+		return nil, applySnapshotRelationOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
