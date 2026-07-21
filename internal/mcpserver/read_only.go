@@ -55,6 +55,14 @@ func NewReadOnly(service *application.Service, version string) *mcp.Server {
 		"apply_firewall_profile_plan",
 		"plan_firewall_enable_change",
 		"apply_firewall_enable_plan",
+		// Network guarded writes (WI-069). A general change can alter the default
+		// gateway (management-path severing); an interface change targets the very
+		// NIC that carries the session. The never-sever guard runs in the planner,
+		// but the whole plan/apply pair is stripped from the read-only gateway.
+		"plan_network_general_change",
+		"apply_network_general_plan",
+		"plan_network_interface_change",
+		"apply_network_interface_plan",
 		// Terminal & SNMP guarded writes (WI-071). Enabling SSH/Telnet or disabling
 		// SSH is high risk; the SNMP set carries the community secret. Both pairs are
 		// stripped from the read-only gateway.
