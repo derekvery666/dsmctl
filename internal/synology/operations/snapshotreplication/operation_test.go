@@ -139,7 +139,7 @@ func TestLogDecodeLiveShape(t *testing.T) {
 	// Entry shape confirmed live on DSM 7.3-81168: string time, text in "event".
 	target := coreTarget()
 	executor := &capturingExecutor{responses: map[string]json.RawMessage{
-		LogAPIName: json.RawMessage(`{"error_count":0,"info_count":1,"log_list":[{"event":"Took a shared folder snapshot [GMT+08-2026.07.21-02.11.04] from share [data] by [user].","level":"info","log_type":"drlog","time":"2026/07/21 02:11:05","user":"deryck"}],"offset":1,"total":1,"warn_count":0}`),
+		LogAPIName: json.RawMessage(`{"error_count":0,"info_count":1,"log_list":[{"event":"Took a shared folder snapshot [GMT+08-2026.07.21-02.11.04] from share [data] by [user].","level":"info","log_type":"drlog","time":"2026/07/21 02:11:05","user":"testuser"}],"offset":1,"total":1,"warn_count":0}`),
 	}}
 	page, _, err := ExecuteLog(context.Background(), target, executor, LogInput{Offset: 0, Limit: 50})
 	if err != nil {
@@ -149,7 +149,7 @@ func TestLogDecodeLiveShape(t *testing.T) {
 		t.Fatalf("page = %#v", page)
 	}
 	entry := page.Entries[0]
-	if entry.Time != "2026/07/21 02:11:05" || entry.Level != "info" || entry.User != "deryck" || !strings.Contains(entry.Message, "Took a shared folder snapshot") {
+	if entry.Time != "2026/07/21 02:11:05" || entry.Level != "info" || entry.User != "testuser" || !strings.Contains(entry.Message, "Took a shared folder snapshot") {
 		t.Fatalf("entry = %#v", entry)
 	}
 	if executor.requests[0].JSONParameters["limit"] != 50 {
@@ -161,13 +161,13 @@ func TestNodeDecodeLiveShape(t *testing.T) {
 	// Shape confirmed live on DSM 7.3-81168 (DR.Node info).
 	target := coreTarget()
 	executor := &capturingExecutor{responses: map[string]json.RawMessage{
-		NodeAPIName: json.RawMessage(`{"hostname":"Derek_3018xs","node_id":"82709d49-d8e2-4f83-90cf-8cfd9cae79d7","serial":"1790PXN037200"}`),
+		NodeAPIName: json.RawMessage(`{"hostname":"test-nas","node_id":"11111111-1111-1111-1111-111111111111","serial":"TESTSERIAL0001"}`),
 	}}
 	node, _, err := ExecuteNode(context.Background(), target, executor)
 	if err != nil {
 		t.Fatalf("ExecuteNode() error = %v", err)
 	}
-	if node.Hostname != "Derek_3018xs" || node.NodeID != "82709d49-d8e2-4f83-90cf-8cfd9cae79d7" || node.Serial != "1790PXN037200" {
+	if node.Hostname != "test-nas" || node.NodeID != "11111111-1111-1111-1111-111111111111" || node.Serial != "TESTSERIAL0001" {
 		t.Fatalf("node = %#v", node)
 	}
 	executor = &capturingExecutor{responses: map[string]json.RawMessage{NodeAPIName: json.RawMessage(`{"other":1}`)}}
