@@ -143,6 +143,7 @@ func New(options Options) (*Server, error) {
 	mux.HandleFunc("/healthz", healthHandler)
 	mux.HandleFunc("/readyz", readinessHandler(ready, logger))
 	if options.AdminHandler != nil {
+		mux.HandleFunc("/", adminRootRedirect)
 		mux.Handle("/admin", options.AdminHandler)
 		mux.Handle("/admin/", options.AdminHandler)
 	}
@@ -168,6 +169,23 @@ func New(options Options) (*Server, error) {
 		close:           options.Close,
 		shutdownTimeout: shutdownTimeout,
 	}, nil
+}
+
+func adminRootRedirect(w http.ResponseWriter, req *http.Request) {
+	if req.URL.Path != "/" {
+		http.NotFound(w, req)
+		return
+	}
+	if req.Method != http.MethodGet && req.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	prefix := strings.TrimRight(strings.TrimSpace(req.Header.Get("X-Forwarded-Prefix")), "/")
+	if prefix == "" || !strings.HasPrefix(prefix, "/") || strings.ContainsAny(prefix, "\r\n\\?") {
+		prefix = ""
+	}
+	http.Redirect(w, req, prefix+"/admin/", http.StatusTemporaryRedirect)
 }
 
 func durationOr(value, fallback time.Duration) time.Duration {

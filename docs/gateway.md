@@ -16,6 +16,15 @@ surface through per-token NAS allowlists and independent `nas.read`,
 `nas.plan`, `nas.apply`, and `lan.discover` scopes. The static WI-014 developer
 mode remains read-only.
 
+Generic managed deployments require the local first-run administrator flow
+described below. The Synology SPK adds a loopback host bridge that authenticates
+current DSM `administrators` users and gives the core gateway a short-lived
+signed assertion instead of a DSM cookie or password. A fresh SPK therefore
+starts in DSM-Web-Login-only mode; a DSM-authenticated administrator can later
+enable the same local login as an optional fallback. Supplying a platform
+assertion key directly is reserved for managed deployment adapters and is not a
+way to bypass generic-container setup.
+
 ## Session model
 
 MCP transport requests are stateless and return JSON. The gateway does not

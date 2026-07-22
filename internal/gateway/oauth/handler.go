@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ychiu1211/dsmctl/internal/gateway/platformauth"
 	"github.com/ychiu1211/dsmctl/internal/gateway/state"
 	"github.com/ychiu1211/dsmctl/internal/remotepolicy"
 	"github.com/ychiu1211/dsmctl/internal/webassets"
@@ -40,17 +41,19 @@ var supportedScopes = map[string]struct{}{
 }
 
 type Options struct {
-	Repository *state.Repository
-	PublicURL  string
-	Now        func() time.Time
-	Logger     *slog.Logger
+	Repository       *state.Repository
+	PublicURL        string
+	Now              func() time.Time
+	Logger           *slog.Logger
+	PlatformVerifier *platformauth.Verifier
 }
 
 type Handler struct {
-	repository *state.Repository
-	publicURL  string
-	now        func() time.Time
-	logger     *slog.Logger
+	repository       *state.Repository
+	publicURL        string
+	now              func() time.Time
+	logger           *slog.Logger
+	platformVerifier *platformauth.Verifier
 
 	mu     sync.Mutex
 	codes  map[[sha256.Size]byte]authorizationGrant
@@ -109,7 +112,7 @@ func New(options Options) (*Handler, error) {
 		logger = slog.New(slog.NewJSONHandler(io.Discard, nil))
 	}
 	return &Handler{
-		repository: options.Repository, publicURL: publicURL, now: now, logger: logger,
+		repository: options.Repository, publicURL: publicURL, now: now, logger: logger, platformVerifier: options.PlatformVerifier,
 		codes: make(map[[sha256.Size]byte]authorizationGrant), limits: make(map[string]attemptWindow),
 	}, nil
 }
@@ -237,36 +240,57 @@ func (h *Handler) authorize(w http.ResponseWriter, req *http.Request) {
 		h.renderAuthorization(w, req, authorization, "")
 		return
 	}
-	if req.PostForm.Get("decision") != "allow" {
+	if req.PostForm.Get("decision") == "deny" {
 		h.redirectOAuthError(w, req, authorization, "access_denied", "The administrator denied access.")
 		return
 	}
-	username, password := req.PostForm.Get("username"), req.PostForm.Get("password")
-	key := remoteKey(req, "authorize:"+username)
-	if !h.allowAttempt(key, 5, time.Minute) {
-		password = ""
-		h.renderAuthorization(w, req, authorization, "Too many login attempts. Try again later.")
-		return
-	}
 	if err := h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "gateway_admin", Action: "oauth.authorize", Outcome: "started"}); err != nil {
-		password = ""
 		h.renderAuthorizationError(w, req, http.StatusServiceUnavailable, "Audit storage is unavailable.")
 		return
 	}
-	administrator, err := h.repository.VerifyAdministratorCredentials(req.Context(), username, password)
-	password = ""
-	if err != nil {
-		_ = h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "gateway_admin", Action: "oauth.authorize", Outcome: "denied", Reason: "denied"})
-		h.renderAuthorization(w, req, authorization, "Invalid administrator credentials.")
+	authMethod := strings.TrimSpace(req.PostForm.Get("auth_method"))
+	if authMethod == "" {
+		authMethod = state.AdminProviderLocal
+	}
+	actor := ""
+	switch authMethod {
+	case state.AdminProviderDSM:
+		if h.platformVerifier == nil {
+			h.denyAuthorization(w, req, authorization, "DSM Web Login is unavailable.")
+			return
+		}
+		identity, verifyErr := h.platformVerifier.Verify(req.Context(), req.Header.Get(platformauth.HeaderName))
+		if verifyErr != nil {
+			h.denyAuthorization(w, req, authorization, "A current DSM administrator Web Login is required.")
+			return
+		}
+		actor = "dsm:" + identity.Subject
+	case state.AdminProviderLocal:
+		username, password := req.PostForm.Get("username"), req.PostForm.Get("password")
+		key := remoteKey(req, "authorize:"+username)
+		if !h.allowAttempt(key, 5, time.Minute) {
+			password = ""
+			h.renderAuthorization(w, req, authorization, "Too many login attempts. Try again later.")
+			return
+		}
+		administrator, verifyErr := h.repository.VerifyAdministratorCredentials(req.Context(), username, password)
+		password = ""
+		if verifyErr != nil {
+			h.denyAuthorization(w, req, authorization, "Invalid administrator credentials.")
+			return
+		}
+		h.resetAttempt(key)
+		actor = "local:" + administrator
+	default:
+		h.denyAuthorization(w, req, authorization, "Unsupported administrator login method.")
 		return
 	}
-	h.resetAttempt(key)
-	code, err := h.storeAuthorizationCode(authorization, "local:"+administrator)
+	code, err := h.storeAuthorizationCode(authorization, actor)
 	if err != nil {
 		h.renderAuthorizationError(w, req, http.StatusServiceUnavailable, "Could not create authorization code.")
 		return
 	}
-	_ = h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "gateway_admin", ActorID: "local:" + administrator, Action: "oauth.authorize", Outcome: "success"})
+	_ = h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "gateway_admin", ActorID: actor, Action: "oauth.authorize", Outcome: "success"})
 	redirect, _ := url.Parse(authorization.RedirectURI)
 	query := redirect.Query()
 	query.Set("code", code)
@@ -275,6 +299,11 @@ func (h *Handler) authorize(w http.ResponseWriter, req *http.Request) {
 	}
 	redirect.RawQuery = query.Encode()
 	http.Redirect(w, req, redirect.String(), http.StatusFound)
+}
+
+func (h *Handler) denyAuthorization(w http.ResponseWriter, req *http.Request, authorization authorizationRequest, message string) {
+	_ = h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "gateway_admin", Action: "oauth.authorize", Outcome: "denied", Reason: "denied"})
+	h.renderAuthorization(w, req, authorization, message)
 }
 
 func (h *Handler) token(w http.ResponseWriter, req *http.Request) {
@@ -466,8 +495,14 @@ func (h *Handler) cleanupCodesLocked(now time.Time) {
 }
 
 func (h *Handler) renderAuthorization(w http.ResponseWriter, req *http.Request, authorization authorizationRequest, message string) {
+	administrator, err := h.repository.AdministratorStatus(req.Context())
+	if err != nil {
+		h.renderAuthorizationError(w, req, http.StatusServiceUnavailable, "Could not read administrator login methods.")
+		return
+	}
 	data := authorizationPageData{
 		TraditionalChinese: prefersTraditionalChinese(req), Message: message,
+		DSMWebLogin: h.platformVerifier != nil, LocalLogin: administrator.Initialized,
 		ClientName: authorization.Client.Name, RedirectHost: redirectDisplayHost(authorization.RedirectURI),
 		Resource: authorization.Resource, Scopes: authorization.Scopes, NAS: authorization.NASAllowlist,
 		Hidden: map[string]string{

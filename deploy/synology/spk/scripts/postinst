@@ -6,22 +6,34 @@ pkg="${SYNOPKG_PKGNAME:?}"
 target="${SYNOPKG_PKGDEST:?}"
 data_dir="${SYNOPKG_PKGVAR:?}"
 home_dir="${SYNOPKG_PKGHOME:?}"
-secret_dir="$home_dir/secrets"
-mkdir -p "$data_dir" "$data_dir/backups" "$secret_dir"
+legacy_secret_dir="$home_dir/secrets"
+mkdir -p "$data_dir" "$data_dir/backups" "$home_dir"
 
-if [ ! -f "$secret_dir/master.key" ]; then
-    dd if=/dev/urandom of="$secret_dir/master.key" bs=32 count=1 2>/dev/null
+if [ ! -f "$home_dir/master.key" ]; then
+    if [ -f "$legacy_secret_dir/master.key" ]; then
+        mv "$legacy_secret_dir/master.key" "$home_dir/master.key"
+    else
+        dd if=/dev/urandom of="$home_dir/master.key" bs=32 count=1 2>/dev/null
+    fi
 fi
-chmod 0600 "$secret_dir/master.key"
+if [ ! -f "$home_dir/dsm-sso.key" ]; then
+    if [ -f "$legacy_secret_dir/platform.key" ]; then
+        mv "$legacy_secret_dir/platform.key" "$home_dir/dsm-sso.key"
+    else
+        dd if=/dev/urandom of="$home_dir/dsm-sso.key" bs=32 count=1 2>/dev/null
+    fi
+fi
+chmod 0600 "$home_dir/master.key" "$home_dir/dsm-sso.key"
+rmdir "$legacy_secret_dir" 2>/dev/null || true
 
 uid="$(id -u "$pkg")"
 gid="$(id -g "$pkg")"
 cat > "$target/project/.env" <<EOF
 DSMCTL_UID=$uid
 DSMCTL_GID=$gid
-DSMCTL_DATA_DIR=$data_dir
-DSMCTL_MASTER_KEY=$secret_dir/master.key
+DSMCTL_DATA_DIR=/var/packages/$pkg/var
+DSMCTL_SECRET_DIR=/var/packages/$pkg/home
 EOF
 chmod 0600 "$target/project/.env"
-echo "Offline image prepared. Open /dsmctl/admin through the DSM HTTPS portal within one hour after the package starts." > "${SYNOPKG_TEMP_LOGFILE:-/dev/null}"
+echo "Offline image prepared. Open /dsmctl/admin through the DSM HTTPS portal and continue with DSM Web Login." > "${SYNOPKG_TEMP_LOGFILE:-/dev/null}"
 exit 0

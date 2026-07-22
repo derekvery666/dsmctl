@@ -264,6 +264,130 @@ func (m *Manager) DestinationClient(ctx context.Context, requested string) (stri
 	return m.resolveClient(ctx, requested, true)
 }
 
+// ConnectWithStoredPassword deliberately establishes a fresh DSM session with
+// the resolved primary password, even when a web-login session is already
+// stored. It persists the new session before publishing the client to callers;
+// if persistence fails, the newly created DSM session is revoked.
+func (m *Manager) ConnectWithStoredPassword(ctx context.Context, requested string) (name, account string, err error) {
+	m.profileGate.Lock()
+	defer m.profileGate.Unlock()
+
+	if m.credentials == nil {
+		return "", "", errors.New("no credential resolver is configured")
+	}
+	if m.sessions == nil {
+		return "", "", errors.New("no session store is configured")
+	}
+	cfg, err := m.snapshot(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	name, profile, err := cfg.Resolve(requested)
+	if err != nil {
+		return "", "", err
+	}
+	password, err := m.credentials.Password(ctx, name, profile)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve the stored password for profile %q: %w", name, err)
+	}
+
+	device := credentials.TrustedDevice{Name: m.deviceName}
+	if m.devices != nil {
+		device, err = m.devices.TrustedDevice(ctx, name)
+		if err != nil {
+			return "", "", fmt.Errorf("read trusted device for NAS %q: %w", name, err)
+		}
+		if device.Name == "" {
+			device.Name = m.deviceName
+		}
+	}
+	var saveDeviceID synology.DeviceIDSaver
+	if m.devices != nil {
+		saveDeviceID = func(ctx context.Context, deviceID string) error {
+			return m.devices.SaveTrustedDevice(ctx, name, credentials.TrustedDevice{Name: device.Name, ID: deviceID})
+		}
+	}
+
+	var sessionMu sync.Mutex
+	var established credentials.SessionCredential
+	committed := false
+	saveSession := func(ctx context.Context, sid, synoToken string) error {
+		sessionMu.Lock()
+		now := time.Now().UTC()
+		established.SID = sid
+		established.SynoToken = synoToken
+		established.Account = profile.Username
+		if established.IssuedAt.IsZero() {
+			established.IssuedAt = now
+		}
+		established.LastVerified = now
+		current, persist := established, committed
+		sessionMu.Unlock()
+		if persist {
+			return m.sessions.SaveSession(ctx, name, current)
+		}
+		return nil
+	}
+	client, err := synology.NewClient(synology.Options{
+		BaseURL:                profile.URL,
+		Username:               profile.Username,
+		Password:               password,
+		DeviceName:             device.Name,
+		DeviceID:               device.ID,
+		SaveDeviceID:           saveDeviceID,
+		SaveSession:            saveSession,
+		HTTPClient:             httpClient(profile),
+		Logger:                 m.logger,
+		PreserveSessionOnClose: true,
+	})
+	password = ""
+	if err != nil {
+		return "", "", fmt.Errorf("create saved-password client for NAS %q: %w", name, err)
+	}
+	// This operation replaces the cached identity deliberately. Evict and close
+	// the old client before authenticating so an owned password session cannot
+	// be logged out after DSM has issued the replacement (some DSM builds may
+	// reuse a session name for the same account).
+	m.mu.Lock()
+	stale := m.clients[name]
+	delete(m.clients, name)
+	m.mu.Unlock()
+	if stale.client != nil {
+		_ = stale.client.Close(ctx)
+	}
+	keepSession := false
+	defer func() {
+		if keepSession {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = client.Logout(cleanupCtx)
+		_ = client.Close(cleanupCtx)
+	}()
+	if err := client.Authenticate(ctx); err != nil {
+		return "", "", fmt.Errorf("authenticate to NAS %q with its stored password: %w", name, err)
+	}
+	sessionMu.Lock()
+	current := established
+	sessionMu.Unlock()
+	if current.SID == "" {
+		return "", "", fmt.Errorf("DSM did not return a session for NAS %q", name)
+	}
+	if err := m.sessions.SaveSession(ctx, name, current); err != nil {
+		return "", "", fmt.Errorf("store the password session for NAS %q: %w", name, err)
+	}
+	sessionMu.Lock()
+	committed = true
+	sessionMu.Unlock()
+
+	m.mu.Lock()
+	m.clients[name] = clientEntry{client: client, revision: profile.Revision}
+	m.mu.Unlock()
+	keepSession = true
+	return name, profile.Username, nil
+}
+
 func (m *Manager) resolveClient(ctx context.Context, requested string, allowTarget bool) (string, Client, error) {
 	m.profileGate.RLock()
 	defer m.profileGate.RUnlock()

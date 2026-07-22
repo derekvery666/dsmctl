@@ -1,14 +1,65 @@
 #!/bin/sh
 set -eu
 
-# Container lifecycle is owned by Synology's docker-project resource worker.
-# This script contributes only a local process-health status check.
+pid_file="${SYNOPKG_PKGVAR:?}/synology-auth.pid"
+log_file="${SYNOPKG_PKGVAR}/synology-auth.log"
+binary="${SYNOPKG_PKGDEST:?}/bin/dsmctl-synology-auth"
+key="${SYNOPKG_PKGHOME:?}/dsm-sso.key"
+
+running() {
+    [ -f "$pid_file" ] || return 1
+    pid="$(cat "$pid_file" 2>/dev/null || true)"
+    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+start_bridge() {
+    if running; then
+        return 0
+    fi
+    rm -f "$pid_file"
+    "$binary" --listen=127.0.0.1:18766 --backend=http://127.0.0.1:18765 \
+        --assertion-key-file="$key" --audience=dsmctl-synology-admin \
+        >> "$log_file" 2>&1 &
+    echo "$!" > "$pid_file"
+}
+
+stop_bridge() {
+    if running; then
+        kill "$(cat "$pid_file")"
+        attempts=0
+        while [ "$attempts" -lt 10 ] && running; do
+            attempts=$((attempts + 1))
+            /bin/sleep 1
+        done
+    fi
+    rm -f "$pid_file"
+}
+
 case "${1:-}" in
-    start|stop)
+    start)
+        start_bridge
+        attempts=0
+        while [ "$attempts" -lt 60 ]; do
+            if ! running; then
+                echo "DSM authentication bridge exited during startup." > "${SYNOPKG_TEMP_LOGFILE:-/dev/stderr}"
+                exit 1
+            fi
+            if /usr/bin/wget -q -T 2 -O /dev/null http://127.0.0.1:18766/healthz; then
+                exit 0
+            fi
+            attempts=$((attempts + 1))
+            /bin/sleep 1
+        done
+        stop_bridge
+        echo "dsmctl Gateway did not become healthy within 60 seconds." > "${SYNOPKG_TEMP_LOGFILE:-/dev/stderr}"
+        exit 1
+        ;;
+    stop)
+        stop_bridge
         exit 0
         ;;
     status)
-        if ! /usr/bin/wget -q -T 2 -O /dev/null http://127.0.0.1:18765/healthz; then
+        if ! running || ! /usr/bin/wget -q -T 2 -O /dev/null http://127.0.0.1:18766/healthz; then
             exit 3
         fi
         exit 0

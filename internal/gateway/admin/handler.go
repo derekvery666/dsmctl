@@ -21,6 +21,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/application"
 	"github.com/ychiu1211/dsmctl/internal/credentials"
 	"github.com/ychiu1211/dsmctl/internal/domain/discovery"
+	"github.com/ychiu1211/dsmctl/internal/gateway/platformauth"
 	"github.com/ychiu1211/dsmctl/internal/gateway/state"
 	"github.com/ychiu1211/dsmctl/internal/remotepolicy"
 	"github.com/ychiu1211/dsmctl/internal/runtime"
@@ -46,6 +47,9 @@ type Options struct {
 	PublicURL   string
 	Now         func() time.Time
 	SetupWindow time.Duration
+	// PlatformVerifier enables an optional deployment-provided administrator
+	// assertion. Generic containers leave it nil; the Synology SPK supplies it.
+	PlatformVerifier *platformauth.Verifier
 	// Logger receives server-side diagnostics for failures whose HTTP
 	// responses are deliberately redacted (DSM enrollment exchanges).
 	Logger *slog.Logger
@@ -56,16 +60,17 @@ type DeviceDiscoverer interface {
 }
 
 type Handler struct {
-	repository     *state.Repository
-	manager        *runtime.Manager
-	discoverer     DeviceDiscoverer
-	publicURL      string
-	logger         *slog.Logger
-	now            func() time.Time
-	setupDeadline  time.Time
-	setupAttempts  *attemptLimiter
-	loginAttempts  *attemptLimiter
-	exportAttempts *attemptLimiter
+	repository       *state.Repository
+	manager          *runtime.Manager
+	discoverer       DeviceDiscoverer
+	publicURL        string
+	logger           *slog.Logger
+	now              func() time.Time
+	setupDeadline    time.Time
+	setupAttempts    *attemptLimiter
+	loginAttempts    *attemptLimiter
+	exportAttempts   *attemptLimiter
+	platformVerifier *platformauth.Verifier
 
 	pendingMu sync.Mutex
 	pending   map[string]pendingEnrollment
@@ -132,8 +137,8 @@ func New(options Options) (*Handler, error) {
 		now: now, setupDeadline: startedAt.Add(setupWindow),
 		setupAttempts:  newAttemptLimiter(now, 10, time.Minute),
 		loginAttempts:  newAttemptLimiter(now, 5, time.Minute),
-		exportAttempts: newAttemptLimiter(now, 5, time.Minute),
-		pending:        make(map[string]pendingEnrollment),
+		exportAttempts: newAttemptLimiter(now, 5, time.Minute), platformVerifier: options.PlatformVerifier,
+		pending: make(map[string]pendingEnrollment),
 	}, nil
 }
 
@@ -173,6 +178,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	case "/admin/api/login":
 		h.login(w, req)
+		return
+	case "/admin/api/dsm-login":
+		h.dsmLogin(w, req)
 		return
 	}
 	if !strings.HasPrefix(req.URL.Path, "/admin/api/") {
@@ -220,6 +228,10 @@ func (h *Handler) serveAuthenticated(w http.ResponseWriter, req *http.Request) {
 	}
 	if req.URL.Path == "/admin/api/password" {
 		h.changePassword(w, req)
+		return
+	}
+	if req.URL.Path == "/admin/api/local-administrator" {
+		h.configureLocalAdministrator(w, req)
 		return
 	}
 	if req.URL.Path == "/admin/api/sessions/revoke-others" {
@@ -299,7 +311,21 @@ func (h *Handler) authenticate(req *http.Request) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	return "local:" + session.Username, cookie.Value, nil
+	switch session.Provider {
+	case state.AdminProviderLocal:
+		return "local:" + session.Username, cookie.Value, nil
+	case state.AdminProviderDSM:
+		if h.platformVerifier == nil {
+			return "", "", state.ErrUnauthorized
+		}
+		identity, err := h.platformVerifier.Verify(req.Context(), req.Header.Get(platformauth.HeaderName))
+		if err != nil || identity.Subject != session.Username {
+			return "", "", state.ErrUnauthorized
+		}
+		return "dsm:" + session.Username, cookie.Value, nil
+	default:
+		return "", "", state.ErrUnauthorized
+	}
 }
 
 func (h *Handler) setupStatus(w http.ResponseWriter, req *http.Request) {
@@ -313,7 +339,11 @@ func (h *Handler) setupStatus(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if status.Initialized {
-		writeJSON(w, http.StatusOK, map[string]any{"state": "initialized", "initialized_at": status.InitializedAt})
+		writeJSON(w, http.StatusOK, map[string]any{"state": "initialized", "initialized_at": status.InitializedAt, "local_login_available": true, "dsm_weblogin_available": h.platformVerifier != nil})
+		return
+	}
+	if h.platformVerifier != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"state": "dsm_login_only", "local_login_available": false, "dsm_weblogin_available": true})
 		return
 	}
 	if !h.now().UTC().Before(h.setupDeadline) {
@@ -330,6 +360,10 @@ func (h *Handler) setupStatus(w http.ResponseWriter, req *http.Request) {
 func (h *Handler) setup(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		methodNotAllowed(w, http.MethodPost)
+		return
+	}
+	if h.platformVerifier != nil {
+		http.NotFound(w, req)
 		return
 	}
 	status, err := h.repository.AdministratorStatus(req.Context())
@@ -387,6 +421,10 @@ func (h *Handler) status(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "read gateway status")
 		return
+	}
+	if h.platformVerifier != nil && !health.Initialized {
+		health.Ready = true
+		health.AdminMode = state.AdminModeDSM
 	}
 	writeJSON(w, http.StatusOK, health)
 }
@@ -460,6 +498,8 @@ func (h *Handler) profile(w http.ResponseWriter, req *http.Request) {
 		h.passwordAccounts(w, req, name)
 	case "credentials/password":
 		h.passwordEnrollment(w, req, name)
+	case "credentials/password/connect":
+		h.connectStoredPassword(w, req, name)
 	case "credentials/password/reveal":
 		h.revealPassword(w, req, name)
 	case "provision":
@@ -1019,7 +1059,8 @@ func (h *Handler) passwordEnrollment(w http.ResponseWriter, req *http.Request, n
 		methodNotAllowed(w, http.MethodPost, http.MethodDelete)
 		return
 	}
-	if _, ok := h.requireProfileTLS(w, req, name); !ok {
+	storedProfile, ok := h.requireProfileTLS(w, req, name)
+	if !ok {
 		return
 	}
 	var input struct {
@@ -1028,6 +1069,7 @@ func (h *Handler) passwordEnrollment(w http.ResponseWriter, req *http.Request, n
 		Password         string `json:"password"`
 		OTP              string `json:"otp,omitempty"`
 		Store            *bool  `json:"store,omitempty"`
+		Connect          bool   `json:"connect,omitempty"`
 	}
 	if err := decodeJSON(req, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -1039,8 +1081,9 @@ func (h *Handler) passwordEnrollment(w http.ResponseWriter, req *http.Request, n
 		return
 	}
 	// store defaults to true when the field is absent, preserving the behavior of
-	// callers that always persist. store=false validates the credential against
-	// DSM without writing anything to the vault (a "verify, don't save" check).
+	// callers that always persist. store=false with connect=false remains the
+	// historical validate-only path; the NAS page sends connect=true so a DSM
+	// session is retained without retaining the plaintext password.
 	store := input.Store == nil || *input.Store
 	cfg, err := h.repository.Snapshot(req.Context())
 	if err != nil {
@@ -1053,6 +1096,7 @@ func (h *Handler) passwordEnrollment(w http.ResponseWriter, req *http.Request, n
 		return
 	}
 	device := credentials.TrustedDevice{Name: "dsmctl-gateway"}
+	var established credentials.SessionCredential
 	client, err := synology.NewClient(synology.Options{
 		BaseURL: profile.URL, Username: strings.TrimSpace(input.Account), Password: input.Password,
 		DeviceName: device.Name, HTTPClient: runtime.HTTPClient(profile),
@@ -1063,14 +1107,26 @@ func (h *Handler) passwordEnrollment(w http.ResponseWriter, req *http.Request, n
 			return input.OTP, nil
 		},
 		SaveDeviceID: func(_ context.Context, id string) error { device.ID = id; return nil },
+		SaveSession: func(_ context.Context, sid, synoToken string) error {
+			established.SID = sid
+			established.SynoToken = synoToken
+			return nil
+		},
+		PreserveSessionOnClose: true,
 	})
 	if err == nil {
 		err = client.Authenticate(req.Context())
 	}
+	keepSession := false
 	if client != nil {
-		closeCtx, cancel := context.WithTimeout(context.Background(), networkTimeout)
-		_ = client.Close(closeCtx)
-		cancel()
+		defer func() {
+			closeCtx, cancel := context.WithTimeout(context.Background(), networkTimeout)
+			defer cancel()
+			if !keepSession {
+				_ = client.Logout(closeCtx)
+			}
+			_ = client.Close(closeCtx)
+		}()
 	}
 	if err != nil {
 		// Redacted response; err carries no credential material (the synology
@@ -1080,27 +1136,128 @@ func (h *Handler) passwordEnrollment(w http.ResponseWriter, req *http.Request, n
 		writeError(w, http.StatusBadGateway, "DSM rejected password enrollment")
 		return
 	}
-	if !store {
+	account := strings.TrimSpace(input.Account)
+	if !store && !input.Connect {
 		// Validate-only: the credential authenticated to DSM but the operator did
 		// not opt to store it, so nothing is written to the vault.
-		writeJSON(w, http.StatusOK, map[string]any{"nas": name, "account": strings.TrimSpace(input.Account), "validated": true, "password_stored": false, "trusted_device_stored": false})
+		writeJSON(w, http.StatusOK, map[string]any{"nas": name, "account": account, "validated": true, "password_stored": false, "trusted_device_stored": false, "session_stored": false})
+		return
+	}
+	if established.SID == "" {
+		writeError(w, http.StatusBadGateway, "DSM did not return a reusable password session")
+		return
+	}
+	now := h.now().UTC()
+	established.Account = account
+	established.IssuedAt = now
+	established.LastVerified = now
+	if !store {
+		// A connection needs a reusable server-side session, but the password and
+		// newly minted trusted-device credential remain absent from the vault.
+		// This is the explicit "connect without remembering password" choice.
+		err = h.manager.MutateProfile(req.Context(), name, func() error {
+			_, err := h.repository.EnrollSessionAtRevision(req.Context(), name, input.ExpectedRevision, established)
+			return err
+		})
+		if err != nil {
+			writeRepositoryError(w, err)
+			return
+		}
+		keepSession = true
+		writeJSON(w, http.StatusOK, map[string]any{"nas": name, "account": account, "validated": true, "password_stored": storedProfile.PasswordStored, "trusted_device_stored": storedProfile.TrustedDeviceStored, "session_stored": true})
 		return
 	}
 	if device.ID == "" {
 		device = credentials.TrustedDevice{}
 	}
+	primary := !storedProfile.PasswordStored || strings.EqualFold(storedProfile.Username, account)
+	if primary {
+		established.DeviceID = device.ID
+	}
 	err = h.manager.MutateProfile(req.Context(), name, func() error {
 		// SavePasswordForAccount routes the profile login to the primary entry and
 		// any other account to an additional labeled secret, so one NAS can hold a
 		// book of accounts. A primary enrollment matches EnrollPasswordForAccount.
-		_, err := h.repository.SavePasswordForAccount(req.Context(), name, input.ExpectedRevision, input.Account, input.Password, device)
+		var err error
+		if primary {
+			_, err = h.repository.SavePasswordForAccountWithSession(req.Context(), name, input.ExpectedRevision, account, input.Password, device, established)
+		} else {
+			_, err = h.repository.SavePasswordForAccount(req.Context(), name, input.ExpectedRevision, account, input.Password, device)
+		}
 		return err
 	})
 	if err != nil {
 		writeRepositoryError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"nas": name, "account": strings.TrimSpace(input.Account), "validated": true, "password_stored": true, "trusted_device_stored": device.ID != ""})
+	keepSession = primary
+	writeJSON(w, http.StatusOK, map[string]any{"nas": name, "account": account, "validated": true, "password_stored": true, "trusted_device_stored": device.ID != "", "session_stored": primary})
+}
+
+// connectStoredPassword creates a fresh DSM session from the profile's primary
+// vault password. The request carries no secret and the response exposes only
+// non-secret session metadata.
+func (h *Handler) connectStoredPassword(w http.ResponseWriter, req *http.Request, name string) {
+	if req.Method != http.MethodPost {
+		methodNotAllowed(w, http.MethodPost)
+		return
+	}
+	profile, ok := h.requireProfileTLS(w, req, name)
+	if !ok {
+		return
+	}
+	if !profile.PasswordStored {
+		writeError(w, http.StatusConflict, "no primary password is stored for this NAS")
+		return
+	}
+	ctx, cancel := context.WithTimeout(req.Context(), networkTimeout)
+	defer cancel()
+	connectedName, account, err := h.manager.ConnectWithStoredPassword(ctx, name)
+	if err != nil {
+		h.logger.ErrorContext(req.Context(), "DSM rejected saved-password connection",
+			"request_id", correlationID(req), "nas", name, "error", err)
+		writeStoredPasswordConnectError(w, err)
+		return
+	}
+	meta, err := h.repository.SessionMeta(req.Context(), connectedName)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read connected session status")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"nas": connectedName, "account": account, "session_stored": true, "session": meta,
+	})
+}
+
+// writeStoredPasswordConnectError exposes only an actionable, non-secret
+// classification. DSM API errors contain API/method/code metadata but never a
+// password, OTP, SID, token, request body, or response body. Keeping the raw
+// wrapped error server-side lets operators distinguish an expired trusted
+// device from a wrong password without leaking credential material.
+func writeStoredPasswordConnectError(w http.ResponseWriter, err error) {
+	if synology.IsOTPRequired(err) {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"code":  "stored_password_otp_required",
+			"error": "DSM requires a one-time password; re-enter the password and OTP to refresh this NAS trusted device",
+		})
+		return
+	}
+	var apiErr *synology.APIError
+	if errors.As(err, &apiErr) {
+		code, message := "stored_password_rejected", "DSM rejected the stored account or password; re-enter it to reconnect"
+		switch apiErr.Code {
+		case 401:
+			code, message = "stored_password_account_disabled", "DSM reports that this account is disabled"
+		case 407:
+			code, message = "stored_password_ip_blocked", "DSM has blocked this client IP after failed sign-in attempts"
+		}
+		writeJSON(w, http.StatusConflict, map[string]string{"code": code, "error": message})
+		return
+	}
+	writeJSON(w, http.StatusBadGateway, map[string]string{
+		"code":  "stored_password_connection_failed",
+		"error": "DSM could not establish a session with the stored credential",
+	})
 }
 
 // exportCredentials downloads every NAS profile's connection identity and its
@@ -1585,6 +1742,8 @@ func adminAuditAction(req *http.Request) string {
 		return "admin.logout"
 	case path == "/admin/api/password":
 		return "admin.password"
+	case path == "/admin/api/local-administrator":
+		return "admin.local_administrator.configure"
 	case path == "/admin/api/sessions/revoke-others":
 		return "admin.sessions.revoke"
 	case strings.HasPrefix(path, "/admin/api/mcp-tokens"):
@@ -1597,6 +1756,8 @@ func adminAuditAction(req *http.Request) string {
 		return "audit.query"
 	case path == "/admin/api/credentials/export":
 		return "credential.export"
+	case strings.HasSuffix(path, "/credentials/password/connect"):
+		return "credential.connect"
 	case strings.HasSuffix(path, "/credentials/password/reveal"):
 		return "credential.reveal"
 	case strings.HasSuffix(path, "/provision"):

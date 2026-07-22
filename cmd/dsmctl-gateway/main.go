@@ -23,6 +23,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/gateway"
 	"github.com/ychiu1211/dsmctl/internal/gateway/admin"
 	gatewayoauth "github.com/ychiu1211/dsmctl/internal/gateway/oauth"
+	"github.com/ychiu1211/dsmctl/internal/gateway/platformauth"
 	gatewaystate "github.com/ychiu1211/dsmctl/internal/gateway/state"
 	"github.com/ychiu1211/dsmctl/internal/mcpserver"
 	"github.com/ychiu1211/dsmctl/internal/runtime"
@@ -45,6 +46,7 @@ func run(arguments []string, logger *slog.Logger) error {
 	configPath := flags.String("config", config.DefaultPath(), "configuration file path")
 	statePath := flags.String("state", "", "managed gateway state database path; enables dynamic administration")
 	masterKeyPath := flags.String("master-key-file", "", "32-byte managed gateway vault key file")
+	platformAssertionKeyPath := flags.String("platform-assertion-key-file", "", "optional 32-byte deployment administrator assertion key file")
 	adminPublicURL := flags.String("admin-public-url", "", "public gateway origin used for browser request validation and DSM web-login opener")
 	listenAddress := flags.String("listen", "127.0.0.1:18765", "HTTP listen address")
 	tokenPath := flags.String("dev-read-only-token-file", "", "required local bearer-token file for explicit read-only developer mode")
@@ -73,6 +75,9 @@ func run(arguments []string, logger *slog.Logger) error {
 	}
 
 	managed := strings.TrimSpace(*statePath) != ""
+	if !managed && strings.TrimSpace(*platformAssertionKeyPath) != "" {
+		return errors.New("platform administrator assertions require managed gateway state")
+	}
 	var token string
 	var tokenDigest [sha256.Size]byte
 	var err error
@@ -89,20 +94,34 @@ func run(arguments []string, logger *slog.Logger) error {
 	}
 
 	var (
-		cfg          *config.Config
-		manager      *runtime.Manager
-		service      *application.Service
-		adminHandler http.Handler
-		oauthHandler gateway.OAuthProvider
-		ready        func(context.Context) error
-		closeState   func() error
-		mode         string
-		repository   *gatewaystate.Repository
+		cfg              *config.Config
+		manager          *runtime.Manager
+		service          *application.Service
+		adminHandler     http.Handler
+		oauthHandler     gateway.OAuthProvider
+		ready            func(context.Context) error
+		closeState       func() error
+		mode             string
+		repository       *gatewaystate.Repository
+		platformVerifier *platformauth.Verifier
 	)
 	if managed {
 		masterKey, err := gatewaystate.ReadMasterKey(*masterKeyPath)
 		if err != nil {
 			return err
+		}
+		if strings.TrimSpace(*platformAssertionKeyPath) != "" {
+			assertionKey, readErr := platformauth.ReadKey(*platformAssertionKeyPath)
+			if readErr != nil {
+				return readErr
+			}
+			platformVerifier, err = platformauth.NewVerifier(assertionKey, platformauth.DefaultAudience)
+			for index := range assertionKey {
+				assertionKey[index] = 0
+			}
+			if err != nil {
+				return err
+			}
 		}
 		masterDigest := sha256.Sum256(masterKey)
 		repository, err = gatewaystate.Open(*statePath, masterKey)
@@ -130,21 +149,21 @@ func run(arguments []string, logger *slog.Logger) error {
 			application.WithRemoteApplyAuthorizer(repository),
 			application.WithProvisionSink(admin.NewVaultProvisionSink(repository, manager)),
 		)
-		adminApplication, err := admin.New(admin.Options{Repository: repository, Manager: manager, Discoverer: service, PublicURL: *adminPublicURL, Logger: logger})
+		adminApplication, err := admin.New(admin.Options{Repository: repository, Manager: manager, Discoverer: service, PublicURL: *adminPublicURL, PlatformVerifier: platformVerifier, Logger: logger})
 		if err != nil {
 			_ = service.Close(context.Background())
 			_ = repository.Close()
 			return err
 		}
 		adminHandler = adminApplication
-		oauthApplication, err := gatewayoauth.New(gatewayoauth.Options{Repository: repository, PublicURL: *adminPublicURL, Logger: logger})
+		oauthApplication, err := gatewayoauth.New(gatewayoauth.Options{Repository: repository, PublicURL: *adminPublicURL, PlatformVerifier: platformVerifier, Logger: logger})
 		if err != nil {
 			_ = service.Close(context.Background())
 			_ = repository.Close()
 			return err
 		}
 		oauthHandler = oauthApplication
-		ready = managedReadiness(repository, *masterKeyPath, masterDigest)
+		ready = managedReadiness(repository, *masterKeyPath, masterDigest, platformVerifier != nil)
 		mode = "managed"
 	} else {
 		cfg, err = loadRequiredConfig(*configPath)
@@ -214,9 +233,9 @@ func run(arguments []string, logger *slog.Logger) error {
 	return httpServer.Serve(ctx, listener)
 }
 
-func managedReadiness(repository *gatewaystate.Repository, masterKeyPath string, expectedMasterKey [sha256.Size]byte) func(context.Context) error {
+func managedReadiness(repository *gatewaystate.Repository, masterKeyPath string, expectedMasterKey [sha256.Size]byte, externalAdministrator bool) func(context.Context) error {
 	return func(ctx context.Context) error {
-		if err := repository.Ready(ctx); err != nil {
+		if err := repository.ReadyWithExternalAdministrator(ctx, externalAdministrator); err != nil {
 			return err
 		}
 		masterKey, err := gatewaystate.ReadMasterKey(masterKeyPath)

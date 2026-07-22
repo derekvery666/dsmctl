@@ -145,6 +145,30 @@ func TestVaultEncryptsDistinctNoncesAndSessionRenewalKeepsRevision(t *testing.T)
 	}
 }
 
+func TestEnrollSessionAtRevisionConnectsWithoutSavingPassword(t *testing.T) {
+	repository, _ := openTestRepository(t)
+	ctx := context.Background()
+	profile, err := repository.CreateProfile(ctx, ProfileInput{Name: "temporary", URL: "https://temporary.example:5001"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := credentials.SessionCredential{SID: "temporary-sid", SynoToken: "temporary-token", Account: "operator"}
+	revision, err := repository.EnrollSessionAtRevision(ctx, "temporary", profile.Revision, session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := repository.Profile(ctx, "temporary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revision != updated.Revision || updated.Username != "operator" || !updated.SessionStored || updated.PasswordStored {
+		t.Fatalf("connected profile = %#v, revision %d", updated, revision)
+	}
+	if _, err := repository.EnrollSessionAtRevision(ctx, "temporary", profile.Revision, session); !errors.Is(err, ErrRevisionConflict) {
+		t.Fatalf("stale session enrollment error = %v, want ErrRevisionConflict", err)
+	}
+}
+
 func TestWrongMasterKeyAndLocalAdministratorFailClosed(t *testing.T) {
 	repository, path := openTestRepository(t)
 	ctx := context.Background()

@@ -9,27 +9,37 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    pids_limit: 128
     mem_limit: 256m
-    cpus: 1.0
-    ports:
-      - "127.0.0.1:18765:8080"
+    # Older supported Synology kernels may expose neither CPU CFS quotas nor
+    # the PIDs cgroup controller. Keep only limits that Container Manager can
+    # enforce consistently across the supported x86_64 DSM boundary.
+    # Synology findhost discovery is UDP broadcast scoped. Host networking lets
+    # the unprivileged process see the NAS LAN interfaces while its HTTP server
+    # remains loopback-only and no host-network mutation capability is granted.
+    network_mode: host
     volumes:
       - type: bind
         source: ${DSMCTL_DATA_DIR}
         target: /data
       - type: bind
-        source: ${DSMCTL_MASTER_KEY}
-        target: /run/secrets/master.key
+        source: ${DSMCTL_SECRET_DIR}
+        target: /run/secrets
         read_only: true
     tmpfs:
       - /tmp:size=16m,mode=1777,uid=${DSMCTL_UID},gid=${DSMCTL_GID}
     command:
-      - --listen=0.0.0.0:8080
+      - --listen=127.0.0.1:18765
       - --state=/data/gateway.db
       - --master-key-file=/run/secrets/master.key
+      - --platform-assertion-key-file=/run/secrets/dsm-sso.key
       - --allowed-hosts=127.0.0.1,localhost
-      - --trusted-proxies=172.16.0.0/12
+      - --trusted-proxies=127.0.0.0/8
+    healthcheck:
+      test: ["CMD", "/dsmctl-gateway", "healthcheck", "--url", "http://127.0.0.1:18765/healthz"]
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
     logging:
       driver: json-file
       options:

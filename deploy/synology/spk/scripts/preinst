@@ -1,7 +1,8 @@
 #!/bin/sh
 set -eu
 
-if [ "${SYNOPKG_DSM_ARCH:-}" != "x86_64" ]; then
+machine_arch="$(uname -m 2>/dev/null || true)"
+if [ "$machine_arch" != "x86_64" ]; then
     echo "dsmctl Gateway supports only x86_64 DSM systems." > "${SYNOPKG_TEMP_LOGFILE:-/dev/stderr}"
     exit 1
 fi
@@ -10,4 +11,27 @@ if [ "${SYNOPKG_DSM_VERSION_MAJOR:-0}" -lt 7 ] || \
     echo "DSM 7.2.1-69057 or newer is required." > "${SYNOPKG_TEMP_LOGFILE:-/dev/stderr}"
     exit 1
 fi
+
+# DSM acquires the docker-project resource before postinst. Write only the
+# Compose interpolation file into the staged payload here; DSM creates the FHS
+# var/home links after preinst and before the resource worker runs.
+umask 077
+pkg="${SYNOPKG_PKGNAME:?}"
+script_dir="$(CDPATH= cd "$(dirname "$0")" && pwd)"
+staged_target="$script_dir/../package"
+
+if [ ! -d "$staged_target/project" ]; then
+    echo "Staged docker-project payload is missing." > "${SYNOPKG_TEMP_LOGFILE:-/dev/stderr}"
+    exit 1
+fi
+
+uid="$(id -u "$pkg")"
+gid="$(id -g "$pkg")"
+cat > "$staged_target/project/.env" <<EOF
+DSMCTL_UID=$uid
+DSMCTL_GID=$gid
+DSMCTL_DATA_DIR=/var/packages/$pkg/var
+DSMCTL_SECRET_DIR=/var/packages/$pkg/home
+EOF
+chmod 0600 "$staged_target/project/.env"
 exit 0

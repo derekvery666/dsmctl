@@ -4,7 +4,7 @@
 
 - `dsmctl`: a command-line interface for administrators.
 - `dsmctl-mcp`: a stdio MCP server for AI clients.
-- `dsmctl-gateway`: a portable amd64 Streamable HTTP MCP gateway; managed mode uses the same one-hour first-run local administrator setup on Linux and Synology, then supports dynamic multi-NAS administration, scoped tokens, out-of-band high-risk approval, and redacted audit, while static developer mode stays read-only.
+- `dsmctl-gateway`: a portable amd64 Streamable HTTP MCP gateway; generic managed deployments require one-hour first-run local administrator setup, while the Synology SPK delegates fresh-install access to DSM administrators and can optionally enable a local fallback login. It then supports dynamic multi-NAS administration, scoped tokens, out-of-band high-risk approval, and redacted audit, while static developer mode stays read-only.
 
 The first milestone implements one complete connection slice: configure multiple NAS profiles, authenticate with password and DSM two-factor authentication, maintain independent sessions, and read basic system information. Management modules now cover storage and SAN inventory, guarded storage-pool, volume, and SAN lifecycles, local user/group/share management, effective-access explanation, a focused read-only Control Panel time module, guarded global SMB/NFS File Services, and Package Center inventory, settings, and guarded package lifecycle through the same CLI/MCP/application stack. Functionality provided by installed packages is managed through package-scoped operations that re-check the installed package version before every command; the read-only Synology Drive Admin module is the first consumer.
 
@@ -40,9 +40,9 @@ On Windows, use `bin/dsmctl.exe` and `bin/dsmctl-mcp.exe`.
 
 ## Release version
 
-The current release is `7.3.2-1`. dsmctl versions use
+The current release is `7.3.2-11`. dsmctl versions use
 `DSM_MAJOR.DSM_MINOR.DSM_PATCH-DSMCTL_BUILD`: `7.3.2` names the latest DSM
-feature train certified by the release, while `1` is the monotonically
+feature train certified by the release, while `10` is the monotonically
 increasing dsmctl build within that train. CLI, stdio MCP, gateway container,
 and Synology SPK artifacts built from one revision carry the same full version.
 

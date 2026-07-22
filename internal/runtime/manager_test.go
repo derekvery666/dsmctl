@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +20,7 @@ func (f resolverFunc) Password(ctx context.Context, name string, profile config.
 
 type fakeSessionStore struct {
 	sessions map[string]credentials.SessionCredential
+	saveErr  error
 }
 
 func (f *fakeSessionStore) Session(_ context.Context, name string) (credentials.SessionCredential, error) {
@@ -26,6 +28,9 @@ func (f *fakeSessionStore) Session(_ context.Context, name string) (credentials.
 }
 
 func (f *fakeSessionStore) SaveSession(_ context.Context, name string, session credentials.SessionCredential) error {
+	if f.saveErr != nil {
+		return f.saveErr
+	}
 	f.sessions[name] = session
 	return nil
 }
@@ -348,6 +353,70 @@ func TestManagerFallsBackToPasswordWithoutStoredSession(t *testing.T) {
 	}
 	if resolutions != 1 {
 		t.Fatalf("expected one password resolution, resolutions = %d", resolutions)
+	}
+}
+
+func TestConnectWithStoredPasswordBypassesStoredSessionAndPersistsFreshLogin(t *testing.T) {
+	loginCount, logoutCount := 0, 0
+	server := newCountingDSMServer(t, "DS224+", "fresh-sid", &loginCount, &logoutCount)
+	defer server.Close()
+
+	cfg := config.New()
+	cfg.DefaultNAS = "office"
+	cfg.NAS["office"] = config.Profile{URL: server.URL, Username: "user"}
+	store := &fakeSessionStore{sessions: map[string]credentials.SessionCredential{
+		"office": {SID: "stored-sid", SynoToken: "stored-token", Account: "user"},
+	}}
+	resolutions := 0
+	manager := NewManager(cfg, resolverFunc(func(context.Context, string, config.Profile) (string, error) {
+		resolutions++
+		return "stored-password", nil
+	}), WithSessionStore(store))
+	defer manager.Close(context.Background())
+
+	// Seed the cache from the old session first; the explicit action must still
+	// bypass it and perform a password login.
+	if _, _, err := manager.Client(context.Background(), "office"); err != nil {
+		t.Fatal(err)
+	}
+	name, account, err := manager.ConnectWithStoredPassword(context.Background(), "office")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "office" || account != "user" {
+		t.Fatalf("connected identity = %q/%q", name, account)
+	}
+	if loginCount != 1 || resolutions != 1 {
+		t.Fatalf("loginCount=%d password resolutions=%d, want 1/1", loginCount, resolutions)
+	}
+	if session := store.sessions["office"]; session.SID != "fresh-sid" || session.Account != "user" || session.IssuedAt.IsZero() || session.LastVerified.IsZero() {
+		t.Fatalf("fresh stored session = %#v", session)
+	}
+	if logoutCount != 0 {
+		t.Fatalf("successful fresh session was logged out %d times", logoutCount)
+	}
+}
+
+func TestConnectWithStoredPasswordRevokesFreshSessionWhenStoreFails(t *testing.T) {
+	loginCount, logoutCount := 0, 0
+	server := newCountingDSMServer(t, "DS224+", "fresh-sid", &loginCount, &logoutCount)
+	defer server.Close()
+	cfg := config.New()
+	cfg.DefaultNAS = "office"
+	cfg.NAS["office"] = config.Profile{URL: server.URL, Username: "user"}
+	store := &fakeSessionStore{sessions: map[string]credentials.SessionCredential{}, saveErr: errors.New("vault unavailable")}
+	manager := NewManager(cfg, resolverFunc(func(context.Context, string, config.Profile) (string, error) {
+		return "stored-password", nil
+	}), WithSessionStore(store))
+
+	if _, _, err := manager.ConnectWithStoredPassword(context.Background(), "office"); err == nil {
+		t.Fatal("ConnectWithStoredPassword() error = nil, want session-store failure")
+	}
+	if loginCount != 1 || logoutCount != 1 {
+		t.Fatalf("login/logout counts = %d/%d, want 1/1", loginCount, logoutCount)
+	}
+	if len(store.sessions) != 0 {
+		t.Fatalf("failed session store retained %#v", store.sessions)
 	}
 }
 

@@ -18,6 +18,9 @@ const (
 	PendingApprovalTTL   = 24 * time.Hour
 	MaxPendingApprovals  = 50
 	AdminModeLocal       = "local"
+	AdminModeDSM         = "dsm"
+	AdminProviderLocal   = "local"
+	AdminProviderDSM     = "dsm"
 	MaxAdminSessions     = 16
 	AdminSessionTTL      = 12 * time.Hour
 	MaxOAuthClients      = 128
@@ -85,14 +88,15 @@ type Health struct {
 type AdministratorSession struct {
 	ID        string    `json:"id"`
 	Username  string    `json:"username"`
+	Provider  string    `json:"provider"`
 	CreatedAt time.Time `json:"created_at"`
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
 type SecretMetadata struct {
-	ID        string    `json:"id"`
-	ProfileID string    `json:"profile_id"`
-	Type      string    `json:"type"`
+	ID        string `json:"id"`
+	ProfileID string `json:"profile_id"`
+	Type      string `json:"type"`
 	// Account labels a password-book entry with the DSM account it authenticates.
 	// It is non-secret metadata (an account name, like Profile.Username, is not a
 	// secret) and is deliberately outside the AEAD additional-data binding, so

@@ -283,6 +283,13 @@ func (r *Repository) Close() error {
 }
 
 func (r *Repository) Ready(ctx context.Context) error {
+	return r.ReadyWithExternalAdministrator(ctx, false)
+}
+
+// ReadyWithExternalAdministrator permits an explicitly configured deployment
+// assertion adapter to satisfy the administrator-identity prerequisite while
+// keeping the generic-container default fail-closed on missing local setup.
+func (r *Repository) ReadyWithExternalAdministrator(ctx context.Context, externalAdministrator bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -292,6 +299,9 @@ func (r *Repository) Ready(ctx context.Context) error {
 			return errors.New("gateway schema is not ready")
 		}
 		if !administratorConfigured(meta) {
+			if externalAdministrator {
+				return nil
+			}
 			return ErrAdministratorRequired
 		}
 		if err := validateAdministratorRecord(meta); err != nil {

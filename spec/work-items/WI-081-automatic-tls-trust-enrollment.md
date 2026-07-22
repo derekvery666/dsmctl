@@ -1,7 +1,7 @@
 ---
 id: WI-081
 title: Automatic TLS trust enrollment
-status: in_progress
+status: done
 owner: ""
 priority: P2
 depends_on: [WI-032, WI-048]
@@ -146,3 +146,8 @@ Completed on branch `claude/tls-trust-enrollment-wi081`, rebased onto
 finished: the mis-numbered `WI-051-automatic-tls-trust-enrollment.md` file is
 removed, and the roadmap carries only the canonical WI-081 row. `go build`,
 `go vet`, and `go test ./... -count=1` are green.
+
+Final dependency reconciliation on 2026-07-21 confirmed merge commit `a468b9a`
+is present on `main`; focused tests passed for `internal/tlstrust`, `runtime`,
+`cli`, and `gateway/admin`. The item is complete and WI-017 may certify the
+landed enrollment flow on Synology hardware.

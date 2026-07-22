@@ -419,6 +419,17 @@ func (r *Repository) DeletePassword(ctx context.Context, profileName string) (bo
 // race exactly as EnrollPasswordForAccount does. A primary enrollment is
 // behaviorally identical to EnrollPasswordForAccount.
 func (r *Repository) SavePasswordForAccount(ctx context.Context, profileName string, expectedRevision uint64, account, password string, device credentials.TrustedDevice) (uint64, error) {
+	return r.savePasswordForAccount(ctx, profileName, expectedRevision, account, password, device, nil)
+}
+
+// SavePasswordForAccountWithSession atomically commits a verified primary
+// password and the DSM session established by that same authentication. A
+// secondary password-book account cannot carry the profile's runtime session.
+func (r *Repository) SavePasswordForAccountWithSession(ctx context.Context, profileName string, expectedRevision uint64, account, password string, device credentials.TrustedDevice, session credentials.SessionCredential) (uint64, error) {
+	return r.savePasswordForAccount(ctx, profileName, expectedRevision, account, password, device, &session)
+}
+
+func (r *Repository) savePasswordForAccount(ctx context.Context, profileName string, expectedRevision uint64, account, password string, device credentials.TrustedDevice, session *credentials.SessionCredential) (uint64, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -443,6 +454,16 @@ func (r *Repository) SavePasswordForAccount(ctx context.Context, profileName str
 			return 0, err
 		}
 	}
+	var sessionPayload []byte
+	if session != nil {
+		if session.SID == "" && !session.CanResume() {
+			return 0, errors.New("session must carry a session ID or resume key material")
+		}
+		sessionPayload, err = json.Marshal(session)
+		if err != nil {
+			return 0, err
+		}
+	}
 	var revision uint64
 	err = r.db.Update(func(tx *bolt.Tx) error {
 		record, err := readProfile(tx, profileName)
@@ -453,6 +474,9 @@ func (r *Repository) SavePasswordForAccount(ctx context.Context, profileName str
 			return fmt.Errorf("%w: expected %d, current %d", ErrRevisionConflict, expectedRevision, record.Revision)
 		}
 		primary := record.PasswordSecretID == "" || strings.EqualFold(record.Username, account)
+		if session != nil && !primary {
+			return errors.New("a runtime session can only be stored for the primary DSM account")
+		}
 		if primary {
 			passwordID, err := r.putSecret(tx, &record, secretPassword, []byte(password), record.PasswordSecretID, account)
 			if err != nil {
@@ -466,6 +490,13 @@ func (r *Repository) SavePasswordForAccount(ctx context.Context, profileName str
 					return err
 				}
 				record.TrustedDeviceSecretID = deviceID
+			}
+			if len(sessionPayload) > 0 {
+				sessionID, err := r.putSecret(tx, &record, secretSession, sessionPayload, record.SessionSecretID, "")
+				if err != nil {
+					return err
+				}
+				record.SessionSecretID = sessionID
 			}
 		} else {
 			// Secondary accounts store only the password; the profile's single
@@ -640,20 +671,35 @@ func (r *Repository) Session(ctx context.Context, profileName string) (credentia
 // SaveSession is used by headless Noise_KK renewal. It rewrites the encrypted
 // payload with a fresh nonce without advancing the profile revision.
 func (r *Repository) SaveSession(ctx context.Context, profileName string, session credentials.SessionCredential) error {
-	return r.saveSession(ctx, profileName, session, false)
+	return r.saveSession(ctx, profileName, session, false, 0)
 }
 
 // EnrollSession stores a newly established browser session and advances the
 // profile revision so an existing password-backed client is evicted.
 func (r *Repository) EnrollSession(ctx context.Context, profileName string, session credentials.SessionCredential) (uint64, error) {
-	if err := r.saveSession(ctx, profileName, session, true); err != nil {
+	if err := r.saveSession(ctx, profileName, session, true, 0); err != nil {
 		return 0, err
 	}
 	profile, err := r.Profile(ctx, profileName)
 	return profile.Revision, err
 }
 
-func (r *Repository) saveSession(ctx context.Context, profileName string, session credentials.SessionCredential, advanceRevision bool) error {
+// EnrollSessionAtRevision persists a newly authenticated session only if the
+// profile still has the connection settings the operator authenticated. It is
+// used by password sign-in without password retention, where there is no
+// password write to carry the existing optimistic-revision guard.
+func (r *Repository) EnrollSessionAtRevision(ctx context.Context, profileName string, expectedRevision uint64, session credentials.SessionCredential) (uint64, error) {
+	if expectedRevision == 0 {
+		return 0, errors.New("expected profile revision is required")
+	}
+	if err := r.saveSession(ctx, profileName, session, true, expectedRevision); err != nil {
+		return 0, err
+	}
+	profile, err := r.Profile(ctx, profileName)
+	return profile.Revision, err
+}
+
+func (r *Repository) saveSession(ctx context.Context, profileName string, session credentials.SessionCredential, advanceRevision bool, expectedRevision uint64) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -668,6 +714,9 @@ func (r *Repository) saveSession(ctx context.Context, profileName string, sessio
 		record, err := readProfile(tx, profileName)
 		if err != nil {
 			return err
+		}
+		if expectedRevision != 0 && record.Revision != expectedRevision {
+			return fmt.Errorf("%w: expected %d, current %d", ErrRevisionConflict, expectedRevision, record.Revision)
 		}
 		id, err := r.putSecret(tx, &record, secretSession, plaintext, record.SessionSecretID, "")
 		if err != nil {

@@ -2,10 +2,11 @@
   ".url": {
     "com.dsmctl.Gateway": {
       "type": "url",
+      "icon": "images/dsmctl_{0}.png",
       "title": "dsmctl Gateway",
       "desc": "Manage authorized Synology NAS systems through MCP",
-      "url": "/dsmctl/admin",
-      "allUsers": true
+      "url": "/dsmctl/",
+      "allUsers": false
     }
   }
 }

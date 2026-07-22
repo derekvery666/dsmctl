@@ -15,7 +15,7 @@ output_dir="$3"
   exit 2
 }
 
-for command in docker tar gzip base64 sed sha256sum; do
+for command in docker go tar gzip sed sha256sum; do
   command -v "$command" >/dev/null || { echo "missing required command: $command" >&2; exit 1; }
 done
 
@@ -39,13 +39,20 @@ image_version="$(docker image inspect "$image_reference" --format '{{index .Conf
 
 cp -R "$template/conf" "$template/scripts" "$template/WIZARD_UIFILES" "$stage/"
 sed "s/__VERSION__/$package_version/g" "$template/INFO.template" > "$stage/INFO"
-base64 -d "$template/PACKAGE_ICON.PNG.base64" > "$stage/PACKAGE_ICON.PNG"
-base64 -d "$template/PACKAGE_ICON_256.PNG.base64" > "$stage/PACKAGE_ICON_256.PNG"
+cp "$template/package/ui/images/dsmctl_64.png" "$stage/PACKAGE_ICON.PNG"
+cp "$template/package/ui/images/dsmctl_256.png" "$stage/PACKAGE_ICON_256.PNG"
 printf '%s\n' "Apache License 2.0; see https://www.apache.org/licenses/LICENSE-2.0" > "$stage/LICENSE"
 
 cp -R "$template/package/." "$package_stage/"
 sed "s/__VERSION__/$package_version/g" "$template/package/project/compose.yaml.template" > "$package_stage/project/compose.yaml"
 rm "$package_stage/project/compose.yaml.template"
+mkdir -p "$package_stage/bin"
+(
+  cd "$repo_root"
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false \
+    -ldflags="-s -w -buildid=" \
+    -o "$package_stage/bin/dsmctl-synology-auth" ./cmd/dsmctl-synology-auth
+)
 docker tag "$image_reference" "dsmctl-gateway:$package_version"
 docker save -o "$work/image.raw.tar" "dsmctl-gateway:$package_version"
 mkdir "$work/image"
@@ -55,10 +62,17 @@ cat > "$package_stage/image-metadata.json" <<EOF
 {"image_id":"$image_id","image_reference":"dsmctl-gateway:$package_version","platform":"linux/amd64","revision":"$revision","version":"$package_version"}
 EOF
 
-chmod 0755 "$stage/scripts/"*
-tar --sort=name --mtime="@$source_epoch" --owner=0 --group=0 --numeric-owner -C "$package_stage" -cf - . | gzip -n > "$stage/package.tgz"
+chmod 0755 "$package_stage/bin/dsmctl-synology-auth" "$stage/scripts/"*
+# NTFS does not persist a Unix executable bit, so record the host bridge mode
+# explicitly instead of relying on the build host's filesystem metadata.
+tar --sort=name --mtime="@$source_epoch" --owner=0 --group=0 --numeric-owner \
+  --exclude='./bin/dsmctl-synology-auth' -C "$package_stage" -cf "$work/package.raw.tar" .
+tar --mtime="@$source_epoch" --owner=0 --group=0 --numeric-owner --mode=0755 \
+  -C "$package_stage" -rf "$work/package.raw.tar" ./bin/dsmctl-synology-auth
+gzip -n < "$work/package.raw.tar" > "$stage/package.tgz"
 spk="$output_dir/dsmctl-gateway-$package_version-x86_64.spk"
-tar --sort=name --mtime="@$source_epoch" --owner=0 --group=0 --numeric-owner -C "$stage" -cf "$spk" .
+tar --sort=name --mtime="@$source_epoch" --owner=0 --group=0 --numeric-owner -C "$stage" -cf "$spk" \
+  INFO LICENSE PACKAGE_ICON.PNG PACKAGE_ICON_256.PNG WIZARD_UIFILES conf package.tgz scripts
 
 cp "$package_stage/image.tar.gz" "$output_dir/dsmctl-gateway-$package_version-image.tar.gz"
 cp "$repo_root/deploy/linux/compose.yaml" "$output_dir/compose.yaml"

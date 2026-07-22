@@ -81,10 +81,15 @@ Synology SPK adapter ---+
 ```
 
 - Deployment adapters own process lifecycle, ports, reverse-proxy/TLS wiring,
-  and persistent mounts. Gateway administrator authentication stays inside the
-  platform-neutral core and is identical on Linux and Synology. Deployment
-  adapters never construct DSM
-  requests, resolve DSM operation variants, or bypass the application layer.
+  and persistent mounts. Gateway administrator sessions, local credentials,
+  authorization, and audit stay inside the platform-neutral core. Generic
+  Linux requires the local administrator. A deployment may additionally
+  supply a short-lived signed administrator assertion through the abstract
+  WI-091 interface; only the Synology SPK adapter may derive that assertion
+  from a current DSM `administrators`-group Web Login. The adapter never sends
+  DSM cookies or passwords into the container, and it never constructs DSM
+  management requests, resolves DSM operation variants, or bypasses the
+  application layer.
 - The core gateway container is platform-neutral. It must not depend on DSM
   paths, commands, package environment variables, Container Manager control,
   the Docker socket, or a desktop keyring.

@@ -1,7 +1,18 @@
 #!/bin/sh
 set -eu
 
-for required in "${SYNOPKG_PKGHOME:?}/secrets/master.key"; do
+umask 077
+home_dir="${SYNOPKG_PKGHOME:?}"
+if [ ! -f "$home_dir/dsm-sso.key" ]; then
+    if [ -f "$home_dir/secrets/platform.key" ]; then
+        mv "$home_dir/secrets/platform.key" "$home_dir/dsm-sso.key"
+    else
+        dd if=/dev/urandom of="$home_dir/dsm-sso.key" bs=32 count=1 2>/dev/null
+    fi
+fi
+chmod 0600 "$home_dir/dsm-sso.key"
+
+for required in "$home_dir/master.key" "$home_dir/dsm-sso.key"; do
     if [ ! -f "$required" ] || [ "$(wc -c < "$required" | tr -d ' ')" != "32" ]; then
         echo "Required private key is missing or invalid: $required" > "${SYNOPKG_TEMP_LOGFILE:-/dev/stderr}"
         exit 1

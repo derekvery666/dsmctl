@@ -41,6 +41,7 @@ type AdministratorStatus struct {
 type administratorSessionRecord struct {
 	ID        string    `json:"id"`
 	Username  string    `json:"username"`
+	Provider  string    `json:"provider,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	ExpiresAt time.Time `json:"expires_at"`
 }
@@ -135,7 +136,7 @@ func (r *Repository) CreateAdministrator(ctx context.Context, username, password
 		return "", AdministratorSession{}, err
 	}
 	password = ""
-	token, digest, session, err := r.newAdministratorSession(username)
+	token, digest, session, err := r.newAdministratorSession(username, AdminProviderLocal)
 	if err != nil {
 		return "", AdministratorSession{}, err
 	}
@@ -159,6 +160,46 @@ func (r *Repository) CreateAdministrator(ctx context.Context, username, password
 		return "", AdministratorSession{}, err
 	}
 	return token, publicAdministratorSession(session), nil
+}
+
+// ConfigureAdministrator creates the optional local fallback credential
+// without replacing the already-authenticated DSM browser session. It is used
+// only by an authenticated administration endpoint; the repository still
+// enforces single-account, atomic first-writer-wins semantics.
+func (r *Repository) ConfigureAdministrator(ctx context.Context, username, password string) (AdministratorStatus, error) {
+	if err := ctx.Err(); err != nil {
+		return AdministratorStatus{}, err
+	}
+	username, err := normalizeAdministratorUsername(username)
+	if err != nil {
+		return AdministratorStatus{}, err
+	}
+	if err := validateNewAdministratorPassword(password); err != nil {
+		return AdministratorStatus{}, err
+	}
+	verifier, err := r.hashPassword(ctx, password)
+	password = ""
+	if err != nil {
+		return AdministratorStatus{}, err
+	}
+	initializedAt := r.now().UTC()
+	err = r.db.Update(func(tx *bolt.Tx) error {
+		meta := tx.Bucket(bucketMeta)
+		if administratorConfigured(meta) {
+			return ErrAlreadyInitialized
+		}
+		if err := meta.Put(keyAdminUsername, []byte(username)); err != nil {
+			return err
+		}
+		if err := meta.Put(keyAdminPassword, []byte(verifier)); err != nil {
+			return err
+		}
+		return meta.Put(keyAdminInitializedAt, []byte(initializedAt.Format(time.RFC3339Nano)))
+	})
+	if err != nil {
+		return AdministratorStatus{}, err
+	}
+	return AdministratorStatus{Initialized: true, Username: username, InitializedAt: initializedAt}, nil
 }
 
 func (r *Repository) LoginAdministrator(ctx context.Context, username, password string) (string, AdministratorSession, error) {
@@ -185,7 +226,7 @@ func (r *Repository) LoginAdministrator(ctx context.Context, username, password 
 	if usernameErr != nil || passwordErr != nil || normalized != storedUsername || verifier == "" || !valid {
 		return "", AdministratorSession{}, ErrUnauthorized
 	}
-	token, digest, session, err := r.newAdministratorSession(storedUsername)
+	token, digest, session, err := r.newAdministratorSession(storedUsername, AdminProviderLocal)
 	if err != nil {
 		return "", AdministratorSession{}, err
 	}
@@ -197,6 +238,30 @@ func (r *Repository) LoginAdministrator(ctx context.Context, username, password 
 		return r.putBoundedAdministratorSession(tx.Bucket(bucketAdminSessions), digest, session)
 	})
 	if err != nil {
+		return "", AdministratorSession{}, err
+	}
+	return token, publicAdministratorSession(session), nil
+}
+
+// CreateDSMAdministratorSession creates a digest-only Gateway browser session
+// for a DSM subject already verified by the deployment assertion adapter.
+// Every later use is additionally bound to a fresh matching assertion by the
+// HTTP administration boundary.
+func (r *Repository) CreateDSMAdministratorSession(ctx context.Context, subject string) (string, AdministratorSession, error) {
+	if err := ctx.Err(); err != nil {
+		return "", AdministratorSession{}, err
+	}
+	if err := validateExternalAdministratorSubject(subject); err != nil {
+		return "", AdministratorSession{}, err
+	}
+	subject = strings.TrimSpace(subject)
+	token, digest, session, err := r.newAdministratorSession(subject, AdminProviderDSM)
+	if err != nil {
+		return "", AdministratorSession{}, err
+	}
+	if err := r.db.Update(func(tx *bolt.Tx) error {
+		return r.putBoundedAdministratorSession(tx.Bucket(bucketAdminSessions), digest, session)
+	}); err != nil {
 		return "", AdministratorSession{}, err
 	}
 	return token, publicAdministratorSession(session), nil
@@ -252,8 +317,20 @@ func (r *Repository) AuthenticateAdministratorSession(ctx context.Context, token
 		if value == nil || json.Unmarshal(value, &record) != nil {
 			return ErrUnauthorized
 		}
-		meta := tx.Bucket(bucketMeta)
-		if validateAdministratorRecord(meta) != nil || record.Username != string(meta.Get(keyAdminUsername)) || !r.now().UTC().Before(record.ExpiresAt) {
+		if !r.now().UTC().Before(record.ExpiresAt) {
+			return ErrUnauthorized
+		}
+		switch normalizedAdministratorProvider(record.Provider) {
+		case AdminProviderLocal:
+			meta := tx.Bucket(bucketMeta)
+			if validateAdministratorRecord(meta) != nil || record.Username != string(meta.Get(keyAdminUsername)) {
+				return ErrUnauthorized
+			}
+		case AdminProviderDSM:
+			if validateExternalAdministratorSubject(record.Username) != nil {
+				return ErrUnauthorized
+			}
+		default:
 			return ErrUnauthorized
 		}
 		return nil
@@ -328,7 +405,7 @@ func (r *Repository) RevokeOtherAdministratorSessions(ctx context.Context, sessi
 	})
 }
 
-func (r *Repository) newAdministratorSession(username string) (string, []byte, administratorSessionRecord, error) {
+func (r *Repository) newAdministratorSession(username, provider string) (string, []byte, administratorSessionRecord, error) {
 	token, err := randomToken(32)
 	if err != nil {
 		return "", nil, administratorSessionRecord{}, err
@@ -339,7 +416,7 @@ func (r *Repository) newAdministratorSession(username string) (string, []byte, a
 	}
 	now := r.now().UTC()
 	digest := sha256.Sum256([]byte(token))
-	return token, digest[:], administratorSessionRecord{ID: id, Username: username, CreatedAt: now, ExpiresAt: now.Add(AdminSessionTTL)}, nil
+	return token, digest[:], administratorSessionRecord{ID: id, Username: username, Provider: provider, CreatedAt: now, ExpiresAt: now.Add(AdminSessionTTL)}, nil
 }
 
 func putAdministratorSession(bucket *bolt.Bucket, digest []byte, session administratorSessionRecord) error {
@@ -407,7 +484,23 @@ func deleteOtherAdministratorSessions(bucket *bolt.Bucket, keep []byte) error {
 }
 
 func publicAdministratorSession(record administratorSessionRecord) AdministratorSession {
-	return AdministratorSession{ID: record.ID, Username: record.Username, CreatedAt: record.CreatedAt, ExpiresAt: record.ExpiresAt}
+	return AdministratorSession{ID: record.ID, Username: record.Username, Provider: normalizedAdministratorProvider(record.Provider), CreatedAt: record.CreatedAt, ExpiresAt: record.ExpiresAt}
+}
+
+func normalizedAdministratorProvider(provider string) string {
+	if strings.TrimSpace(provider) == "" {
+		// Session records written before WI-091 were all local sessions.
+		return AdminProviderLocal
+	}
+	return strings.TrimSpace(provider)
+}
+
+func validateExternalAdministratorSubject(subject string) error {
+	subject = strings.TrimSpace(subject)
+	if subject == "" || len(subject) > 256 || strings.ContainsAny(subject, "\r\n\x00") {
+		return errors.New("external administrator subject is invalid")
+	}
+	return nil
 }
 
 func (r *Repository) hashPassword(ctx context.Context, password string) (string, error) {

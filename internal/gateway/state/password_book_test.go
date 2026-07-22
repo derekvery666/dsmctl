@@ -76,6 +76,47 @@ func TestPasswordBookMultiAccount(t *testing.T) {
 	_ = rev
 }
 
+func TestSavePrimaryPasswordAndSessionIsAtomic(t *testing.T) {
+	repo, _ := openTestRepository(t)
+	ctx := context.Background()
+	profile, err := repo.CreateProfile(ctx, ProfileInput{Name: "nas", URL: "https://nas.example:5001"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSession := credentials.SessionCredential{
+		SID: "password-sid", SynoToken: "token", Account: "admin",
+		IssuedAt: time.Now().UTC(), LastVerified: time.Now().UTC(),
+	}
+	revision, err := repo.SavePasswordForAccountWithSession(ctx, "nas", profile.Revision, "admin", "admin-pw", credentials.TrustedDevice{}, wantSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repo.Session(ctx, "nas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.SID != wantSession.SID || stored.SynoToken != wantSession.SynoToken || stored.Account != "admin" {
+		t.Fatalf("stored session = %#v", stored)
+	}
+	if state, err := repo.Profile(ctx, "nas"); err != nil || !state.PasswordStored || !state.SessionStored || state.Username != "admin" {
+		t.Fatalf("profile after atomic enrollment = %#v, err=%v", state, err)
+	}
+
+	if _, err := repo.SavePasswordForAccountWithSession(ctx, "nas", revision, "backup", "backup-pw", credentials.TrustedDevice{}, credentials.SessionCredential{SID: "wrong-sid", Account: "backup"}); err == nil {
+		t.Fatal("secondary password unexpectedly accepted a runtime session")
+	}
+	after, err := repo.Profile(ctx, "nas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Revision != revision {
+		t.Fatalf("rejected secondary session advanced revision to %d, want %d", after.Revision, revision)
+	}
+	if _, err := repo.RevealPasswordForAccount(ctx, "nas", "backup"); err == nil {
+		t.Fatal("rejected secondary session still stored its password")
+	}
+}
+
 // A password stored before account labels existed (empty Account metadata) still
 // appears in the book as the primary account, reporting the profile login.
 func TestPasswordBookLegacyPrimaryFallsBackToUsername(t *testing.T) {

@@ -28,6 +28,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/gateway/state"
 	"github.com/ychiu1211/dsmctl/internal/remotepolicy"
 	"github.com/ychiu1211/dsmctl/internal/runtime"
+	"github.com/ychiu1211/dsmctl/internal/synology"
 	"github.com/ychiu1211/dsmctl/internal/webassets"
 )
 
@@ -35,6 +36,43 @@ type discovererFunc func(context.Context, discovery.Query) (application.Discover
 
 func (fn discovererFunc) DiscoverDevices(ctx context.Context, query discovery.Query) (application.DiscoverResult, error) {
 	return fn(ctx, query)
+}
+
+func TestStoredPasswordConnectErrorClassification(t *testing.T) {
+	tests := []struct {
+		name        string
+		err         error
+		status      int
+		code        string
+		messagePart string
+	}{
+		{name: "otp", err: fmt.Errorf("wrapped: %w", &synology.OTPRequiredError{}), status: http.StatusConflict, code: "stored_password_otp_required", messagePart: "one-time password"},
+		{name: "password", err: fmt.Errorf("wrapped: %w", &synology.APIError{API: "SYNO.API.Auth", Method: "login", Code: 400}), status: http.StatusConflict, code: "stored_password_rejected", messagePart: "account or password"},
+		{name: "disabled", err: &synology.APIError{API: "SYNO.API.Auth", Method: "login", Code: 401}, status: http.StatusConflict, code: "stored_password_account_disabled", messagePart: "disabled"},
+		{name: "blocked", err: &synology.APIError{API: "SYNO.API.Auth", Method: "login", Code: 407}, status: http.StatusConflict, code: "stored_password_ip_blocked", messagePart: "blocked"},
+		{name: "transport", err: errors.New("private transport detail"), status: http.StatusBadGateway, code: "stored_password_connection_failed", messagePart: "could not establish"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			writeStoredPasswordConnectError(recorder, test.err)
+			if recorder.Code != test.status {
+				t.Fatalf("status = %d, want %d", recorder.Code, test.status)
+			}
+			var body map[string]string
+			if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if body["code"] != test.code || !strings.Contains(body["error"], test.messagePart) {
+				t.Fatalf("body = %#v", body)
+			}
+			for _, secret := range []string{"private transport detail", "passwd", "otp_code", "_sid", "synotoken"} {
+				if strings.Contains(strings.ToLower(recorder.Body.String()), strings.ToLower(secret)) {
+					t.Fatalf("response leaked %q: %s", secret, recorder.Body.String())
+				}
+			}
+		})
+	}
 }
 
 func TestAuthenticatedLANDiscovery(t *testing.T) {
@@ -559,7 +597,7 @@ func TestAdminUIHasNoEmbeddedCredential(t *testing.T) {
 	if recorder.Header().Get("Content-Security-Policy") == "" {
 		t.Fatal("UI response has no content security policy")
 	}
-	for _, forbidden := range []string{"sessionStorage", "admin_token", "platform assertion", "bootstrap token", "--blue:", "--navy:", "window.prompt", "prompt(", `value="nas.admin"`, `onclick="setDefault`, `id="profileNextStep"`, `id="tokenNAS"`, `show(JSON.stringify(await api`, `async function copyText(value){`, `<div class="table-wrap"><table><thead><tr><th data-i18n="name">Name</th><th data-i18n="address"`, `id="profileDialog"`, `function openProfileEdit(`, `data-i18n="connectClient"`, `data-i18n="createConnection"`, `data-i18n="connectionCreated"`, `id="tls"`, `id="fingerprint"`, `function toggleFingerprint`, `confirmWizardTrust`} {
+	for _, forbidden := range []string{"sessionStorage", "admin_token", "platform assertion", "bootstrap token", "--blue:", "--navy:", "window.prompt", "prompt(", `value="nas.admin"`, `onclick="setDefault`, `id="profileNextStep"`, `id="tokenNAS"`, `show(JSON.stringify(await api`, `async function copyText(value){`, `<div class="table-wrap"><table><thead><tr><th data-i18n="name">Name</th><th data-i18n="address"`, `id="profileDialog"`, `function openProfileEdit(`, `data-i18n="connectClient"`, `data-i18n="createConnection"`, `data-i18n="connectionCreated"`, `id="tls"`, `id="fingerprint"`, `id="timeout"`, `id="nasRole"`, `for="timeout"`, `for="nasRole"`, `function toggleFingerprint`, `confirmWizardTrust`, `setTimeout(discoverLAN`} {
 		if strings.Contains(recorder.Body.String(), forbidden) {
 			t.Fatalf("UI contains superseded administrator mechanism %q", forbidden)
 		}
@@ -576,8 +614,15 @@ func TestAdminUIHasNoEmbeddedCredential(t *testing.T) {
 		`.view>.panel+.panel{margin-top:18px}`, `.button-row+.notice{margin-top:16px}`,
 		`.row-menu-body`, `.wizard-steps`, `.choice-grid`, `.diagnostic-list`, `.panel-stack{display:grid;gap:18px}`,
 		`.profile-list-head,.profile-list-row`, `.profile-list-row{grid-template-columns:1fr`, `<div id="profiles" role="list">`,
+		`.profile-list #profiles>.empty-state,.credential-list>.empty-state{padding:40px 20px}`,
 		`.profile-subline`, `id="nasSourceStep"`, `id="nasConnectionStep" hidden`, `id="nasSignInStep" hidden`, `id="nasStepThree"`,
-		`id="discoverLANButton"`, `id="discoveredNAS"`, `id="nasSourceAddress"`, `onclick="discoverLAN()"`, `onclick="useManualNAS()"`, `api('/discovery'`,
+		`id="discoverLANButton"`, `id="lanDiscoveryBody" class="discovery-body" hidden`, `id="discoveredNAS"`, `id="nasSourceAddress"`, `onclick="discoverLAN()"`, `onclick="useManualNAS()"`, `api('/discovery'`,
+		`id="discoveryFilter"`, `oninput="filterDiscoveredNAS()"`, `function discoverySearchText(device)`, `function filterDiscoveredNAS()`, `wizardDiscoveredDevices=[]`, `device.serial`, `device.mac_address`, `discoveryNoMatches`,
+		`#nasWizard.discovery-expanded{height:min(760px,calc(100dvh - 32px));max-height:calc(100dvh - 32px);overflow:hidden}`,
+		`#nasWizard.discovery-expanded .discovered-list{min-height:84px;max-height:none;flex:1;overscroll-behavior:contain}`,
+		`classList.toggle('discovery-expanded',step===1&&wizardDiscoveryStarted)`, `function deviceMACAddresses(device)`, `className='device-identifiers'`,
+		`serial.textContent='S/N '+device.serial`, `macs.length>1?' +'+(macs.length-1):''`, `mac.title=macs.join(', ')`,
+		`timeout_seconds:wizardProfile?Number(wizardProfile.timeout_seconds||0):0`, `role:wizardProfile?(wizardProfile.role||'managed'):'managed'`, `timeout_seconds:0,role:'managed'`,
 		`id="nasConnectionSubmit"`, `id="wizardConnectionURL"`, `id="wizardConnectionTLS"`, `function tlsModeLabel(mode)`, `function persistWizardConnection(input)`,
 		`data-i18n="automaticTLS"`, `function isTLSChallenge(error)`, `function resolveTLSChallenge(profile,error)`, `certificate_trust_required`, `certificate_pin_mismatch`, `api('/profiles/'+encodeURIComponent(profile.name)+'/tls'`,
 		`summary.setAttribute('aria-haspopup','menu')`, `menu.setAttribute('role','menu')`, `document.querySelectorAll('.row-menu[open]')`,
@@ -594,7 +639,12 @@ func TestAdminUIHasNoEmbeddedCredential(t *testing.T) {
 		`value="365" selected`, `value="nas.read" checked`, `value="nas.plan" checked`, `value="nas.apply" checked`, `value="lan.discover" checked`,
 		`error.payload=value`, `location.pathname.replace(/\/admin\/?$/,'/mcp')`, `transport:'streamable-http'`, `show(message)`,
 		`id="credentialDialog"`, `id="approvalRequests"`, `id="auditRows"`, `confirm_new_password`,
+		`id="dsmLoginOption"`, `onclick="loginWithDSM()"`, `/dsm-login`, `id="localAdministratorDialog"`, `/local-administrator`,
 		`/credentials/password/reveal`,
+		`/credentials/password/connect`, `connectSavedPassword:'Connect with saved password'`, `savedPasswordReady:'Saved password ready'`,
+		`id="credentialStoreRow"`, `async function openNASPasswordLogin(profile`, `async function connectStoredPassword(profile)`,
+		`stored_password_connection_failed:'savedPasswordConnectionFailed'`, `savedPasswordConnectionFailed:'DSM could not use the saved credential.`,
+		`store=connect?$('credentialStore').checked:true`, `profile.password_stored?t('connectSavedPassword'):t('passwordSignIn')`,
 		`{label:t('openNAS'),action:()=>window.open(profile.url,'_blank','noopener')}`,
 		`openNAS:'Open NAS'`, `openNAS:'開啟 NAS'`,
 		`id="provisionDialog"`, `async function submitProvision(event)`, `/profiles/'+encodeURIComponent(name)+'/provision'`,
@@ -606,10 +656,18 @@ func TestAdminUIHasNoEmbeddedCredential(t *testing.T) {
 			t.Fatalf("UI is missing redesigned application shell marker %q", required)
 		}
 	}
+	manualIndex := strings.Index(recorder.Body.String(), `id="nasSourceAddress"`)
+	discoveryIndex := strings.Index(recorder.Body.String(), `id="discoverLANButton"`)
+	if manualIndex < 0 || discoveryIndex < 0 || manualIndex > discoveryIndex {
+		t.Fatalf("Add NAS wizard must put manual address entry before LAN discovery: manual=%d discovery=%d", manualIndex, discoveryIndex)
+	}
 	for _, externalAsset := range []string{"<script src=", `<img src="http`, `href="http`, `href="//`, "@import"} {
 		if strings.Contains(recorder.Body.String(), externalAsset) {
 			t.Fatalf("UI loads an external asset matching %q", externalAsset)
 		}
+	}
+	if strings.Contains(recorder.Body.String(), `if(acc.primary){let connect=document.createElement('button')`) {
+		t.Fatal("password vault page still exposes a connection action")
 	}
 }
 
@@ -736,6 +794,27 @@ func TestPasswordEnrollmentValidateOnlyDoesNotStore(t *testing.T) {
 	}
 	if updated.PasswordStored || updated.Username != "" || updated.Revision != profile.Revision {
 		t.Fatalf("validate-only mutated the profile: %#v", updated)
+	}
+
+	// The NAS-page variant retains the authenticated DSM session while still
+	// honoring the operator's choice not to retain the plaintext password.
+	connectBody := fmt.Sprintf(`{"account":"operator","expected_revision":%d,"password":"session-only-password","store":false,"connect":true}`, profile.Revision)
+	connected := performJSON(handler, http.MethodPost, "/admin/api/profiles/verify/credentials/password", connectBody, adminSession)
+	if connected.Code != http.StatusOK || !strings.Contains(connected.Body.String(), `"session_stored":true`) || !strings.Contains(connected.Body.String(), `"password_stored":false`) {
+		t.Fatalf("session-only connect = %d, body=%s", connected.Code, connected.Body.String())
+	}
+	updated, err = repository.Profile(context.Background(), "verify")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updated.SessionStored || updated.PasswordStored || updated.Username != "operator" || updated.Revision <= profile.Revision {
+		t.Fatalf("session-only connect profile = %#v", updated)
+	}
+	if loginCount != 2 {
+		t.Fatalf("DSM login count = %d, want validation plus session-only connect", loginCount)
+	}
+	if strings.Contains(connected.Body.String(), "session-only-password") {
+		t.Fatalf("session-only connect leaked password: %s", connected.Body.String())
 	}
 }
 

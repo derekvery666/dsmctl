@@ -80,11 +80,14 @@ Synology x86_64 SPK ------------+          |
                                                                     +--> NAS C
 ```
 
-The gateway container owns HTTP transport, local administrator identity,
-authorization, profile administration, persistent state, and audit records. It
-reuses the existing application layer for DSM behavior. Deployment adapters
-own process, port, TLS termination, and persistent mounts; they never identify
-the gateway administrator or construct DSM WebAPI requests.
+The gateway container owns HTTP transport, administrator sessions and local
+fallback credentials, authorization, profile administration, persistent state,
+and audit records. It reuses the existing application layer for DSM behavior.
+Deployment adapters own process, port, TLS termination, persistent mounts, and
+may present the optional WI-091 signed administrator assertion. Only the
+Synology adapter derives that assertion from DSM Web Login; the container sees
+the verified subject, never the DSM cookie or password. Adapters never
+construct DSM management WebAPI requests.
 
 ## Portability boundary
 
@@ -203,16 +206,26 @@ state; apply rejects a removed or materially changed profile.
 
 Administration is separate from MCP authorization.
 
-- Every deployment uses the same local administrator. While no administrator
+- Generic Linux requires the local administrator. While no administrator
   exists, each process start opens setup for one hour; expiry requires restart
   of the still-uninitialized process. The first transactional setup creates a
   normalized username, an Argon2id password verifier, and an expiring browser
   session, then permanently closes setup for that initialized state.
+- A fresh Synology SPK disables that unauthenticated setup endpoint and offers
+  only current DSM `administrators`-group Web Login. A DSM-authenticated
+  administrator may later configure the same single local account as a
+  fallback; upgraded installations preserve an existing local account and
+  offer both login methods.
 - Administration uses random browser sessions stored only as digests and sent
   through HttpOnly/SameSite cookies. Mutations require same-origin JSON plus a
   non-simple request header. Login/setup attempts are bounded in memory.
 - DSM browser sessions, DSM groups, forwarded identity headers, and the NAS
-  hosting the container do not authorize Gateway administration.
+  hosting the container do not directly authorize Gateway administration. The
+  sole DSM exception is WI-091: a loopback-only SPK bridge validates the
+  current DSM cookie with `authenticate.cgi`, verifies effective membership in
+  `administrators`, strips caller assertions and DSM cookies, and signs a
+  one-use assertion that the core verifies and binds to its own browser
+  session on every request.
 - The admin API supports profile CRUD, connection testing, web-login session
   enrollment (the administrator signs in at the NAS's own page, the browser
   relays the one-time code, and the gateway performs the code exchange and
@@ -339,10 +352,12 @@ The shipped Compose definitions must enforce or document equivalent controls:
 - non-root UID/GID;
 - read-only root filesystem;
 - `cap_drop: [ALL]` and `no-new-privileges`;
-- no Docker socket and no host network;
+- no Docker socket; generic deployments use no host network, while the
+  Synology adapter may use host networking only for LAN-scoped findhost UDP
+  broadcast and must bind HTTP exclusively to host loopback;
 - only `/data` writable and `/tmp` as bounded tmpfs;
 - CPU, memory, PID, and log-rotation limits;
-- loopback-only host port publication;
+- loopback-only host publication or listener;
 - pinned image identity and health check.
 
 The image contains one statically linked amd64 Go server in a minimal runtime
@@ -358,13 +373,15 @@ requirement justifies one.
 - The operator creates persistent data and secret files with documented UID
   ownership, supplies TLS/reverse proxy separately, and explicitly configures
   each NAS.
-- No platform SSO is assumed; the one-hour first-run page creates the local
-  administrator credential.
+- No platform SSO is assumed; the one-hour first-run page creates the required
+  local administrator credential.
 
 ### Synology x86_64
 
 - `arch="x86_64"` and `os_min_ver="7.2.1-69057"`.
-- Declare Container Manager `>=1432` through `PKG_DEPS`.
+- Declare Container Manager `>=1432` through `PKG_DEPS`. A separate
+  `DockerEngine` package is not a compatible substitute for the
+  `docker-project` worker provider.
 - Bundle the exact `linux/amd64` image as `image.tar.gz`; installation and
   ordinary start do not pull from a registry.
 - Use the official `docker-project` resource worker to preload, create,
@@ -376,10 +393,18 @@ requirement justifies one.
   so the long-running container remains non-root while package data and secret
   files remain unreadable to other users. Never solve an ownership mismatch by
   making the master key world-readable.
-- Publish the backend to host loopback only and register the DSM portal/reverse
+- Bind the backend to host loopback only and register the DSM portal/reverse
   proxy without automatically opening a firewall or router port.
-- Route the same local-administrator UI through the DSM portal and keep its
-  browser session separate from MCP bearer credentials and every NAS session.
+- Use host networking for the Synology Compose adapter so unprivileged
+  findhost UDP broadcast sees the NAS LAN interfaces. Keep all capabilities
+  dropped, do not mount the Docker socket, and never bind the Gateway HTTP
+  server to a LAN address.
+- Route the Admin UI through the DSM portal. The public portal targets a
+  package-user, loopback-only DSM authentication bridge; the container backend
+  remains on a separate loopback port. DSM-backed Gateway sessions require a
+  fresh matching signed assertion on every use and remain separate from MCP
+  bearer credentials and every downstream NAS session. The independent local
+  administrator is optional fallback state on Synology.
 
 ## Release and verification matrix
 

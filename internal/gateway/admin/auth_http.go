@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ychiu1211/dsmctl/internal/gateway/platformauth"
 	"github.com/ychiu1211/dsmctl/internal/gateway/state"
 )
 
@@ -178,6 +179,42 @@ func (h *Handler) login(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"session": session})
 }
 
+func (h *Handler) dsmLogin(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		methodNotAllowed(w, http.MethodPost)
+		return
+	}
+	if h.platformVerifier == nil {
+		http.NotFound(w, req)
+		return
+	}
+	identity, err := h.platformVerifier.Verify(req.Context(), req.Header.Get(platformauth.HeaderName))
+	if err != nil {
+		_ = h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "gateway_admin", Action: "admin.dsm_login", Outcome: "denied", Reason: "denied"})
+		writeError(w, http.StatusUnauthorized, "DSM administrator Web Login is required")
+		return
+	}
+	attemptKey := remoteAttemptKey(req, "dsm-login")
+	if !h.loginAttempts.Allow(attemptKey) {
+		writeError(w, http.StatusTooManyRequests, "too many login attempts")
+		return
+	}
+	if err := h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "gateway_admin", ActorID: "dsm:" + identity.Subject, Action: "admin.dsm_login", Outcome: "started"}); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "audit storage unavailable")
+		return
+	}
+	token, session, err := h.repository.CreateDSMAdministratorSession(req.Context(), identity.Subject)
+	if err != nil {
+		_ = h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "gateway_admin", ActorID: "dsm:" + identity.Subject, Action: "admin.dsm_login", Outcome: "failure"})
+		writeError(w, http.StatusServiceUnavailable, "DSM administrator session could not be created")
+		return
+	}
+	h.loginAttempts.Reset(attemptKey)
+	h.setAdministratorCookie(w, req, token, session.ExpiresAt)
+	_ = h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "gateway_admin", ActorID: "dsm:" + identity.Subject, Action: "admin.dsm_login", Outcome: "success"})
+	writeJSON(w, http.StatusOK, map[string]any{"session": session})
+}
+
 func (h *Handler) session(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodGet {
 		methodNotAllowed(w, http.MethodGet)
@@ -237,6 +274,38 @@ func (h *Handler) changePassword(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"password_changed": true, "other_sessions_revoked": true})
+}
+
+func (h *Handler) configureLocalAdministrator(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		methodNotAllowed(w, http.MethodPost)
+		return
+	}
+	var input struct {
+		Username        string `json:"username"`
+		Password        string `json:"password"`
+		ConfirmPassword string `json:"confirm_password"`
+	}
+	if err := decodeJSON(req, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if input.Password != input.ConfirmPassword {
+		input.Password, input.ConfirmPassword = "", ""
+		writeError(w, http.StatusBadRequest, "passwords do not match")
+		return
+	}
+	status, err := h.repository.ConfigureAdministrator(req.Context(), input.Username, input.Password)
+	input.Password, input.ConfirmPassword = "", ""
+	if err != nil {
+		if errors.Is(err, state.ErrAlreadyInitialized) {
+			writeError(w, http.StatusConflict, "local administrator is already configured")
+			return
+		}
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"administrator": status, "local_login_available": true})
 }
 
 func (h *Handler) revokeOtherSessions(w http.ResponseWriter, req *http.Request) {

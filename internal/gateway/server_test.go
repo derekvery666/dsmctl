@@ -213,6 +213,40 @@ func TestHealthAndReadinessAreLocal(t *testing.T) {
 	}
 }
 
+func TestAdminRootRedirectPreservesTrustedProxyPrefix(t *testing.T) {
+	server := newBoundaryTestServer(t, Options{AdminHandler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})})
+
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		prefix     string
+		wantStatus int
+		wantURL    string
+	}{
+		{name: "direct", method: http.MethodGet, path: "/", wantStatus: http.StatusTemporaryRedirect, wantURL: "/admin/"},
+		{name: "reverse proxy", method: http.MethodGet, path: "/", prefix: "/dsmctl", wantStatus: http.StatusTemporaryRedirect, wantURL: "/dsmctl/admin/"},
+		{name: "unsafe prefix", method: http.MethodGet, path: "/", prefix: "/dsmctl?next=evil", wantStatus: http.StatusTemporaryRedirect, wantURL: "/admin/"},
+		{name: "unknown path", method: http.MethodGet, path: "/missing", wantStatus: http.StatusNotFound},
+		{name: "method", method: http.MethodPost, path: "/", wantStatus: http.StatusMethodNotAllowed},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			req := httptest.NewRequest(test.method, "http://gateway.example.test"+test.path, nil)
+			req.Host = "gateway.example.test"
+			req.Header.Set("X-Forwarded-Prefix", test.prefix)
+			response := httptest.NewRecorder()
+			server.Handler().ServeHTTP(response, req)
+			if response.Code != test.wantStatus {
+				t.Fatalf("status = %d, want %d", response.Code, test.wantStatus)
+			}
+			if location := response.Header().Get("Location"); location != test.wantURL {
+				t.Fatalf("Location = %q, want %q", location, test.wantURL)
+			}
+		})
+	}
+}
+
 func TestConcurrencyLimitRejectsWithoutWaiting(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})

@@ -44,11 +44,23 @@ func TestPasswordBookAccountsAndAccountReveal(t *testing.T) {
 	primary := fmt.Sprintf(`{"account":"admin","expected_revision":%d,"password":"admin-pw"}`, profile.Revision)
 	if r := performJSON(handler, http.MethodPost, "/admin/api/profiles/book/credentials/password", primary, adminSession); r.Code != http.StatusOK {
 		t.Fatalf("primary enroll = %d %s", r.Code, r.Body.String())
+	} else if !strings.Contains(r.Body.String(), `"session_stored":true`) {
+		t.Fatalf("primary enrollment did not retain its DSM session: %s", r.Body.String())
+	}
+	if meta, err := repository.SessionMeta(ctx, "book"); err != nil || !meta.Present || meta.Account != "admin" {
+		t.Fatalf("primary session metadata = %#v, err=%v", meta, err)
 	}
 	after, _ := repository.Profile(ctx, "book")
 	secondary := fmt.Sprintf(`{"account":"backup","expected_revision":%d,"password":"backup-pw"}`, after.Revision)
 	if r := performJSON(handler, http.MethodPost, "/admin/api/profiles/book/credentials/password", secondary, adminSession); r.Code != http.StatusOK {
 		t.Fatalf("secondary enroll = %d %s", r.Code, r.Body.String())
+	} else if !strings.Contains(r.Body.String(), `"session_stored":false`) {
+		t.Fatalf("secondary enrollment gained a runtime session: %s", r.Body.String())
+	}
+
+	connected := performJSON(handler, http.MethodPost, "/admin/api/profiles/book/credentials/password/connect", `{}`, adminSession)
+	if connected.Code != http.StatusOK || !strings.Contains(connected.Body.String(), `"session_stored":true`) || strings.Contains(connected.Body.String(), "temporary-sid") {
+		t.Fatalf("connect stored password = %d %s", connected.Code, connected.Body.String())
 	}
 
 	// The accounts endpoint lists both entries (primary first) and never a password.
@@ -87,6 +99,20 @@ func TestPasswordBookAccountsAndAccountReveal(t *testing.T) {
 	}
 	if remaining, _ := repository.PasswordAccounts(ctx, "book"); len(remaining) != 1 || remaining[0].Account != "admin" {
 		t.Fatalf("post-delete book = %#v", remaining)
+	}
+}
+
+func TestConnectStoredPasswordRequiresPrimaryCredential(t *testing.T) {
+	dsm := newBookDSM(t)
+	defer dsm.Close()
+	handler, repository, manager, adminSession := newTestHandler(t)
+	defer manager.Close(context.Background())
+	if _, err := repository.CreateProfile(context.Background(), state.ProfileInput{Name: "empty", URL: dsm.URL}); err != nil {
+		t.Fatal(err)
+	}
+	response := performJSON(handler, http.MethodPost, "/admin/api/profiles/empty/credentials/password/connect", `{}`, adminSession)
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "no primary password") {
+		t.Fatalf("missing password connect = %d %s", response.Code, response.Body.String())
 	}
 }
 

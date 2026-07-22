@@ -7,11 +7,16 @@ mkdir -p "$backup_dir"
 if [ -f "${SYNOPKG_PKGVAR}/gateway.db" ]; then
     cp -p "${SYNOPKG_PKGVAR}/gateway.db" "$backup_dir/gateway.db"
 fi
-for key in master.key; do
-    if [ -f "${SYNOPKG_PKGHOME:?}/secrets/$key" ]; then
-        cp -p "${SYNOPKG_PKGHOME}/secrets/$key" "$backup_dir/$key"
-    fi
-done
+if [ -f "${SYNOPKG_PKGHOME:?}/master.key" ]; then
+    cp -p "${SYNOPKG_PKGHOME}/master.key" "$backup_dir/master.key"
+elif [ -f "${SYNOPKG_PKGHOME}/secrets/master.key" ]; then
+    cp -p "${SYNOPKG_PKGHOME}/secrets/master.key" "$backup_dir/master.key"
+fi
+if [ -f "${SYNOPKG_PKGHOME}/dsm-sso.key" ]; then
+    cp -p "${SYNOPKG_PKGHOME}/dsm-sso.key" "$backup_dir/dsm-sso.key"
+elif [ -f "${SYNOPKG_PKGHOME}/secrets/platform.key" ]; then
+    cp -p "${SYNOPKG_PKGHOME}/secrets/platform.key" "$backup_dir/dsm-sso.key"
+fi
 chmod -R go-rwx "$backup_dir"
 echo "Pre-upgrade recovery copy: $backup_dir" > "${SYNOPKG_TEMP_LOGFILE:-/dev/null}"
 exit 0

@@ -33,7 +33,8 @@ secured reverse-proxy endpoint, and pass the same gateway behavior suite.
   directory/UID setup, master-key creation, reverse-proxy
   requirements, backup guidance, upgrade, and uninstall instructions.
 - Build an x86_64-only SPK with `arch="x86_64"`, minimum DSM
-  `7.2.1-69057`, and a `ContainerManager>=1432` package dependency.
+  `7.2.1-69057`, and a `ContainerManager>=1432` package dependency. A separate
+  `DockerEngine` package does not satisfy the `docker-project` worker boundary.
 - Bundle the exact image as `image.tar.gz` and use Synology's `docker-project`
   worker to preload, create/recreate, start, stop, and remove the project.
 - Mount package persistent data at `/data`, mount the package-private master
@@ -41,9 +42,12 @@ secured reverse-proxy endpoint, and pass the same gateway behavior suite.
 - Resolve the DSM package user's dynamic UID/GID into the Compose project so
   the non-root container can read its private keys and write package data
   without widening host file permissions.
-- Publish the container port only to host loopback and register a DSM
+- Bind the container HTTP server only to host loopback and register a DSM
   portal/reverse proxy. Do not automatically modify DSM firewall, router, VPN,
   QuickConnect, or certificate settings.
+- Use host networking only in the Synology Compose adapter so the non-root
+  Gateway can send and receive LAN-scoped findhost UDP broadcast. Do not add
+  network capabilities or expose the HTTP listener on a LAN address.
 - Route the portable local-administrator setup/login UI through the DSM portal
   without deriving any Gateway identity or NAS credential from the host DSM.
 - Add Package Center lifecycle/status, install/upgrade/uninstall messaging,
@@ -93,7 +97,7 @@ secured reverse-proxy endpoint, and pass the same gateway behavior suite.
       installs on a supported x86_64 DSM with no registry access.
 - [ ] Package start, stop, status, NAS reboot, and restart correctly follow the
       Docker project while managed-NAS outages remain application health data.
-- [ ] The DSM portal reaches admin and MCP endpoints through TLS/reverse proxy;
+- [x] The DSM portal reaches admin and MCP endpoints through TLS/reverse proxy;
       the backend port is not reachable directly from another LAN host.
 - [ ] The DSM portal serves the same one-hour local-account setup, login Cookie,
       profile/vault/token models, and security behavior as generic Linux with
@@ -138,35 +142,71 @@ complete.
 
 ## Handoff
 
-Implementation and local verification are complete; real Synology hardware
-certification remains before this item can truthfully move to `done`.
+The Intel DSM 7.3 hardware path now installs and runs through the official
+workers. Broader hardware/lifecycle certification remains before this item can
+truthfully move to `done`.
 
-- Last known good state: WI-032 and WI-037 are complete. Generic Linux and Synology use the
-  same portable local-administrator setup/login flow and exact image. The SPK
-  owns only package lifecycle, master-key creation, offline image/project
-  resources, and loopback DSM portal wiring; there is no DSM authentication
-  adapter, platform assertion key, bootstrap secret, or implicit host-NAS
-  profile. The final presentation uses shared deep brand-blue and neutral slate
-  tokens and was revalidated in an isolated `linux/amd64` container.
-  Deterministic offline SPK assets, lifecycle scripts, release
-  workflow, supported matrix, and user documentation are present.
-- Verification: `go test ./... -count=1`, `go vet ./...`, and
-  `git diff --check` pass. Two fixed-input `linux/amd64` builds were identical
-  at image ID
-  `sha256:23bc4034b70d97d347ca87dfe0fa193bddfa5d1dba190bcd73207318bf5fa1d6`.
-  The hardened generic Docker lifecycle passed local setup, readiness, Cookie
-  controls, secret non-disclosure, and administrator-session persistence across
-  restart. Two SPK builds were byte-identical at SHA-256
-  `9d576f03f350fa9950eaffaef3cf010bf71144f2de5f11ff19080bf0cff45186`;
-  the offline x86_64 SPK structure/security validator passed with embedded
-  image archive SHA-256
-  `acc85497bf8a13688129b98ffe314dae190c28270f82722971cd4c0d4ab5b88b`.
-  Compose parsing, shell/JSON syntax, icon dimensions, mounted-key
-  non-disclosure, and container security inspection also pass locally.
-- Blocker: install/start/stop/reboot/portal/upgrade/uninstall and behavior tests
-  still require authorized real Intel and AMD x86_64 Synology systems across
-  the DSM versions claimed in `deploy/synology/SUPPORTED.md`. No ordinary
-  Docker result is recorded as a Container Manager or DSM portal pass.
-- Temporary resources: none. Test containers and temporary state/artifact
-  directories were removed; local Docker test image tags remain available for
-  follow-up without containing gateway secrets.
+- Last known good state: `dsmctl-gateway` 7.3.2-4 is installed and running on
+  DS3018xs `192.0.2.235`, DSM 7.3-81168, with Container Manager 24.0.2-1606.
+  DSM acquires `docker-project` before `postinst`, so `preinst` writes the
+  dynamic package UID/GID and stable FHS paths into the staged Compose `.env`.
+  Package home is mounted read-only at `/run/secrets`; `postinst` creates or
+  migrates `master.key`. DS3018xs lacks CPU CFS and PIDs cgroup controllers, so
+  the Synology Compose omits those unsupported settings while retaining the
+  enforced 256 MiB memory limit and 16 MiB `/tmp` tmpfs. The Synology adapter
+  uses host networking so findhost UDP broadcast sees the physical LAN, while
+  the HTTP listener remains restricted to host `127.0.0.1:18765` with a
+  non-root user, all capabilities dropped, no-new-privileges, and no Docker
+  socket.
+- Verification: the 7.3.2-4 image ID is
+  `sha256:91956123260915b7aed45339a87cefce351d20950e9f3993c3c4263dd31b0092`.
+  Two fixed-input 7.3.2-4 SPK builds were byte-identical at SHA-256
+  `486480005264b9552b43b2d4e30e817833956cc1d6576d2b996884fb2118fc12`,
+  and both passed `deploy/synology/validate-spk.sh` plus every release
+  checksum. Package Center completed the 7.3.2-3 to 7.3.2-4 upgrade and the
+  upgrade wizard confirmed that state and private-key recovery copies were
+  written. DSM 7.3's package status still reports stopped after its final
+  system stop trigger even though Package Center exposes Open, loopback health
+  is successful, and the replacement container owns its listener. Container
+  Manager reports `dsmctl-gateway` as `running(1)` and Docker reports `healthy`,
+  dynamic user `241224:241224`, read-only rootfs, memory `268435456`, cap-drop
+  `ALL`, no-new-privileges, and the bounded tmpfs. Local loopback and HTTPS
+  `/dsmctl/healthz` return `{"status":"ok"}`, `/dsmctl/` returns a prefix-safe
+  307 to `/dsmctl/admin/`, `/dsmctl/admin` returns 200, and
+  unauthenticated `/dsmctl/mcp` reaches the gateway and returns the expected
+  401 Bearer challenge. Database and key inodes survived stop/start and
+  upgrade; the 32-byte 0600 master-key SHA-256 remained unchanged. Final local
+  verification passed `go build -o bin/dsmctl-current.exe ./cmd/dsmctl`,
+  `go test ./... -count=1`, `go vet ./...`, shell syntax, and
+  `git diff --check`.
+- LAN discovery: the installed Gateway's Add NAS wizard completed a live
+  findhost scan from the container and displayed 141 Synology devices across
+  the lab LAN broadcast domain. The pre-fix bridge-network container could not
+  reach this broadcast domain. Desktop access to `192.0.2.235:18765` still fails while
+  NAS loopback and the Web Station HTTPS `/dsmctl/healthz` route both return
+  `{"status":"ok"}`, proving the discovery fix did not expose the backend
+  listener on the LAN.
+- Administration UI: the empty NAS Profile list now matches the Passwords
+  empty-state spacing. The corrected descendant selector applies 40 px top and
+  bottom padding through the intermediate `#profiles` list container; live
+  browser inspection measured the empty state at 220 px high with both paddings
+  present, and the action no longer touches the panel edge.
+- Desktop integration: the UI config declares Synology's required
+  `images/dsmctl_{0}.png` icon template and ships 16, 24, 32, 48, 64, 72, and
+  256 pixel variants of the canonical four-tile dsmctl mark. Package Center's
+  64/256 pixel icons use the same bytes. The Web Service resource also points
+  at `ui/images/dsmctl_{0}.png`; DSM copied all seven variants into the live
+  WebService shortcut directory, and the live 72-pixel file's SHA-256 exactly
+  matches the packaged icon. The main-menu entry is present. Its portal root
+  now redirects to the existing initialized Gateway login, proving the vault
+  state survived the upgrade. Local verification passed the full Go test
+  suite, `go vet`, shell syntax, JSON parsing, release checksums, and
+  `git diff --check`.
+- Blocker: NAS reboot, retain-data uninstall/reinstall, explicit delete-data
+  uninstall, DSM 7.2.1/7.2.2, and AMD x86_64 hardware remain unverified. No
+  reboot or destructive uninstall was performed on the shared lab NAS.
+- Temporary resources: none. Task Scheduler diagnostic task ID 3, diagnostic
+  logs, uploaded `/tmp` SPKs/Compose file, and the temporary root SSH key were
+  removed. The installed/running package and its intended pre-upgrade recovery
+  copies remain. Local Docker image tags and reproducible `dist/` artifacts
+  remain for follow-up and contain no gateway secrets.

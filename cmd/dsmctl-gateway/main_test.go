@@ -70,7 +70,7 @@ func TestManagedReadinessRequiresLocalAdministratorAndMountedKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer repository.Close()
-	ready := managedReadiness(repository, masterPath, sha256.Sum256(masterKey))
+	ready := managedReadiness(repository, masterPath, sha256.Sum256(masterKey), false)
 	if err := ready(context.Background()); err == nil {
 		t.Fatal("managed readiness accepted an uninitialized administrator")
 	}
@@ -85,5 +85,24 @@ func TestManagedReadinessRequiresLocalAdministratorAndMountedKey(t *testing.T) {
 	}
 	if err := ready(context.Background()); err == nil {
 		t.Fatal("managed readiness accepted a changed master key file")
+	}
+}
+
+func TestManagedReadinessAcceptsExternalAdministratorProvider(t *testing.T) {
+	directory := t.TempDir()
+	masterPath := filepath.Join(directory, "master.key")
+	masterKey := bytes.Repeat([]byte{7}, 32)
+	if err := os.WriteFile(masterPath, masterKey, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	repository, err := gatewaystate.Open(filepath.Join(directory, "gateway.db"), masterKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+
+	ready := managedReadiness(repository, masterPath, sha256.Sum256(masterKey), true)
+	if err := ready(context.Background()); err != nil {
+		t.Fatalf("managed readiness with external provider = %v", err)
 	}
 }
