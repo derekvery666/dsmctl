@@ -74,6 +74,11 @@ flowchart LR
   WI010 --> WI062["WI-062 CI matrix + live-test policy"]
   WI044 -. "release policy" .-> WI063["WI-063 CLI/MCP schema stability"]
   WI017 -. "sign the artifacts it ships" .-> WI064["WI-064 Release artifact signing"]
+  WI048 -. "connect-surface design review" .-> WI096["WI-096 Gateway connect UX + subpath docs"]
+  WI048 --> WI097["WI-097 Token least-privilege defaults"]
+  WI017 --> WI098["WI-098 Forwarded-header trust gating"]
+  WI048 --> WI099["WI-099 OAuth + TLS-posture hardening"]
+  WI098 --> WI099
   WI023["WI-023 LAN device discovery"]
   subgraph SEC["Security & networking (greenfield program)"]
     WI006 --> WI065["WI-065 Certificate management"]
@@ -212,6 +217,10 @@ flowchart LR
 | [WI-093](work-items/WI-093-nas-wizard-discovery-ergonomics.md) | P1 | `done` | G | WI-023, WI-047 | Put manual entry first, make LAN scanning explicit, and add multi-field search for large discovery result sets; shipped and live-verified on DSM with 168 results. |
 | [WI-094](work-items/WI-094-nas-discovery-dialog-layout.md) | P1 | `done` | G | WI-093 | Remove discovery's nested scrollbars and add compact serial/MAC identity to result cards; shipped and live-verified on DSM with 168 results in `7.3.2-9`. |
 | [WI-095](work-items/WI-095-simplify-nas-connection-wizard.md) | P1 | `done` | G | WI-094 | Remove role/timeout controls from the Add NAS wizard, preserve advanced values on edit, and make SPK upgrades converge healthy without Package Center Repair. |
+| [WI-096](work-items/WI-096-gateway-connect-ux-docs.md) | P2 | `proposed` | G | — | Gateway connect experience (design-review follow-up): add a subpath reverse-proxy recipe forwarding `X-Forwarded-Prefix` + doc note, and warn in the admin UI when the shown MCP endpoint is non-loopback `http://` (bearer token in cleartext). Docs/UI only. |
+| [WI-097](work-items/WI-097-gateway-token-least-privilege-defaults.md) | P1 | `proposed` | G | — | MCP-token least-privilege defaults (design-review follow-up): manual-token wizard defaults to observer/short-lived/no-NAS-preselected, OAuth scope-less default → `nas.read` only and excludes `role:target` NAS, and a server-side max-lifetime cap rejecting perpetual/over-long tokens. |
+| [WI-098](work-items/WI-098-gateway-forwarded-header-trust.md) | P1 | `proposed` | G | — | Gate `X-Forwarded-Proto/Host/Prefix` on `TrustedProxies` (design-review follow-up): a middleware choke point mirroring `clientIP`, so the advertised OAuth/admin origin ignores spoofable headers from untrusted peers; validate a trusted forwarded host against `AllowedHosts`; stop appending a caller-supplied prefix when the origin is pinned. Hardening/consistency — not third-party-exploitable in the loopback+nginx topology. |
+| [WI-099](work-items/WI-099-gateway-oauth-tls-hardening.md) | P2 | `proposed` | G | WI-098 | OAuth + TLS-posture hardening batch (design-review follow-up): admin list/prune + aging for dynamic client registrations (128-cap lockout), proxy-aware register rate-limit key, refresh-token reuse detection with family revocation, a non-loopback plaintext startup warning, and the `AdmitRemoteApply` `r.now()` clock-seam fix. |
 
 Parallel groups indicate likely file overlap. Items in different groups may run
 at the same time after checking their `touches` lists. Only one agent should
