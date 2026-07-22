@@ -40,7 +40,7 @@ On Windows, use `bin/dsmctl.exe` and `bin/dsmctl-mcp.exe`.
 
 ## Release version
 
-The current release is `7.3.2-14`. dsmctl versions use
+The current release is `7.3.2-18`. dsmctl versions use
 `DSM_MAJOR.DSM_MINOR.DSM_PATCH-DSMCTL_BUILD`: `7.3.2` names the latest DSM
 feature train certified by the release, while `13` is the monotonically
 increasing dsmctl build within that train. CLI, stdio MCP, gateway container,

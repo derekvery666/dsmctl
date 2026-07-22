@@ -11,7 +11,7 @@ See
 `deploy/synology/SUPPORTED.md` for the tested-release matrix.
 
 The SPK package version follows the shared dsmctl compatibility train. The
-current `7.3.2-14` means DSM compatibility train 7.3.2, dsmctl build 14; it does
+current `7.3.2-18` means DSM compatibility train 7.3.2, dsmctl build 18; it does
 not change the separate DSM 7.2.1 host-installation minimum above.
 
 ## Runtime boundary
@@ -212,13 +212,13 @@ in-toto provenance metadata), then on Linux run:
 
 ```sh
 SOURCE_DATE_EPOCH="$(git show -s --format=%ct)" \
-  deploy/synology/build-spk.sh 7.3.2-14 dsmctl-gateway:release dist
-deploy/synology/validate-spk.sh dist/dsmctl-gateway-7.3.2-14-x86_64.spk
+  deploy/synology/build-spk.sh 7.3.2-18 dsmctl-gateway:release dist
+deploy/synology/validate-spk.sh dist/dsmctl-gateway-7.3.2-18-x86_64.spk
 sha256sum -c dist/SHA256SUMS
 ```
 
-The release workflow is triggered by the matching `dsmctl-v7.3.2-14` tag (or an
-explicit `7.3.2-14` dispatch input) and refuses a version that differs from the
+The release workflow is triggered by the matching `dsmctl-v7.3.2-18` tag (or an
+explicit `7.3.2-18` dispatch input) and refuses a version that differs from the
 source version or the container image label.
 
 Package installation and model certification must be done on real Synology
@@ -229,12 +229,12 @@ the same Package Center backend every time (replace `nas` with the SSH config
 alias):
 
 ```sh
-scp -O dist/dsmctl-gateway-7.3.2-14-x86_64.spk \
-  nas:/tmp/dsmctl-gateway-7.3.2-14-x86_64.spk
-ssh nas 'sha256sum /tmp/dsmctl-gateway-7.3.2-14-x86_64.spk'
+scp -O dist/dsmctl-gateway-7.3.2-18-x86_64.spk \
+  nas:/tmp/dsmctl-gateway-7.3.2-18-x86_64.spk
+ssh nas 'sha256sum /tmp/dsmctl-gateway-7.3.2-18-x86_64.spk'
 ssh nas 'sudo env PATH=/usr/syno/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin \
   /usr/syno/bin/synopkg install \
-  /tmp/dsmctl-gateway-7.3.2-14-x86_64.spk'
+  /tmp/dsmctl-gateway-7.3.2-18-x86_64.spk'
 ssh nas 'sudo env PATH=/usr/syno/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin \
   /usr/syno/bin/synopkg status dsmctl-gateway'
 ```

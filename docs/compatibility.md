@@ -5,7 +5,7 @@ DSM release numbers and WebAPI versions are different compatibility axes. `dsmct
 ## Release compatibility train
 
 dsmctl's release version uses
-`DSM_MAJOR.DSM_MINOR.DSM_PATCH-DSMCTL_BUILD`. The current `7.3.2-14` release
+`DSM_MAJOR.DSM_MINOR.DSM_PATCH-DSMCTL_BUILD`. The current `7.3.2-18` release
 communicates DSM 7.3.2 as its latest certified feature train and build 13 as the
 current dsmctl release in that train. The build number increases monotonically
 for fixes and features that do not change the certified DSM train; moving the

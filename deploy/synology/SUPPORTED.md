@@ -1,6 +1,6 @@
 # Supported Synology matrix
 
-The dsmctl/SPK release version is currently `7.3.2-14`: DSM compatibility train
+The dsmctl/SPK release version is currently `7.3.2-18`: DSM compatibility train
 7.3.2, dsmctl build 13. That managed-NAS compatibility label is separate from
 the host DSM installation and hardware matrix below.
 
