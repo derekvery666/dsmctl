@@ -250,10 +250,11 @@ Public-distribution continuation verified 2026-07-23:
   removed. The versioned local `dsmctl-gateway:7.3.2-18` image remains as the
   intended build result. No NAS connection, install, or mutation was made.
 - Draft PR #2 carries the public release implementation on
-  `codex/public-release`. Both push/PR CI matrices passed. Build-only Actions
-  run `29976566084` at commit `97756ca` then passed the complete release
-  pipeline, including asset validation and artifact upload; tag-only
-  GHCR/GitHub prerelease steps were correctly skipped.
+  `codex/public-release`. Both push/PR CI matrices passed. After narrowing the
+  public scope, build-only Actions run `29984509190` at commit `033f248`
+  passed the complete CLI/SPK pipeline, including two deterministic SPK builds,
+  the Compose persistence smoke, exact eight-file asset validation, and
+  artifact upload; tag-only GitHub prerelease steps were correctly skipped.
 - Remaining publication gate: review and merge PR #2, push
   `dsmctl-v7.3.2-18`, and verify the public CLI/SPK prerelease links. WI-017
   still cannot become `done` until its hardware/lifecycle acceptance matrix
