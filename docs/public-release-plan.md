@@ -42,7 +42,8 @@ A new visitor should be able to:
 1. **Release channel:**
    - CLI: public preview after cross-platform smoke tests.
    - Synology SPK: preview only until WI-017's hardware/lifecycle matrix passes.
-   - Local stdio MCP and standalone Gateway images are not release assets.
+   - The local stdio `dsmctl-mcp` server now ships inside the CLI archives; the
+     standalone Gateway container image is not a release asset.
 2. **Initial CLI support boundary:** Windows amd64 and Linux amd64, matching
    the current CI runners. macOS and arm64 remain follow-up targets.
 

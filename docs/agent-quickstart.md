@@ -89,6 +89,16 @@ credential reference; they never belong in the request or plan.
 
 ## MCP workflow
 
+Two ways to connect a client:
+
+- **Local (stdio):** install the bundled `dsmctl-mcp` binary, run `dsmctl nas
+  add` + `dsmctl auth login`, then register it with `claude mcp add <name>
+  <path-to-dsmctl-mcp>`. No certificate or DNS — dsmctl pins the NAS's
+  certificate by fingerprint.
+- **Remote (gateway):** paste the gateway's HTTPS `/mcp` URL into an
+  OAuth-capable client. It must use HTTPS with a certificate the client trusts
+  (free on a domain-less NAS via Synology DDNS + Let's Encrypt).
+
 MCP clients receive the workflow in the server's initialize instructions. Use
 the tool schemas as the source of truth for arguments and follow this order:
 

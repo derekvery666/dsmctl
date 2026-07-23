@@ -172,7 +172,11 @@ the exact browser origin to `DSMCTL_ALLOWED_ORIGINS` before starting Compose.
 If a reverse proxy changes the public origin used by the browser, pass
 `--admin-public-url=https://gateway.example` as well.
 
-The MCP URL is `http://127.0.0.1:18765/mcp` for the default local deployment.
+`http://127.0.0.1:18765/mcp` is only the internal loopback backend and must sit
+behind the required HTTPS reverse proxy; it is not a URL clients connect to.
+Clients connect to the public HTTPS origin (plus any reverse-proxy path prefix)
+and `/mcp`, and must trust its certificate — on a NAS without its own domain,
+get one free via Synology DDNS + DSM's built-in Let's Encrypt.
 The administration page displays and copies the absolute URL, including a
 reverse-proxy path prefix when present. The recommended connection path is to
 paste only that URL into an OAuth-capable MCP client. The client discovers the

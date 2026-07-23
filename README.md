@@ -63,8 +63,9 @@ setup, OAuth/manual-token, approval, audit, and recovery workflows.
 ## Project and download status
 
 The CLI, stdio MCP server, Gateway, and x86_64 Synology SPK builder are in the
-repository today. The public release publishes only the `dsmctl` CLI and
-offline DSM package; the local stdio MCP server remains a source-build option.
+repository today. The public release publishes the `dsmctl` CLI and the local
+stdio `dsmctl-mcp` server (both bundled in the CLI archives) plus the offline
+DSM package.
 The current checksum-verified preview,
 [`dsmctl-v7.3.2-21`](https://github.com/derekvery666/dsmctl/releases/tag/dsmctl-v7.3.2-21),
 publishes the Package Center launch-path fix. The SPK remains a preview until
@@ -78,9 +79,9 @@ without overstating current certification.
 
 ## Preview downloads
 
-These version-bound `7.3.2-21` links are live. CLI archives contain `dsmctl`;
-the Synology package contains the Gateway Admin UI, remote HTTP MCP service,
-and its offline runtime image.
+These version-bound `7.3.2-21` links are live. CLI archives contain `dsmctl`
+and the local stdio `dsmctl-mcp` server; the Synology package contains the
+Gateway Admin UI, remote HTTP MCP service, and its offline runtime image.
 
 | Platform | Direct asset | Status |
 | --- | --- | --- |
@@ -436,11 +437,17 @@ For the recommended tool-call order and mutation approval contract, see the
 [AI agent quick start](docs/agent-quickstart.md). MCP clients also receive the
 same guidance in the server's initialize instructions.
 
-Run the stdio server:
+Run the stdio server directly, or register the bundled `dsmctl-mcp` binary with
+an MCP client that supports stdio, e.g. `claude mcp add <name> <path-to-dsmctl-mcp>`:
 
 ```console
 dsmctl-mcp --config C:\path\to\config.json
 ```
+
+This local path needs no certificate or DNS — dsmctl pins the NAS certificate by
+fingerprint. The remote gateway below is for clients that connect by URL and
+requires HTTPS with a certificate the client trusts (free on a domain-less NAS
+via Synology DDNS + Let's Encrypt).
 
 The portable HTTP gateway and its managed remote security boundary are
 documented in [the gateway guide](docs/gateway.md). Production amd64 Linux

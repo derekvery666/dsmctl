@@ -96,6 +96,9 @@ Synology NAS 上，也不會自動知道或信任 Host NAS；請用該 NAS 的 L
 
 前往「MCP 存取」。建議優先使用頁面上方的 **「使用 MCP URL 連線」**：在支援
 MCP OAuth 的用戶端新增遠端 MCP Server，只貼上頁面顯示的完整 `/mcp` URL。
+用戶端必須以 **HTTPS**、且憑證受該用戶端信任才能連上這台 Gateway；沒有網域的
+NAS 可用 **Synology DDNS（`xxxx.synology.me`）+ DSM 內建 Let's Encrypt** 免費
+取得受信任憑證，再用該主機名連線。
 用戶端第一次連線時，Gateway 會開啟瀏覽器授權頁；使用既有的 Gateway 管理員
 帳號密碼登入、核對 Client 名稱、回呼位置、NAS 與 Scope，再按「登入並允許」。
 用戶端會自動取得 Token，不必從管理頁手動複製秘密。

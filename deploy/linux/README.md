@@ -18,7 +18,10 @@ The published port is loopback-only; an HTTPS reverse proxy is required.
 5. Open `${DSMCTL_PUBLIC_ORIGIN}/admin` and create the local Gateway
    administrator username/password. Setup remains available until the first
    account is created; keep the backend loopback-only and the reverse proxy
-   restricted to a trusted deployment network until then.
+   restricted to a trusted deployment network until then. `${DSMCTL_PUBLIC_ORIGIN}`
+   must be an `https://` origin whose certificate MCP clients trust (e.g. a
+   Let's Encrypt certificate on the reverse proxy); clients connect to
+   `${DSMCTL_PUBLIC_ORIGIN}/mcp`.
 
 After initialization, the page shows the ordinary login form and issues an
 expiring HttpOnly/SameSite browser session. It never returns or asks the user

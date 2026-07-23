@@ -134,6 +134,11 @@ example when the same profile name will be re-added later.
 
 ## MCP
 
+The local stdio path uses the bundled `dsmctl-mcp` binary, registered with an
+MCP client via `claude mcp add <name> <path-to-dsmctl-mcp>`. It needs no
+certificate or DNS: the automatic fingerprint pin described above handles the
+NAS's self-signed certificate.
+
 The MCP server reuses the same stored web-login sessions as the CLI, a
 password stored with `auth password set`, and the password environment
 variable (`DSMCTL_PASSWORD_<NAME>` or the profile's `password_env`) as
