@@ -23,9 +23,9 @@ A new visitor should be able to:
 | Area | Current state | Consequence |
 | --- | --- | --- |
 | GitHub repository | The current GitHub repository is public | README assets and public Releases can be used as the landing page. |
-| GitHub Releases | No releases published | `releases/latest/download/...` and one-line installers must not be advertised yet. |
+| GitHub Releases | Preview `dsmctl-v7.3.2-18` is published | Version-bound CLI, installer, and DSM package links are live; `releases/latest` still excludes this prerelease. |
 | CI | Tests, builds, hardened container smoke tests, deterministic CLI archives, and the Gateway/SPK release build exist | The tag workflow can enforce the complete preview gate from one revision. |
-| Release workflow | `gateway-release.yml` builds and validates CLI archives and the offline SPK, publishes a GitHub prerelease, then downloads and verifies it again | No public asset exists until the first matching tag is pushed. No standalone container image or GHCR package is published. |
+| Release workflow | `gateway-release.yml` builds and validates CLI archives and the offline SPK, publishes a GitHub prerelease, then downloads and verifies it again | Tagged run `29984783750` published and re-verified all eight assets. No standalone container image or GHCR package is published. |
 | Synology package | Reproducible x86_64 `.spk` builder and validation script exist | Package Center manual-install preview is feasible. Broad support claims are not. |
 | Hardware certification | WI-017 still lacks AMD x86_64, DSM 7.2.x, reboot, and uninstall lifecycle coverage | Publish SPK builds as preview assets until the matrix is complete. |
 | Artifact signing | WI-064 is explicitly deferred | Start with SHA-256 checksums and honest documentation; do not claim signed provenance. |
@@ -217,17 +217,16 @@ Before broad promotion:
 ### Phase 0 — landing page and truthful status
 
 - Publish the revised README and refreshed fictional-data screenshots.
-- Keep source build as the only installation command.
+- Keep source-build instructions for contributors and local stdio MCP users.
 - License and canonical Go module path were resolved on 2026-07-23.
 
 ### Phase 1 — CLI preview
 
 - The Windows/Linux amd64 archive build and release publication job are ready.
 - Checksum-verifying POSIX and PowerShell installers are ready.
-- Publish a draft/prerelease, download every asset, run smoke tests, then make
-  the preview public.
-- Update the README from “source build today” to direct CLI download and
-  installer commands only after those URLs pass.
+- Preview `dsmctl-v7.3.2-18` is published; the workflow downloaded and
+  re-verified every asset after publication.
+- README direct CLI downloads and installer commands are live.
 
 ### Phase 2 — Synology SPK preview, then stable
 
