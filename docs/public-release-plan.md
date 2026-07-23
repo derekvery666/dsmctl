@@ -24,8 +24,8 @@ A new visitor should be able to:
 | --- | --- | --- |
 | GitHub repository | The current GitHub repository is public | README assets and public Releases can be used as the landing page. |
 | GitHub Releases | No releases published | `releases/latest/download/...` and one-line installers must not be advertised yet. |
-| CI | Tests, builds, a hardened container smoke test, and the Gateway/SPK release build exist | The project has most build inputs, but not a public release publication step. |
-| Release workflow | `gateway-release.yml` creates image/SPK/Compose/checksum/SBOM metadata and uploads an Actions artifact | Artifacts are retained inside Actions rather than attached to a GitHub Release. |
+| CI | Tests, builds, hardened container smoke tests, deterministic CLI archives, and the Gateway/SPK release build exist | The tag workflow can enforce the complete preview gate from one revision. |
+| Release workflow | `gateway-release.yml` builds and validates CLI/MCP archives, image/SPK/Compose, installers, checksum/SBOM metadata, publishes versioned GHCR tags and a GitHub prerelease, then downloads and verifies it again | No public asset exists until the first matching tag is pushed. GitHub creates the first GHCR package as private, so its one-time visibility change must happen before rerunning the failed publication gate. |
 | Synology package | Reproducible x86_64 `.spk` builder and validation script exist | Package Center manual-install preview is feasible. Broad support claims are not. |
 | Hardware certification | WI-017 still lacks AMD x86_64, DSM 7.2.x, reboot, and uninstall lifecycle coverage | Publish SPK builds as preview assets until the matrix is complete. |
 | Artifact signing | WI-064 is explicitly deferred | Start with SHA-256 checksums and honest documentation; do not claim signed provenance. |
@@ -37,18 +37,22 @@ A new visitor should be able to:
 1. **License:** Apache License 2.0.
 2. **Canonical module path:** `github.com/derekvery666/dsmctl`.
 
-## Decisions required before the first public binary release
+## Preview decisions recorded
 
-1. **Release channel.** The recommended starting policy is:
+1. **Release channel:**
    - CLI and stdio MCP: public preview after cross-platform smoke tests.
    - Gateway container: public preview after the generic Linux upgrade smoke.
    - Synology SPK: preview only until WI-017's hardware/lifecycle matrix passes.
-2. **Stable-release signing posture.** Checksums are sufficient for a preview,
+2. **Initial CLI support boundary:** Windows amd64 and Linux amd64, matching
+   the current CI runners. macOS and arm64 remain follow-up targets.
+
+## Decisions required before the first stable release
+
+1. **Stable-release signing posture.** Checksums are sufficient for a preview,
    but stable-release wording must either explicitly accept checksum-only
    distribution or reopen WI-064 and choose a signing root of trust.
-3. **Support boundary.** Confirm whether the first CLI release supports only
-   the tested OS/architectures or every successful Go cross-compile target.
-   The recommended first matrix is intentionally small and testable.
+2. **Stable SPK support boundary.** Complete WI-017's named Intel/AMD,
+   DSM-version, reboot, upgrade, and uninstall certification matrix.
 
 ## Release layout
 
@@ -67,22 +71,24 @@ stable across releases. The version remains in the release tag, binary
 | `dsmctl-windows-amd64.zip` | `dsmctl.exe`, `dsmctl-mcp.exe`, notices, and README excerpt | Preview |
 | `dsmctl-linux-amd64.tar.gz` | `dsmctl`, `dsmctl-mcp`, notices, and README excerpt | Preview |
 | `dsmctl-linux-arm64.tar.gz` | Same, after an arm64 smoke test exists | Follow-up |
-| `dsmctl-darwin-amd64.tar.gz` | CLI and stdio MCP for Intel macOS | Preview after smoke |
-| `dsmctl-darwin-arm64.tar.gz` | CLI and stdio MCP for Apple silicon | Preview after smoke |
-| `dsmctl-gateway-linux-amd64-image.tar.gz` | Offline OCI/Docker image | WI-017 preview |
-| `dsmctl-gateway-compose.tar.gz` | Compose file, environment example, support matrix, and recovery notes | WI-017 preview |
-| `dsmctl-gateway-x86_64.spk` | Offline Synology package including the exact Gateway image | WI-017 preview |
+| `dsmctl-darwin-amd64.tar.gz` | CLI and stdio MCP for Intel macOS | Follow-up after native smoke |
+| `dsmctl-darwin-arm64.tar.gz` | CLI and stdio MCP for Apple silicon | Follow-up after native smoke |
+| `dsmctl-gateway-VERSION-image.tar.gz` | Offline OCI/Docker image | WI-017 preview |
+| `compose.yaml` | Generic Linux Compose configuration | WI-017 preview |
+| `dsmctl-gateway-VERSION-x86_64.spk` | Offline Synology package including the exact Gateway image | WI-017 preview |
+| `install.sh` / `install.ps1` | Inspectable checksum-verifying installers | Preview with explicit version |
 | `SHA256SUMS` | SHA-256 for every downloadable byte | Required |
 | `dsmctl-gateway.spdx.json` | SPDX SBOM for the Gateway image | Required for Gateway/SPK |
 | `provenance.json` | Build metadata; clearly labeled unsigned while WI-064 is deferred | Preview only |
 | `SUPPORTED.md` | Exact DSM, model, Container Manager, and lifecycle evidence | Required for SPK |
 
-Direct links become available only after the first Release succeeds, for
+Stable `releases/latest/download/...` links become available only after a
+non-prerelease succeeds. Preview documentation uses the explicit tag, for
 example:
 
 ```text
-https://github.com/derekvery666/dsmctl/releases/latest/download/dsmctl-windows-amd64.zip
-https://github.com/derekvery666/dsmctl/releases/latest/download/dsmctl-linux-amd64.tar.gz
+https://github.com/derekvery666/dsmctl/releases/download/dsmctl-v7.3.2-18/dsmctl-windows-amd64.zip
+https://github.com/derekvery666/dsmctl/releases/download/dsmctl-v7.3.2-18/dsmctl-gateway-7.3.2-18-x86_64.spk
 ```
 
 Do not make the SPK a `latest` README link while it is a preview; link to the
@@ -90,9 +96,16 @@ Release page and support matrix so the user must see the certification status.
 
 ## Build and publication pipeline
 
-Extend the existing tag workflow after coordinating with the WI-017 owner.
-Keep one workflow responsible for creating the Release so two tag workflows do
-not race to publish or overwrite assets.
+The existing `gateway-release.yml` is the single owner for CLI, Gateway, SPK,
+GHCR, and GitHub Release publication so two tag workflows cannot race to
+publish or overwrite assets. Manual dispatch performs a non-publishing build;
+a matching `dsmctl-vX.Y.Z-N` tag creates or updates the prerelease.
+
+On the first tagged run, GHCR may create `dsmctl-gateway` with private
+visibility. The workflow deliberately stops before creating the GitHub Release
+unless an anonymous manifest read succeeds. An administrator must open the
+package settings, make the package public (an irreversible GitHub visibility
+change), and rerun the workflow. Later releases retain that public visibility.
 
 ```mermaid
 flowchart LR
@@ -102,9 +115,9 @@ flowchart LR
   Gateway --> SPK["Build and validate offline x86_64 SPK"]
   CLI --> Manifest["Checksums + release notes"]
   SPK --> Manifest
-  Manifest --> Draft["Create draft or prerelease"]
-  Draft --> Smoke["Download and smoke-test published assets"]
-  Smoke --> Publish["Promote after human review"]
+  Manifest --> Preview["Publish GHCR + GitHub prerelease"]
+  Preview --> Smoke["Download and re-verify every asset"]
+  Smoke --> Stable["Promote only after certification"]
 ```
 
 Required gates:
@@ -125,14 +138,15 @@ Required gates:
 
 ## Installer scripts
 
-Add installers only in the same change that publishes the matching stable
-asset names. Until then, the README should keep source-build instructions.
+The installers ship beside the matching versionless CLI archive names. Preview
+instructions require an explicit version; omitting it resolves only GitHub's
+latest stable release.
 
 ### POSIX installer
 
 `scripts/install.sh` should:
 
-- support Linux and macOS, beginning with the release's tested architectures;
+- support Linux amd64 initially; add macOS only with its native release smoke;
 - default to `$HOME/.local/bin`, with an explicit `--prefix` override;
 - resolve an explicit `--version` or the latest non-prerelease GitHub Release;
 - download the archive and `SHA256SUMS` over HTTPS;
@@ -146,7 +160,7 @@ Recommended documentation is inspect-then-run rather than an opaque pipe:
 ```console
 curl -fsSLO https://raw.githubusercontent.com/derekvery666/dsmctl/main/scripts/install.sh
 less install.sh
-sh install.sh
+sh install.sh --version 7.3.2-18 --install-mcp
 ```
 
 ### PowerShell installer
@@ -166,7 +180,7 @@ Recommended documentation:
 ```powershell
 Invoke-WebRequest https://raw.githubusercontent.com/derekvery666/dsmctl/main/scripts/install.ps1 -OutFile install.ps1
 Get-Content .\install.ps1
-.\install.ps1 -AddToPath
+.\install.ps1 -Version 7.3.2-18 -InstallMcp -AddToPath
 ```
 
 ## Synology package rollout
@@ -218,8 +232,8 @@ Before broad promotion:
 
 ### Phase 1 — CLI and stdio MCP preview
 
-- Add the cross-platform CLI archive jobs and release publication job.
-- Add checksum-verifying POSIX and PowerShell installers.
+- The Windows/Linux amd64 archive build and release publication job are ready.
+- Checksum-verifying POSIX and PowerShell installers are ready.
 - Publish a draft/prerelease, download every asset, run smoke tests, then make
   the preview public.
 - Update the README from “source build today” to direct CLI download and

@@ -7,12 +7,20 @@ owner: "codex"
 depends_on: [WI-014, WI-015, WI-016, WI-032, WI-033, WI-035, WI-037, WI-038, WI-081]
 parallel_group: G
 touches:
+  - .githooks/pre-commit
   - deploy/container
   - deploy/linux
   - deploy/synology
+  - deploy/release
   - .github/workflows
+  - scripts/build-cli-release.sh
+  - scripts/release_archive.go
+  - scripts/validate-release-assets.sh
+  - scripts/install.sh
+  - scripts/install.ps1
   - docs/gateway.md
   - docs/synology-package.md
+  - docs/public-release-plan.md
   - README.md
 ---
 
@@ -218,3 +226,31 @@ truthfully move to `done`.
   removed. The installed/running package and its intended pre-upgrade recovery
   copies remain. Local Docker image tags and reproducible `dist/` artifacts
   remain for follow-up and contain no gateway secrets.
+
+Public-distribution continuation verified 2026-07-23:
+
+- The single tag workflow now builds deterministic Windows/Linux amd64 CLI and
+  local-stdio-MCP archives, the existing Gateway image/offline SPK, installers,
+  Compose, checksums, SPDX SBOM, provenance, and support metadata. A manual
+  dispatch is build-only; `dsmctl-vX.Y.Z-N` publishes versioned and `preview`
+  GHCR tags plus a GitHub prerelease, downloads every published asset, and
+  re-runs the complete validator.
+- GHCR publication has an anonymous-manifest gate before GitHub Release
+  creation. GitHub creates a new container package as private, so the first run
+  is expected to stop after pushing; the package administrator must make
+  `dsmctl-gateway` public and rerun. This irreversible visibility choice is not
+  automated.
+- The release archiver unit tests and pinned `actionlint` passed. Two local
+  Windows/Linux CLI archive builds were byte-identical and contained only the
+  two executables, README, and Apache-2.0 text. The local `linux/amd64` scratch
+  image built successfully with the full license inside it. Two SPKs from that
+  image were byte-identical at SHA-256
+  `f91618a43e470eaf8f26fed793b5c27f648d47969c754582ec358df4e518426a`;
+  SPK structure/security validation and all generated checksums passed.
+- Temporary verification archives and the `wi017-verify` image tag were
+  removed. The versioned local `dsmctl-gateway:7.3.2-18` image remains as the
+  intended build result. No NAS connection, install, or mutation was made.
+- Remaining publication gate: commit/push the reviewed repository state, push
+  `dsmctl-v7.3.2-18`, make the first GHCR package public when the intentional
+  gate requests it, rerun, and verify the public prerelease links. WI-017 still
+  cannot become `done` until its hardware/lifecycle acceptance matrix passes.
