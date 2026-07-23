@@ -185,11 +185,24 @@ revoke an already-created dsmctl session.
   session remained
   authenticated after the host bridge/package was restarted and the page was
   reloaded. The two existing NAS profiles remained intact.
-- Remaining work: the MCP OAuth authorization page still needs the same
-  code-grant flow instead of the obsolete request-cookie validator. Fresh/reset
-  SPK behavior, non-administrator denial, optional local fallback enablement,
-  session expiry/revocation, and generic-container upgrade compatibility still
-  require the remaining acceptance tests before this item can be completed.
+- 2026-07-23: the MCP OAuth authorization page now authorizes with the Gateway
+  administrator session instead of the obsolete request-cookie validator. The
+  administrator session cookie covers the deployment prefix (legacy
+  `/admin`-scoped cookies are expired on each write) so the consent page can
+  authenticate an existing session in one click; without a session the DSM
+  Web Login button hands off to the Admin UI sign-in with a validated `next`
+  return to the consent request, reusing the live-verified code-grant flow.
+  The consent CSP also allows the registered client redirect origin in
+  `form-action` because Chromium enforces that directive against the redirect
+  target of the approval POST — with `form-action 'self'` the issued code
+  never left the consent page. Both fixes verified end to end against a local
+  managed gateway (session consent → loopback redirect → PKCE token exchange
+  → MCP initialize/tools/list/tools-call).
+- Remaining work: fresh/reset SPK behavior, non-administrator denial, optional
+  local fallback enablement, session expiry/revocation, and generic-container
+  upgrade compatibility still require the remaining acceptance tests before
+  this item can be completed. The session-consent flow still needs live SPK
+  verification on a NAS deployment.
 - NAS compatibility note: this DSM build's Container Manager status script
   invokes `synosystemctl` without an absolute path, but Package Center runs the
   status hook with a sanitized PATH. The one affected line now uses

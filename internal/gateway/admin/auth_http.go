@@ -124,22 +124,46 @@ func (h *Handler) setAdministratorCookie(w http.ResponseWriter, req *http.Reques
 		MaxAge: maxAge, HttpOnly: true,
 		Secure: h.secureCookie(req), SameSite: http.SameSiteStrictMode,
 	})
+	h.expireAdministratorCookieAt(w, req, h.legacyAdministratorCookiePath(req))
 }
 
 func (h *Handler) clearAdministratorCookie(w http.ResponseWriter, req *http.Request) {
+	h.expireAdministratorCookieAt(w, req, h.administratorCookiePath(req))
+	h.expireAdministratorCookieAt(w, req, h.legacyAdministratorCookiePath(req))
+}
+
+func (h *Handler) expireAdministratorCookieAt(w http.ResponseWriter, req *http.Request, path string) {
 	http.SetCookie(w, &http.Cookie{
-		Name: administratorCookie, Value: "", Path: h.administratorCookiePath(req), MaxAge: -1,
+		Name: administratorCookie, Value: "", Path: path, MaxAge: -1,
 		Expires: time.Unix(1, 0), HttpOnly: true, Secure: h.secureCookie(req),
 		SameSite: http.SameSiteStrictMode,
 	})
 }
 
+// The session cookie covers the whole deployment prefix because the OAuth
+// consent page authorizes with the same Gateway session (WI-091). Cookies
+// written by earlier releases at the narrower /admin path would shadow the
+// wider cookie on admin requests, so each write also expires that path.
 func (h *Handler) administratorCookiePath(req *http.Request) string {
-	prefix := strings.TrimRight(strings.TrimSpace(req.Header.Get("X-Forwarded-Prefix")), "/")
-	if prefix != "" && strings.HasPrefix(prefix, "/") && !strings.ContainsAny(prefix, "\r\n\\?") {
+	if prefix := forwardedPrefix(req); prefix != "" {
+		return prefix
+	}
+	return "/"
+}
+
+func (h *Handler) legacyAdministratorCookiePath(req *http.Request) string {
+	if prefix := forwardedPrefix(req); prefix != "" {
 		return prefix + "/admin"
 	}
 	return "/admin"
+}
+
+func forwardedPrefix(req *http.Request) string {
+	prefix := strings.TrimRight(strings.TrimSpace(req.Header.Get("X-Forwarded-Prefix")), "/")
+	if prefix != "" && strings.HasPrefix(prefix, "/") && !strings.ContainsAny(prefix, "\r\n\\?") {
+		return prefix
+	}
+	return ""
 }
 
 func (h *Handler) login(w http.ResponseWriter, req *http.Request) {

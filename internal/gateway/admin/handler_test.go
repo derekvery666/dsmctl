@@ -1201,12 +1201,15 @@ func performJSON(handler http.Handler, method, path, body, sessionToken string) 
 func responseCookieValue(t *testing.T, recorder *httptest.ResponseRecorder, name string) string {
 	t.Helper()
 	for _, cookie := range recorder.Result().Cookies() {
-		if cookie.Name == name {
-			if !cookie.HttpOnly || cookie.SameSite != http.SameSiteStrictMode || !cookie.Secure || cookie.Path != "/admin" {
-				t.Fatalf("administrator cookie flags = %#v", cookie)
-			}
-			return cookie.Value
+		if cookie.Name != name || cookie.MaxAge < 0 {
+			continue
 		}
+		// The session cookie must reach the OAuth consent page, so it covers
+		// the deployment root instead of only /admin.
+		if !cookie.HttpOnly || cookie.SameSite != http.SameSiteStrictMode || !cookie.Secure || cookie.Path != "/" {
+			t.Fatalf("administrator cookie flags = %#v", cookie)
+		}
+		return cookie.Value
 	}
 	t.Fatalf("response did not set cookie %q", name)
 	return ""
@@ -1220,8 +1223,11 @@ func TestAdministratorCookieUsesForwardedPortalPrefix(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	handler.setAdministratorCookie(recorder, request, "test-session", time.Now().Add(time.Hour))
 	cookies := recorder.Result().Cookies()
-	if len(cookies) != 1 || cookies[0].Path != "/dsmctl/admin" {
+	if len(cookies) != 2 || cookies[0].Path != "/dsmctl" || cookies[0].Value != "test-session" {
 		t.Fatalf("portal cookie = %#v", cookies)
+	}
+	if cookies[1].Path != "/dsmctl/admin" || cookies[1].MaxAge >= 0 || cookies[1].Value != "" {
+		t.Fatalf("legacy admin-scoped cookie was not expired: %#v", cookies[1])
 	}
 }
 

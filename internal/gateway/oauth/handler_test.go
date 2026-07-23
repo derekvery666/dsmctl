@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/derekvery666/dsmctl/internal/gateway/platformauth"
 	"github.com/derekvery666/dsmctl/internal/gateway/state"
 )
 
@@ -87,6 +88,9 @@ func TestDynamicRegistrationAndAuthorizationCodeFlow(t *testing.T) {
 	handler.ServeHTTP(response, req)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "Codex desktop") || !strings.Contains(response.Body.String(), "office") || !strings.Contains(response.Body.String(), "nas.apply") {
 		t.Fatalf("authorization page status=%d body=%s", response.Code, response.Body.String())
+	}
+	if csp := response.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "form-action 'self' http://127.0.0.1:32123") {
+		t.Fatalf("authorization page CSP does not allow the client redirect origin: %q", csp)
 	}
 
 	authorizationValues.Set("decision", "allow")
@@ -185,6 +189,110 @@ func TestAuthorizationRejectsUnregisteredRedirectWithoutRedirecting(t *testing.T
 	handler.ServeHTTP(response, req)
 	if response.Code != http.StatusBadRequest || response.Header().Get("Location") != "" {
 		t.Fatalf("status=%d location=%q body=%s", response.Code, response.Header().Get("Location"), response.Body.String())
+	}
+}
+
+func TestAuthorizationWithGatewaySessionCookie(t *testing.T) {
+	handler, repository := newOAuthTestHandler(t)
+	ctx := context.Background()
+	sessionToken, _, err := repository.LoginAdministrator(ctx, "owner", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := repository.RegisterOAuthClient(ctx, state.OAuthClientInput{Name: "client", RedirectURIs: []string{"http://127.0.0.1:32123/callback"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier := strings.Repeat("a", 64)
+	digest := sha256.Sum256([]byte(verifier))
+	values := url.Values{
+		"response_type": {"code"}, "client_id": {client.ID}, "redirect_uri": {"http://127.0.0.1:32123/callback"},
+		"state": {"session-state"}, "resource": {"http://127.0.0.1/mcp"},
+		"code_challenge": {base64.RawURLEncoding.EncodeToString(digest[:])}, "code_challenge_method": {"S256"},
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/oauth/authorize?"+values.Encode(), nil)
+	request.AddCookie(&http.Cookie{Name: administratorCookie, Value: sessionToken})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `value="session"`) || !strings.Contains(response.Body.String(), "owner") {
+		t.Fatalf("session consent page = %d %s", response.Code, response.Body.String())
+	}
+
+	values.Set("auth_method", "session")
+	request = httptest.NewRequest(http.MethodPost, "http://127.0.0.1/oauth/authorize", strings.NewReader(values.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Origin", "http://127.0.0.1")
+	request.AddCookie(&http.Cookie{Name: administratorCookie, Value: sessionToken})
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusFound {
+		t.Fatalf("session authorize = %d %s", response.Code, response.Body.String())
+	}
+	redirect, err := url.Parse(response.Header().Get("Location"))
+	if err != nil || redirect.Query().Get("code") == "" || redirect.Query().Get("state") != "session-state" {
+		t.Fatalf("session authorize redirect = %q err=%v", response.Header().Get("Location"), err)
+	}
+
+	// Without the cookie the same POST re-renders the consent page instead of
+	// issuing a code.
+	request = httptest.NewRequest(http.MethodPost, "http://127.0.0.1/oauth/authorize", strings.NewReader(values.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Origin", "http://127.0.0.1")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || response.Header().Get("Location") != "" || !strings.Contains(response.Body.String(), "session has expired") {
+		t.Fatalf("session authorize without cookie = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestAuthorizationPageLinksDSMLoginThroughAdmin(t *testing.T) {
+	repository, err := state.OpenWithOptions(filepath.Join(t.TempDir(), "gateway.db"), make([]byte, 32), state.OpenOptions{
+		PasswordHashParameters: &state.PasswordHashParameters{MemoryKiB: 64, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repository.Close() })
+	ctx := context.Background()
+	if _, err := repository.CreateProfile(ctx, state.ProfileInput{Name: "office", URL: "https://10.0.0.20:5001", TLSMode: state.TLSSystemCA}); err != nil {
+		t.Fatal(err)
+	}
+	client, err := repository.RegisterOAuthClient(ctx, state.OAuthClientInput{Name: "Codex", RedirectURIs: []string{"http://127.0.0.1:32123/callback"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := make([]byte, 32)
+	verifier, err := platformauth.NewVerifier(key, platformauth.DefaultAudience)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := New(Options{Repository: repository, PlatformVerifier: verifier})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkceVerifier := strings.Repeat("v", 64)
+	digest := sha256.Sum256([]byte(pkceVerifier))
+	values := url.Values{
+		"response_type": {"code"}, "client_id": {client.ID},
+		"redirect_uri": {"http://127.0.0.1:32123/callback"}, "resource": {"https://nas.example/dsmctl/mcp"},
+		"code_challenge": {base64.RawURLEncoding.EncodeToString(digest[:])}, "code_challenge_method": {"S256"},
+	}
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/oauth/authorize?"+values.Encode(), nil)
+	request.Header.Set("X-Forwarded-Proto", "https")
+	request.Header.Set("X-Forwarded-Host", "nas.example")
+	request.Header.Set("X-Forwarded-Prefix", "/dsmctl")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	body := response.Body.String()
+	if response.Code != http.StatusOK || !strings.Contains(body, "Authorize with DSM Web Login") {
+		t.Fatalf("DSM handoff page = %d %s", response.Code, body)
+	}
+	if !strings.Contains(body, `href="https://nas.example/dsmctl/admin/?next=https%3A%2F%2Fnas.example%2Fdsmctl%2Foauth%2Fauthorize%3F`) {
+		t.Fatalf("DSM login does not hand off through the admin login: %s", body)
+	}
+	if strings.Contains(body, `value="dsm"`) {
+		t.Fatalf("DSM handoff page still renders the header-assertion submit button: %s", body)
 	}
 }
 

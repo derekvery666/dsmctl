@@ -33,6 +33,9 @@ const (
 	authorizationTTL   = 5 * time.Minute
 	maxPendingCodes    = 256
 	defaultScopeString = "nas.read nas.plan nas.apply lan.discover"
+	// administratorCookie matches internal/gateway/admin and the SPK auth
+	// proxy: the consent page authorizes with the same Gateway session.
+	administratorCookie = "dsmctl_admin_session"
 )
 
 var supportedScopes = map[string]struct{}{
@@ -254,6 +257,13 @@ func (h *Handler) authorize(w http.ResponseWriter, req *http.Request) {
 	}
 	actor := ""
 	switch authMethod {
+	case "session":
+		session, sessionErr := h.gatewaySession(req)
+		if sessionErr != nil {
+			h.denyAuthorization(w, req, authorization, "The Gateway session has expired. Sign in and approve again.")
+			return
+		}
+		actor = session.Provider + ":" + session.Username
 	case state.AdminProviderDSM:
 		if h.platformVerifier == nil {
 			h.denyAuthorization(w, req, authorization, "DSM Web Login is unavailable.")
@@ -505,6 +515,7 @@ func (h *Handler) renderAuthorization(w http.ResponseWriter, req *http.Request, 
 		DSMWebLogin: h.platformVerifier != nil, LocalLogin: administrator.Initialized,
 		ClientName: authorization.Client.Name, RedirectHost: redirectDisplayHost(authorization.RedirectURI),
 		Resource: authorization.Resource, Scopes: authorization.Scopes, NAS: authorization.NASAllowlist,
+		AdminLoginURL: h.adminConsentLoginURL(req, authorization),
 		Hidden: map[string]string{
 			"response_type": authorization.ResponseType, "client_id": authorization.ClientID,
 			"redirect_uri": authorization.RedirectURI, "state": authorization.State,
@@ -512,11 +523,55 @@ func (h *Handler) renderAuthorization(w http.ResponseWriter, req *http.Request, 
 			"code_challenge": authorization.CodeChallenge, "code_challenge_method": authorization.CodeChallengeMethod,
 		},
 	}
+	if session, sessionErr := h.gatewaySession(req); sessionErr == nil {
+		data.SessionUser = session.Username
+		data.SessionDSM = session.Provider == state.AdminProviderDSM
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+	// Browsers enforce form-action against the redirect target of a form
+	// submission, so the registered redirect origin must be allowed or the
+	// issued code never leaves the consent page.
+	formAction := "'self'"
+	if origin := clientRedirectOrigin(authorization.RedirectURI); origin != "" {
+		formAction += " " + origin
+	}
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; form-action "+formAction+"; frame-ancestors 'none'; base-uri 'none'")
 	if err := authorizationTemplate.Execute(w, data); err != nil {
 		h.logger.Error("render OAuth authorization page", "error", err)
 	}
+}
+
+func (h *Handler) gatewaySession(req *http.Request) (state.AdministratorSession, error) {
+	cookie, err := req.Cookie(administratorCookie)
+	if err != nil || strings.TrimSpace(cookie.Value) == "" {
+		return state.AdministratorSession{}, errors.New("no gateway administrator session")
+	}
+	return h.repository.AuthenticateAdministratorSession(req.Context(), cookie.Value)
+}
+
+// adminConsentLoginURL sends the administrator through the Admin UI login
+// (which owns the DSM Web Login code-grant flow) and back to this consent
+// request once a Gateway session exists.
+func (h *Handler) adminConsentLoginURL(req *http.Request, authorization authorizationRequest) string {
+	values := url.Values{
+		"response_type": {authorization.ResponseType}, "client_id": {authorization.ClientID},
+		"redirect_uri": {authorization.RedirectURI}, "scope": {strings.Join(authorization.Scopes, " ")},
+		"resource": {authorization.Resource}, "code_challenge": {authorization.CodeChallenge},
+		"code_challenge_method": {authorization.CodeChallengeMethod},
+	}
+	if authorization.State != "" {
+		values.Set("state", authorization.State)
+	}
+	base := h.externalBase(req)
+	return base + "/admin/?next=" + url.QueryEscape(base+"/oauth/authorize?"+values.Encode())
+}
+
+func clientRedirectOrigin(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return ""
+	}
+	return parsed.Scheme + "://" + parsed.Host
 }
 
 func (h *Handler) renderAuthorizationError(w http.ResponseWriter, req *http.Request, status int, message string) {

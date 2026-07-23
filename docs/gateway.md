@@ -177,9 +177,11 @@ The administration page displays and copies the absolute URL, including a
 reverse-proxy path prefix when present. The recommended connection path is to
 paste only that URL into an OAuth-capable MCP client. The client discovers the
 Gateway authorization endpoints, opens a browser page, and the owner approves
-the connection with the existing Gateway administrator username and password.
-This login is local to the Gateway; it does not expose or replace any stored
-DSM credential. OAuth access tokens expire after one hour and are renewed with
+the connection as a Gateway administrator. An active Gateway session approves
+in one click; without one, the consent page hands DSM Web Login off to the
+Admin UI sign-in and returns automatically, and the local fallback username
+and password can be entered directly on the consent page. This login is local
+to the Gateway; it does not expose or replace any stored DSM credential. OAuth access tokens expire after one hour and are renewed with
 a rotating refresh token whose maximum lifetime is 365 days.
 
 For headless automation and clients that cannot perform browser OAuth, create
