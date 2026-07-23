@@ -37,6 +37,7 @@ func run(arguments []string, logger *slog.Logger) error {
 	idPath := flags.String("id-command", "/usr/bin/id", "DSM identity group command path")
 	dsmHTTPSPort := flags.String("dsm-https-port", "5001", "DSM management HTTPS port used for interactive login and CGI validation")
 	dsmHTTPPort := flags.String("dsm-http-port", "5000", "DSM loopback HTTP port used for the server-side Web Login code exchange")
+	redirectForwardedHTTP := flags.Bool("redirect-forwarded-http", true, "redirect forwarded plain-HTTP requests to HTTPS; disable only for development/testing on a trusted LAN, since HTTP carries tokens and cookies in cleartext")
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
@@ -65,7 +66,7 @@ func run(arguments []string, logger *slog.Logger) error {
 	validator := synologyauth.CommandValidator{AuthenticatePath: *authenticatePath, IDPath: *idPath, DSMHTTPSPort: *dsmHTTPSPort}
 	handler, err := synologyauth.New(synologyauth.Options{
 		Backend: backend, Signer: signer, Logger: logger, RequireLoopback: true,
-		RedirectForwardedHTTP: true,
+		RedirectForwardedHTTP: *redirectForwardedHTTP,
 		DSMHTTPSPort:          *dsmHTTPSPort, DSMHTTPPort: *dsmHTTPPort, Validator: validator, SubjectValidator: validator,
 	})
 	if err != nil {

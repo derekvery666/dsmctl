@@ -132,11 +132,19 @@ WWW mark.
 
 The Gateway portal is served by Web Station on the NAS web ports, not DSM's
 administration ports. Use `https://NAS_ADDRESS/dsmctl/admin/`; do not append
-`:5001`. An `http://` request to `/dsmctl/` is redirected to HTTPS: MCP clients
-must reach the Gateway over HTTPS with a certificate they trust. On a NAS with
-no domain of its own, get a free trusted certificate through Synology DDNS (a
-`xxxx.synology.me` hostname) plus DSM's built-in Let's Encrypt, then connect via
-that hostname (for example `https://myname.synology.me/dsmctl/mcp`).
+`:5001`. For access from other machines, reach the Gateway over HTTPS with a
+certificate clients trust: on a NAS with no domain of its own, get a free
+trusted certificate through Synology DDNS (a `xxxx.synology.me` hostname) plus
+DSM's built-in Let's Encrypt, then connect via that hostname (for example
+`https://myname.synology.me/dsmctl/mcp`). This is the recommended, externally
+reachable path.
+
+By default an `http://` request to `/dsmctl/` is redirected to HTTPS. For
+development or testing on a trusted LAN only, plain HTTP can be served instead:
+create the marker file `allow-http` in the package's persistent var directory
+(`/var/packages/dsmctl-gateway/var/allow-http`) and restart the package. Tokens
+and cookies then travel in cleartext, so never enable it on an Internet-facing
+deployment.
 
 If the first visit unexpectedly shows an initialized login page when nobody
 created the account, do not enroll a NAS. Uninstall with the explicit

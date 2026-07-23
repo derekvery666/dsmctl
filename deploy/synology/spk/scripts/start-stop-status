@@ -43,10 +43,19 @@ start_bridge() {
         return 0
     fi
     rm -f "$pid_file"
+    # Production default: force plain HTTP up to HTTPS. Creating the marker file
+    #   touch "${SYNOPKG_PKGVAR}/allow-http"
+    # and restarting the package serves plain HTTP as well (development/testing
+    # on a trusted LAN only: HTTP carries tokens and cookies in cleartext).
+    redirect_http="--redirect-forwarded-http=true"
+    if [ -f "${SYNOPKG_PKGVAR}/allow-http" ]; then
+        redirect_http="--redirect-forwarded-http=false"
+    fi
     "$binary" --listen=127.0.0.1:18766 --backend=http://127.0.0.1:18765 \
         --assertion-key-file="$key" --audience=dsmctl-synology-admin \
         --dsm-https-port="$(dsm_https_port)" \
         --dsm-http-port="$(dsm_http_port)" \
+        "$redirect_http" \
         >> "$log_file" 2>&1 &
     echo "$!" > "$pid_file"
 }

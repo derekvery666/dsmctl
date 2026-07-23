@@ -96,8 +96,9 @@ Two ways to connect a client:
   <path-to-dsmctl-mcp>`. No certificate or DNS — dsmctl pins the NAS's
   certificate by fingerprint.
 - **Remote (gateway):** paste the gateway's HTTPS `/mcp` URL into an
-  OAuth-capable client. It must use HTTPS with a certificate the client trusts
-  (free on a domain-less NAS via Synology DDNS + Let's Encrypt).
+  OAuth-capable client. For access from other machines, use HTTPS with a
+  certificate the client trusts (free on a domain-less NAS via Synology DDNS +
+  Let's Encrypt); plain HTTP is available on a trusted LAN for development only.
 
 MCP clients receive the workflow in the server's initialize instructions. Use
 the tool schemas as the source of truth for arguments and follow this order:
