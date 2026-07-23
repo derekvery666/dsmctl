@@ -4,7 +4,6 @@ set -euo pipefail
 repository="derekvery666/dsmctl"
 version=""
 prefix="${HOME}/.local/bin"
-install_mcp=0
 
 usage() {
 	cat <<'EOF'
@@ -16,7 +15,6 @@ Options:
   --version VERSION  Install a specific version such as 7.3.2-18. Required
                      for prereleases; omitted means the latest stable release.
   --prefix DIR       Install directory (default: $HOME/.local/bin).
-  --install-mcp      Also install the local stdio dsmctl-mcp executable.
   -h, --help         Show this help.
 EOF
 }
@@ -32,10 +30,6 @@ while [[ $# -gt 0 ]]; do
 			[[ $# -ge 2 ]] || { echo "--prefix requires a value" >&2; exit 2; }
 			prefix="$2"
 			shift 2
-			;;
-		--install-mcp)
-			install_mcp=1
-			shift
 			;;
 		-h|--help)
 			usage
@@ -99,24 +93,18 @@ fi
 [[ "$actual" == "$expected" ]] || { echo "Checksum mismatch for $asset" >&2; exit 1; }
 
 mkdir "$work/archive"
-expected_contents=$'LICENSE\nREADME.txt\ndsmctl\ndsmctl-mcp'
+expected_contents=$'LICENSE\nREADME.txt\ndsmctl'
 actual_contents="$(tar -tzf "$work/$asset" | LC_ALL=C sort)"
 [[ "$actual_contents" == "$expected_contents" ]] || {
 	echo "Release archive contains unexpected files; refusing extraction." >&2
 	exit 1
 }
 tar -xzf "$work/$asset" -C "$work/archive"
-for binary in dsmctl dsmctl-mcp; do
-	[[ -f "$work/archive/$binary" ]] || { echo "Archive is missing $binary" >&2; exit 1; }
-done
+[[ -f "$work/archive/dsmctl" ]] || { echo "Archive is missing dsmctl" >&2; exit 1; }
 
 install -d "$prefix"
 install -m 0755 "$work/archive/dsmctl" "$prefix/dsmctl"
 installed=("$prefix/dsmctl")
-if [[ "$install_mcp" -eq 1 ]]; then
-	install -m 0755 "$work/archive/dsmctl-mcp" "$prefix/dsmctl-mcp"
-	installed+=("$prefix/dsmctl-mcp")
-fi
 
 printf 'Installed checksum-verified dsmctl %s:\n' "$version"
 printf '  %s\n' "${installed[@]}"

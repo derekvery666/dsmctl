@@ -49,18 +49,16 @@ build_target() {
 	mkdir -p "$stage"
 	cp "$repo_root/LICENSE" "$stage/LICENSE"
 	cp "$repo_root/deploy/release/README.txt" "$stage/README.txt"
-	for command_name in dsmctl dsmctl-mcp; do
-		(
-			cd "$repo_root"
-			CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build \
-				-trimpath -buildvcs=false -ldflags="$ldflags" \
-				-o "$stage/$command_name$suffix" "./cmd/$command_name"
-		)
-		if [[ "$goos" != "windows" ]]; then
-			chmod 0755 "$stage/$command_name$suffix"
-		fi
-		go version -m "$stage/$command_name$suffix" | grep -Fq 'github.com/derekvery666/dsmctl'
-	done
+	(
+		cd "$repo_root"
+		CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build \
+			-trimpath -buildvcs=false -ldflags="$ldflags" \
+			-o "$stage/dsmctl$suffix" ./cmd/dsmctl
+	)
+	if [[ "$goos" != "windows" ]]; then
+		chmod 0755 "$stage/dsmctl$suffix"
+	fi
+	go version -m "$stage/dsmctl$suffix" | grep -Fq 'github.com/derekvery666/dsmctl'
 
 	(
 		cd "$repo_root"
@@ -75,4 +73,4 @@ build_target() {
 build_target linux amd64 tar.gz dsmctl-linux-amd64.tar.gz
 build_target windows amd64 zip dsmctl-windows-amd64.zip
 
-printf 'Built CLI/MCP release archives for dsmctl %s in %s\n' "$version" "$output_dir"
+printf 'Built CLI release archives for dsmctl %s in %s\n' "$version" "$output_dir"

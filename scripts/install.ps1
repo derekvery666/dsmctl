@@ -2,7 +2,6 @@
 param(
     [string]$Version,
     [string]$InstallDir = (Join-Path $env:LOCALAPPDATA "dsmctl\bin"),
-    [switch]$InstallMcp,
     [switch]$AddToPath
 )
 
@@ -67,7 +66,7 @@ try {
     finally {
         $zip.Dispose()
     }
-    $expectedEntries = @("LICENSE", "README.txt", "dsmctl-mcp.exe", "dsmctl.exe")
+    $expectedEntries = @("LICENSE", "README.txt", "dsmctl.exe")
     if (@(Compare-Object -ReferenceObject $expectedEntries -DifferenceObject $entries).Count -ne 0) {
         throw "Release archive contains unexpected files; refusing extraction."
     }
@@ -75,19 +74,13 @@ try {
     $expanded = Join-Path $work "archive"
     Expand-Archive -LiteralPath $archive -DestinationPath $expanded
     $cli = Join-Path $expanded "dsmctl.exe"
-    $mcp = Join-Path $expanded "dsmctl-mcp.exe"
-    if (-not (Test-Path -LiteralPath $cli -PathType Leaf) -or
-        -not (Test-Path -LiteralPath $mcp -PathType Leaf)) {
-        throw "Release archive is missing dsmctl.exe or dsmctl-mcp.exe"
+    if (-not (Test-Path -LiteralPath $cli -PathType Leaf)) {
+        throw "Release archive is missing dsmctl.exe"
     }
 
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
     Copy-Item -LiteralPath $cli -Destination (Join-Path $InstallDir "dsmctl.exe") -Force
     $installed = @((Join-Path $InstallDir "dsmctl.exe"))
-    if ($InstallMcp) {
-        Copy-Item -LiteralPath $mcp -Destination (Join-Path $InstallDir "dsmctl-mcp.exe") -Force
-        $installed += (Join-Path $InstallDir "dsmctl-mcp.exe")
-    }
 
     if ($AddToPath) {
         $userPath = [Environment]::GetEnvironmentVariable("Path", "User")

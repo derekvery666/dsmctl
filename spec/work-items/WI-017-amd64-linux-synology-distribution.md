@@ -152,9 +152,11 @@ Continuation 2026-07-23: the user explicitly asked Codex to finish public
 distribution after confirming that the DSM deliverable must be a downloadable
 SPK rather than a `go install` target. No other active agent is attached to
 this workspace task, so Codex is continuing the existing WI-017 instead of
-creating a competing release workflow. The next slice unifies CLI/MCP archives,
-the existing Gateway image/SPK build, checksums, and GitHub prerelease
-publication; it does not claim the outstanding hardware/lifecycle matrix.
+creating a competing release workflow. The user subsequently narrowed public
+publication to CLI archives and the DSM SPK only. The workflow still builds the
+Gateway image internally because the offline SPK bundles it, but does not
+publish standalone MCP, image, Compose, or GHCR artifacts. This does not claim
+the outstanding hardware/lifecycle matrix.
 
 ## Handoff
 
@@ -229,20 +231,17 @@ truthfully move to `done`.
 
 Public-distribution continuation verified 2026-07-23:
 
-- The single tag workflow now builds deterministic Windows/Linux amd64 CLI and
-  local-stdio-MCP archives, the existing Gateway image/offline SPK, installers,
-  Compose, checksums, SPDX SBOM, provenance, and support metadata. A manual
-  dispatch is build-only; `dsmctl-vX.Y.Z-N` publishes versioned and `preview`
-  GHCR tags plus a GitHub prerelease, downloads every published asset, and
-  re-runs the complete validator.
-- GHCR publication has an anonymous-manifest gate before GitHub Release
-  creation. GitHub creates a new container package as private, so the first run
-  is expected to stop after pushing; the package administrator must make
-  `dsmctl-gateway` public and rerun. This irreversible visibility choice is not
-  automated.
+- The single tag workflow builds deterministic Windows/Linux amd64 `dsmctl`
+  archives, the offline DSM SPK, checksum-verifying installers, Apache-2.0,
+  checksums, and support metadata. A manual dispatch is build-only;
+  `dsmctl-vX.Y.Z-N` publishes a GitHub prerelease, downloads every published
+  asset, and re-runs the complete validator.
+- Standalone `dsmctl-mcp`, Gateway image, Compose, and GHCR publication are
+  intentionally outside this release. The image remains an internal build
+  input embedded in the offline SPK.
 - The release archiver unit tests and pinned `actionlint` passed. Two local
   Windows/Linux CLI archive builds were byte-identical and contained only the
-  two executables, README, and Apache-2.0 text. The local `linux/amd64` scratch
+  `dsmctl` executable, README, and Apache-2.0 text. The local `linux/amd64` scratch
   image built successfully with the full license inside it. Two SPKs from that
   image were byte-identical at SHA-256
   `f91618a43e470eaf8f26fed793b5c27f648d47969c754582ec358df4e518426a`;
@@ -256,6 +255,6 @@ Public-distribution continuation verified 2026-07-23:
   pipeline, including asset validation and artifact upload; tag-only
   GHCR/GitHub prerelease steps were correctly skipped.
 - Remaining publication gate: review and merge PR #2, push
-  `dsmctl-v7.3.2-18`, make the first GHCR package public when the intentional
-  gate requests it, rerun, and verify the public prerelease links. WI-017 still
-  cannot become `done` until its hardware/lifecycle acceptance matrix passes.
+  `dsmctl-v7.3.2-18`, and verify the public CLI/SPK prerelease links. WI-017
+  still cannot become `done` until its hardware/lifecycle acceptance matrix
+  passes.
