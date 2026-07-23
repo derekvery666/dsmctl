@@ -36,6 +36,12 @@ func TestGatewayEnrollmentKeepsPKCEVerifierServerSideAndValidatesState(t *testin
 	if loginURL.Query().Get("code_challenge") == "" || loginURL.Query().Get("code_verifier") != "" || loginURL.Query().Get("opener") != "https://gateway.example/admin/" {
 		t.Fatalf("login URL query = %#v", loginURL.Query())
 	}
+	// force_login would re-authenticate and evict the user's existing DSM
+	// desktop session from the shared browser cookie jar; Gateway sign-in must
+	// leave the DSM session intact (WI-091 independent sessions).
+	if loginURL.Query().Has("force_login") {
+		t.Fatalf("login URL must not force re-login: %q", start.LoginURL)
+	}
 	suite := noise.NewCipherSuite(noise.DH25519, noise.CipherChaChaPoly, noise.HashBLAKE2b)
 	serverKey, err := suite.GenerateKeypair(rand.Reader)
 	if err != nil {
