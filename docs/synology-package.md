@@ -139,12 +139,13 @@ DSM's built-in Let's Encrypt, then connect via that hostname (for example
 `https://myname.synology.me/dsmctl/mcp`). This is the recommended, externally
 reachable path.
 
-By default an `http://` request to `/dsmctl/` is redirected to HTTPS. For
-development or testing on a trusted LAN only, plain HTTP can be served instead:
-create the marker file `allow-http` in the package's persistent var directory
-(`/var/packages/dsmctl-gateway/var/allow-http`) and restart the package. Tokens
-and cookies then travel in cleartext, so never enable it on an Internet-facing
-deployment.
+By default the Gateway serves both HTTP and HTTPS (an `http://` request to
+`/dsmctl/` is not redirected), which is convenient for development and testing
+on a trusted LAN. Prefer the HTTPS hostname above for anything beyond a trusted
+LAN, since HTTP carries tokens and cookies in cleartext. To force every client
+onto HTTPS, create the marker file `force-https` in the package's persistent var
+directory (`/var/packages/dsmctl-gateway/var/force-https`) and restart the
+package.
 
 If the first visit unexpectedly shows an initialized login page when nobody
 created the account, do not enroll a NAS. Uninstall with the explicit

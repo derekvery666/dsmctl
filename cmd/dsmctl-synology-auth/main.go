@@ -37,7 +37,7 @@ func run(arguments []string, logger *slog.Logger) error {
 	idPath := flags.String("id-command", "/usr/bin/id", "DSM identity group command path")
 	dsmHTTPSPort := flags.String("dsm-https-port", "5001", "DSM management HTTPS port used for interactive login and CGI validation")
 	dsmHTTPPort := flags.String("dsm-http-port", "5000", "DSM loopback HTTP port used for the server-side Web Login code exchange")
-	redirectForwardedHTTP := flags.Bool("redirect-forwarded-http", true, "redirect forwarded plain-HTTP requests to HTTPS; disable only for development/testing on a trusted LAN, since HTTP carries tokens and cookies in cleartext")
+	redirectForwardedHTTP := flags.Bool("redirect-forwarded-http", false, "redirect forwarded plain-HTTP requests to HTTPS; off by default so both HTTP and HTTPS are served. Enable to force clients onto HTTPS (HTTP otherwise carries tokens and cookies in cleartext)")
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
