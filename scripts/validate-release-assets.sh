@@ -64,11 +64,27 @@ actual_windows="$(unzip -Z1 "$dist_dir/dsmctl-windows-amd64.zip" | LC_ALL=C sort
 }
 
 tar -xzf "$dist_dir/dsmctl-linux-amd64.tar.gz" -C "$work"
-go version -m "$work/dsmctl" | grep -Fq 'github.com/derekvery666/dsmctl'
-go version -m "$work/dsmctl-mcp" | grep -Fq 'github.com/derekvery666/dsmctl'
+dsmctl_buildinfo="$(go version -m "$work/dsmctl")"
+dsmctl_mcp_buildinfo="$(go version -m "$work/dsmctl-mcp")"
+grep -Fq 'github.com/derekvery666/dsmctl' <<<"$dsmctl_buildinfo" || {
+	echo "dsmctl binary does not contain the public Go module path" >&2
+	exit 1
+}
+grep -Fq 'github.com/derekvery666/dsmctl' <<<"$dsmctl_mcp_buildinfo" || {
+	echo "dsmctl-mcp binary does not contain the public Go module path" >&2
+	exit 1
+}
 if [[ "$(uname -s)/$(uname -m)" == "Linux/x86_64" ]]; then
-	[[ "$("$work/dsmctl" --version)" == "dsmctl $version" ]]
-	[[ "$("$work/dsmctl-mcp" --version)" == "dsmctl-mcp $version" ]]
+	dsmctl_version="$("$work/dsmctl" --version)"
+	dsmctl_mcp_version="$("$work/dsmctl-mcp" --version)"
+	[[ "$dsmctl_version" == "dsmctl version $version" ]] || {
+		echo "unexpected dsmctl version output: $dsmctl_version" >&2
+		exit 1
+	}
+	[[ "$dsmctl_mcp_version" == "dsmctl-mcp $version" ]] || {
+		echo "unexpected dsmctl-mcp version output: $dsmctl_mcp_version" >&2
+		exit 1
+	}
 fi
 
 cmp "$repo_root/LICENSE" "$dist_dir/LICENSE"
