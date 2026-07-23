@@ -255,7 +255,8 @@ Public-distribution continuation verified 2026-07-23:
   passed the complete CLI/SPK pipeline, including two deterministic SPK builds,
   the Compose persistence smoke, exact eight-file asset validation, and
   artifact upload; tag-only GitHub prerelease steps were correctly skipped.
-- Remaining publication gate: review and merge PR #2, push
-  `dsmctl-v7.3.2-18`, and verify the public CLI/SPK prerelease links. WI-017
-  still cannot become `done` until its hardware/lifecycle acceptance matrix
-  passes.
+- PR #2 merged as `cbc92e1`; annotated tag `dsmctl-v7.3.2-18` triggered Actions
+  run `29984783750`, which published the GitHub prerelease and downloaded every
+  public asset for a second successful validation. All eight asset URLs also
+  accepted anonymous range requests. WI-017 still cannot become `done` until
+  its hardware/lifecycle acceptance matrix passes.
