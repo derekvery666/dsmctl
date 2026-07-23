@@ -54,11 +54,15 @@ build_target() {
 		CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build \
 			-trimpath -buildvcs=false -ldflags="$ldflags" \
 			-o "$stage/dsmctl$suffix" ./cmd/dsmctl
+		CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build \
+			-trimpath -buildvcs=false -ldflags="$ldflags" \
+			-o "$stage/dsmctl-mcp$suffix" ./cmd/dsmctl-mcp
 	)
 	if [[ "$goos" != "windows" ]]; then
-		chmod 0755 "$stage/dsmctl$suffix"
+		chmod 0755 "$stage/dsmctl$suffix" "$stage/dsmctl-mcp$suffix"
 	fi
 	go version -m "$stage/dsmctl$suffix" | grep -Fq 'github.com/derekvery666/dsmctl'
+	go version -m "$stage/dsmctl-mcp$suffix" | grep -Fq 'github.com/derekvery666/dsmctl'
 
 	(
 		cd "$repo_root"

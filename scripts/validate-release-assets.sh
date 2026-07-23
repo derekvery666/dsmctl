@@ -43,14 +43,16 @@ expected_listing="$(printf '%s\n' "${expected_assets[@]}" | LC_ALL=C sort)"
 	exit 1
 }
 
-expected_unix=$'LICENSE\nREADME.txt\ndsmctl'
+# LC_ALL=C sort: `dsmctl` sorts before `dsmctl-mcp` (prefix); on Windows
+# `dsmctl-mcp.exe` sorts before `dsmctl.exe` because '-' (0x2d) < '.' (0x2e).
+expected_unix=$'LICENSE\nREADME.txt\ndsmctl\ndsmctl-mcp'
 actual_unix="$(tar -tzf "$dist_dir/dsmctl-linux-amd64.tar.gz" | LC_ALL=C sort)"
 [[ "$actual_unix" == "$expected_unix" ]] || {
 	echo "unexpected Linux archive contents" >&2
 	exit 1
 }
 
-expected_windows=$'LICENSE\nREADME.txt\ndsmctl.exe'
+expected_windows=$'LICENSE\nREADME.txt\ndsmctl-mcp.exe\ndsmctl.exe'
 actual_windows="$(unzip -Z1 "$dist_dir/dsmctl-windows-amd64.zip" | LC_ALL=C sort)"
 [[ "$actual_windows" == "$expected_windows" ]] || {
 	echo "unexpected Windows archive contents" >&2
@@ -58,15 +60,21 @@ actual_windows="$(unzip -Z1 "$dist_dir/dsmctl-windows-amd64.zip" | LC_ALL=C sort
 }
 
 tar -xzf "$dist_dir/dsmctl-linux-amd64.tar.gz" -C "$work"
-dsmctl_buildinfo="$(go version -m "$work/dsmctl")"
-grep -Fq 'github.com/derekvery666/dsmctl' <<<"$dsmctl_buildinfo" || {
-	echo "dsmctl binary does not contain the public Go module path" >&2
-	exit 1
-}
+for binary in dsmctl dsmctl-mcp; do
+	grep -Fq 'github.com/derekvery666/dsmctl' <<<"$(go version -m "$work/$binary")" || {
+		echo "$binary binary does not contain the public Go module path" >&2
+		exit 1
+	}
+done
 if [[ "$(uname -s)/$(uname -m)" == "Linux/x86_64" ]]; then
 	dsmctl_version="$("$work/dsmctl" --version)"
 	[[ "$dsmctl_version" == "dsmctl version $version" ]] || {
 		echo "unexpected dsmctl version output: $dsmctl_version" >&2
+		exit 1
+	}
+	dsmctl_mcp_version="$("$work/dsmctl-mcp" --version)"
+	[[ "$dsmctl_mcp_version" == "dsmctl-mcp $version" ]] || {
+		echo "unexpected dsmctl-mcp version output: $dsmctl_mcp_version" >&2
 		exit 1
 	}
 fi

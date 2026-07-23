@@ -93,7 +93,7 @@ fi
 [[ "$actual" == "$expected" ]] || { echo "Checksum mismatch for $asset" >&2; exit 1; }
 
 mkdir "$work/archive"
-expected_contents=$'LICENSE\nREADME.txt\ndsmctl'
+expected_contents=$'LICENSE\nREADME.txt\ndsmctl\ndsmctl-mcp'
 actual_contents="$(tar -tzf "$work/$asset" | LC_ALL=C sort)"
 [[ "$actual_contents" == "$expected_contents" ]] || {
 	echo "Release archive contains unexpected files; refusing extraction." >&2
@@ -101,10 +101,12 @@ actual_contents="$(tar -tzf "$work/$asset" | LC_ALL=C sort)"
 }
 tar -xzf "$work/$asset" -C "$work/archive"
 [[ -f "$work/archive/dsmctl" ]] || { echo "Archive is missing dsmctl" >&2; exit 1; }
+[[ -f "$work/archive/dsmctl-mcp" ]] || { echo "Archive is missing dsmctl-mcp" >&2; exit 1; }
 
 install -d "$prefix"
 install -m 0755 "$work/archive/dsmctl" "$prefix/dsmctl"
-installed=("$prefix/dsmctl")
+install -m 0755 "$work/archive/dsmctl-mcp" "$prefix/dsmctl-mcp"
+installed=("$prefix/dsmctl" "$prefix/dsmctl-mcp")
 
 printf 'Installed checksum-verified dsmctl %s:\n' "$version"
 printf '  %s\n' "${installed[@]}"
