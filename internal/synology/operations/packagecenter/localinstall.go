@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
 )
 
 // Manual (local .spk) install. Unlike the online install in install.go — where

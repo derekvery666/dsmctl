@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ychiu1211/dsmctl/internal/application"
-	"github.com/ychiu1211/dsmctl/internal/domain/hyperbackup"
+	"github.com/derekvery666/dsmctl/internal/application"
+	"github.com/derekvery666/dsmctl/internal/domain/hyperbackup"
 )
 
 // newBackupCommand exposes the Hyper Backup module: task, version, log, and

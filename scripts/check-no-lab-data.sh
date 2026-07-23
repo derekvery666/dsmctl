@@ -15,9 +15,17 @@
 set -euo pipefail
 
 pattern='10\.17\.[0-9]|[Dd]erek|deryck'
+public_repo_pattern='github\.com/derekvery666/dsmctl'
+public_raw_pattern='raw\.githubusercontent\.com/derekvery666/dsmctl'
 
-# Scan tracked .go and .md, excluding this script (which necessarily names the patterns).
-if hits=$(git grep -nIE "$pattern" -- '*.go' '*.md' ':!scripts/check-no-lab-data.sh' 2>/dev/null); then
+# Scan tracked .go and .md, excluding this script (which necessarily names the
+# patterns). Remove only the canonical public repository path before checking
+# matches; another owner-name occurrence on the same line still fails.
+if hits=$(
+	git grep -nIE "$pattern" -- '*.go' '*.md' ':!scripts/check-no-lab-data.sh' 2>/dev/null |
+		sed -e "s#${public_repo_pattern}##g" -e "s#${public_raw_pattern}##g" |
+		grep -E "$pattern"
+); then
 	echo "ERROR: real internal-lab data found in tracked source." >&2
 	echo "Replace with RFC 5737 documentation IPs (192.0.2 / 198.51.100 / 203.0.113)" >&2
 	echo "and generic names (test-nas / testuser). Matches:" >&2

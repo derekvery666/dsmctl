@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ychiu1211/dsmctl/internal/config"
-	"github.com/ychiu1211/dsmctl/internal/provision"
+	"github.com/derekvery666/dsmctl/internal/config"
+	"github.com/derekvery666/dsmctl/internal/provision"
 )
 
 type fakeProvisioner struct {

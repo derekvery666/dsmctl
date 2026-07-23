@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ychiu1211/dsmctl/internal/remotepolicy"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
+	"github.com/derekvery666/dsmctl/internal/remotepolicy"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
 )
 
 const (

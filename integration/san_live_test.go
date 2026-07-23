@@ -11,10 +11,10 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/ychiu1211/dsmctl/internal/application"
-	"github.com/ychiu1211/dsmctl/internal/domain/san"
-	"github.com/ychiu1211/dsmctl/internal/domain/storage"
-	"github.com/ychiu1211/dsmctl/internal/synology"
+	"github.com/derekvery666/dsmctl/internal/application"
+	"github.com/derekvery666/dsmctl/internal/domain/san"
+	"github.com/derekvery666/dsmctl/internal/domain/storage"
+	"github.com/derekvery666/dsmctl/internal/synology"
 )
 
 // TestMCPSANDisposableLUNLive is intentionally gated separately from other

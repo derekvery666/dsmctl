@@ -12,9 +12,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/filestation"
-	"github.com/ychiu1211/dsmctl/internal/runtime"
-	"github.com/ychiu1211/dsmctl/internal/synology"
+	"github.com/derekvery666/dsmctl/internal/domain/filestation"
+	"github.com/derekvery666/dsmctl/internal/runtime"
+	"github.com/derekvery666/dsmctl/internal/synology"
 )
 
 const fileStationAPIVersion = "dsmctl.io/v1alpha1"

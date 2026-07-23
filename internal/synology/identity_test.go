@@ -3,7 +3,7 @@ package synology
 import (
 	"testing"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/identity"
+	"github.com/derekvery666/dsmctl/internal/domain/identity"
 )
 
 func TestApplicationPrivilegePrincipalsExpandsOnlySelectedUserGroups(t *testing.T) {

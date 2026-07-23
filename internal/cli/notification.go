@@ -7,9 +7,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ychiu1211/dsmctl/internal/application"
-	"github.com/ychiu1211/dsmctl/internal/domain/notification"
-	"github.com/ychiu1211/dsmctl/internal/domain/syslog"
+	"github.com/derekvery666/dsmctl/internal/application"
+	"github.com/derekvery666/dsmctl/internal/domain/notification"
+	"github.com/derekvery666/dsmctl/internal/domain/syslog"
 )
 
 func newNotificationCommand(opts *options) *cobra.Command {

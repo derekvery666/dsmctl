@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/directory"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
-	directoryops "github.com/ychiu1211/dsmctl/internal/synology/operations/directory"
+	"github.com/derekvery666/dsmctl/internal/domain/directory"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
+	directoryops "github.com/derekvery666/dsmctl/internal/synology/operations/directory"
 )
 
 type DirectoryStatus = directory.Status

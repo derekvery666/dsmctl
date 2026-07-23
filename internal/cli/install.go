@@ -15,8 +15,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ychiu1211/dsmctl/internal/config"
-	"github.com/ychiu1211/dsmctl/internal/provision"
+	"github.com/derekvery666/dsmctl/internal/config"
+	"github.com/derekvery666/dsmctl/internal/provision"
 )
 
 func newInstallCommand(opts *options) *cobra.Command {

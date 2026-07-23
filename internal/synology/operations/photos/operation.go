@@ -9,8 +9,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/photos"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
+	"github.com/derekvery666/dsmctl/internal/domain/photos"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
 )
 
 // PackageID is the DSM package that owns the Photos administration API.

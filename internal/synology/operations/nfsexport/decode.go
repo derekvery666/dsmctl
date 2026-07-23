@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/nfsexport"
+	"github.com/derekvery666/dsmctl/internal/domain/nfsexport"
 )
 
 // decodeRules decodes a SharePrivilege load response. DSM always sets the

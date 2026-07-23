@@ -1,6 +1,6 @@
 package admin
 
-import "github.com/ychiu1211/dsmctl/internal/webassets"
+import "github.com/derekvery666/dsmctl/internal/webassets"
 
 const indexHTML = `<!doctype html>
 <html lang="en">

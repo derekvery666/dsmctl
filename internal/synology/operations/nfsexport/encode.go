@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/nfsexport"
+	"github.com/derekvery666/dsmctl/internal/domain/nfsexport"
 )
 
 // encodeRules renders the complete desired rule set as the DSM "rule" array.

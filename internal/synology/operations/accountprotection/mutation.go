@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/accountprotection"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
+	"github.com/derekvery666/dsmctl/internal/domain/accountprotection"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
 )
 
 // The write wire is live-verified on the DSM 7.3 lab (throwaway raw probes, each

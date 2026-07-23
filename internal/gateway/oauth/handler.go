@@ -22,10 +22,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ychiu1211/dsmctl/internal/gateway/platformauth"
-	"github.com/ychiu1211/dsmctl/internal/gateway/state"
-	"github.com/ychiu1211/dsmctl/internal/remotepolicy"
-	"github.com/ychiu1211/dsmctl/internal/webassets"
+	"github.com/derekvery666/dsmctl/internal/gateway/platformauth"
+	"github.com/derekvery666/dsmctl/internal/gateway/state"
+	"github.com/derekvery666/dsmctl/internal/remotepolicy"
+	"github.com/derekvery666/dsmctl/internal/webassets"
 )
 
 const (

@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/externaldevice"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
-	externaldeviceops "github.com/ychiu1211/dsmctl/internal/synology/operations/externaldevice"
+	"github.com/derekvery666/dsmctl/internal/domain/externaldevice"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
+	externaldeviceops "github.com/derekvery666/dsmctl/internal/synology/operations/externaldevice"
 )
 
 type ExternalStorageState = externaldevice.StorageState

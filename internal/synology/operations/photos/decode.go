@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/photos"
+	"github.com/derekvery666/dsmctl/internal/domain/photos"
 )
 
 // DSM field names for SYNO.Foto.Setting.Admin, confirmed live on Synology Photos

@@ -10,45 +10,54 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/ychiu1211/dsmctl/internal/application"
-	"github.com/ychiu1211/dsmctl/internal/config"
-	"github.com/ychiu1211/dsmctl/internal/domain/access"
-	"github.com/ychiu1211/dsmctl/internal/domain/certificate"
-	"github.com/ychiu1211/dsmctl/internal/domain/controlpanel"
-	"github.com/ychiu1211/dsmctl/internal/domain/discovery"
-	"github.com/ychiu1211/dsmctl/internal/domain/downloadstation"
-	"github.com/ychiu1211/dsmctl/internal/domain/driveadmin"
-	"github.com/ychiu1211/dsmctl/internal/domain/externalaccess"
-	"github.com/ychiu1211/dsmctl/internal/domain/filestation"
-	"github.com/ychiu1211/dsmctl/internal/domain/ftpservices"
-	"github.com/ychiu1211/dsmctl/internal/domain/identity"
-	"github.com/ychiu1211/dsmctl/internal/domain/nfsexport"
-	"github.com/ychiu1211/dsmctl/internal/domain/notification"
-	"github.com/ychiu1211/dsmctl/internal/domain/office"
-	"github.com/ychiu1211/dsmctl/internal/domain/packagecenter"
-	"github.com/ychiu1211/dsmctl/internal/domain/photos"
-	"github.com/ychiu1211/dsmctl/internal/domain/resmon"
-	"github.com/ychiu1211/dsmctl/internal/domain/rsyncservice"
-	"github.com/ychiu1211/dsmctl/internal/domain/san"
-	"github.com/ychiu1211/dsmctl/internal/domain/accountprotection"
-	firewalldomain "github.com/ychiu1211/dsmctl/internal/domain/firewall"
-	networkdomain "github.com/ychiu1211/dsmctl/internal/domain/network"
-	"github.com/ychiu1211/dsmctl/internal/domain/loginportal"
-	"github.com/ychiu1211/dsmctl/internal/domain/securityadvisor"
-	"github.com/ychiu1211/dsmctl/internal/domain/servicediscovery"
-	"github.com/ychiu1211/dsmctl/internal/domain/share"
-	"github.com/ychiu1211/dsmctl/internal/domain/snapshotreplication"
-	"github.com/ychiu1211/dsmctl/internal/domain/storage"
-	"github.com/ychiu1211/dsmctl/internal/domain/surveillance"
-	"github.com/ychiu1211/dsmctl/internal/domain/syslog"
-	"github.com/ychiu1211/dsmctl/internal/domain/terminalsnmp"
-	"github.com/ychiu1211/dsmctl/internal/domain/tftpservice"
-	"github.com/ychiu1211/dsmctl/internal/synology"
+	"github.com/derekvery666/dsmctl/internal/application"
+	"github.com/derekvery666/dsmctl/internal/config"
+	"github.com/derekvery666/dsmctl/internal/domain/access"
+	"github.com/derekvery666/dsmctl/internal/domain/certificate"
+	"github.com/derekvery666/dsmctl/internal/domain/controlpanel"
+	"github.com/derekvery666/dsmctl/internal/domain/discovery"
+	"github.com/derekvery666/dsmctl/internal/domain/downloadstation"
+	"github.com/derekvery666/dsmctl/internal/domain/driveadmin"
+	"github.com/derekvery666/dsmctl/internal/domain/externalaccess"
+	"github.com/derekvery666/dsmctl/internal/domain/filestation"
+	"github.com/derekvery666/dsmctl/internal/domain/ftpservices"
+	"github.com/derekvery666/dsmctl/internal/domain/identity"
+	"github.com/derekvery666/dsmctl/internal/domain/nfsexport"
+	"github.com/derekvery666/dsmctl/internal/domain/notification"
+	"github.com/derekvery666/dsmctl/internal/domain/office"
+	"github.com/derekvery666/dsmctl/internal/domain/packagecenter"
+	"github.com/derekvery666/dsmctl/internal/domain/photos"
+	"github.com/derekvery666/dsmctl/internal/domain/resmon"
+	"github.com/derekvery666/dsmctl/internal/domain/rsyncservice"
+	"github.com/derekvery666/dsmctl/internal/domain/san"
+	"github.com/derekvery666/dsmctl/internal/domain/accountprotection"
+	firewalldomain "github.com/derekvery666/dsmctl/internal/domain/firewall"
+	networkdomain "github.com/derekvery666/dsmctl/internal/domain/network"
+	"github.com/derekvery666/dsmctl/internal/domain/loginportal"
+	"github.com/derekvery666/dsmctl/internal/domain/securityadvisor"
+	"github.com/derekvery666/dsmctl/internal/domain/servicediscovery"
+	"github.com/derekvery666/dsmctl/internal/domain/share"
+	"github.com/derekvery666/dsmctl/internal/domain/snapshotreplication"
+	"github.com/derekvery666/dsmctl/internal/domain/storage"
+	"github.com/derekvery666/dsmctl/internal/domain/surveillance"
+	"github.com/derekvery666/dsmctl/internal/domain/syslog"
+	"github.com/derekvery666/dsmctl/internal/domain/terminalsnmp"
+	"github.com/derekvery666/dsmctl/internal/domain/tftpservice"
+	"github.com/derekvery666/dsmctl/internal/synology"
 )
 
 // maxInlineFileDownload bounds how many bytes get_filestation_file_content will
 // return inline; larger files must be streamed with the CLI.
 const maxInlineFileDownload = 8 << 20
+
+const serverInstructions = `Operate dsmctl in this order:
+1. Call list_nas first unless the exact configured target name is already known. Always pass that exact name in the nas field for targeted calls; local defaults exist, but remote gateways require an explicit target and an allowlist match.
+2. Call get_auth_status before contacting a target when authentication is uncertain. MCP tools never accept passwords or OTPs. If authentication is missing, ask the user to run dsmctl auth login --nas <name> or use the gateway console, then retry.
+3. For reads, use the narrowest get_* tool. Call the matching get_*_capabilities tool first when DSM or installed-package support may vary. Do not treat an unavailable operation as permission to issue raw DSM requests.
+4. For mutations, call the matching plan_* tool first. Planning reads current state and never mutates DSM. Present the returned target, intent, risk, summary, warnings, precondition, and approval hash to the user.
+5. Call apply_* only after explicit approval. Send the exact unmodified plan object and its exact approval_hash; never synthesize, edit, retarget, or reuse a stale plan. Apply revalidates current state and verifies the postcondition. High-risk remote applies may also require a separate out-of-band approval.
+
+Tool availability is authoritative for this endpoint. A read-only server intentionally omits plan/apply and other write-capable tools. Secrets, sessions, and raw WebAPI mutation escape hatches are never exposed.`
 
 type discoverLANDevicesInput struct {
 	TimeoutSeconds int  `json:"timeout_seconds,omitempty" jsonschema:"How long to listen for device responses, in seconds; defaults to 8 and is capped at 60"`
@@ -2192,7 +2201,10 @@ func New(service *application.Service, version string, opts ...Option) *mcp.Serv
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	server := mcp.NewServer(&mcp.Implementation{Name: "dsmctl", Version: version}, nil)
+	server := mcp.NewServer(
+		&mcp.Implementation{Name: "dsmctl", Version: version},
+		&mcp.ServerOptions{Instructions: serverInstructions},
+	)
 
 	// A single central hook classifies every failed tool result and attaches its
 	// stable DSM error category, so no per-tool handler needs to know the
@@ -2201,7 +2213,7 @@ func New(service *application.Service, version string, opts ...Option) *mcp.Serv
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_nas",
-		Description: "List configured Synology NAS connection profiles. Passwords are never returned.",
+		Description: "List configured Synology NAS connection profiles. Start here when the target is not already known, then use the returned exact profile name in every NAS-targeted tool call. Passwords are never returned.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ listNASInput) (*mcp.CallToolResult, listNASOutput, error) {
 		profiles, err := service.ListNASContext(ctx)
 		if err != nil {

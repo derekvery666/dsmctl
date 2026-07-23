@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/ychiu1211/dsmctl/internal/synology"
+	"github.com/derekvery666/dsmctl/internal/synology"
 )
 
 func TestExitCodeMapping(t *testing.T) {

@@ -17,11 +17,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ychiu1211/dsmctl/internal/config"
-	"github.com/ychiu1211/dsmctl/internal/credentials"
-	certdom "github.com/ychiu1211/dsmctl/internal/domain/certificate"
-	"github.com/ychiu1211/dsmctl/internal/runtime"
-	"github.com/ychiu1211/dsmctl/internal/synology"
+	"github.com/derekvery666/dsmctl/internal/config"
+	"github.com/derekvery666/dsmctl/internal/credentials"
+	certdom "github.com/derekvery666/dsmctl/internal/domain/certificate"
+	"github.com/derekvery666/dsmctl/internal/runtime"
+	"github.com/derekvery666/dsmctl/internal/synology"
 )
 
 // --- fake certificate client ---

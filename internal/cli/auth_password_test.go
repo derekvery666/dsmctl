@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ychiu1211/dsmctl/internal/application"
-	"github.com/ychiu1211/dsmctl/internal/config"
+	"github.com/derekvery666/dsmctl/internal/application"
+	"github.com/derekvery666/dsmctl/internal/config"
 )
 
 func stubTerminals(t *testing.T, stdin, stdout bool) {

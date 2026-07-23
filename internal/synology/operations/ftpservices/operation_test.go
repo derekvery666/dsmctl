@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
 )
 
 type captureExecutor struct {

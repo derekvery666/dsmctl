@@ -3,7 +3,7 @@ id: WI-017
 title: Ship generic Linux and Synology x86_64 distributions
 status: in_progress
 priority: P1
-owner: "synology-distribution"
+owner: "codex"
 depends_on: [WI-014, WI-015, WI-016, WI-032, WI-033, WI-035, WI-037, WI-038, WI-081]
 parallel_group: G
 touches:
@@ -139,6 +139,14 @@ and enrollment flows. WI-081 replaces manual TLS-mode selection with verified
 trust enrollment; certify the administration UI only after it lands. Real
 Synology hardware certification remains before the distribution item can
 complete.
+
+Continuation 2026-07-23: the user explicitly asked Codex to finish public
+distribution after confirming that the DSM deliverable must be a downloadable
+SPK rather than a `go install` target. No other active agent is attached to
+this workspace task, so Codex is continuing the existing WI-017 instead of
+creating a competing release workflow. The next slice unifies CLI/MCP archives,
+the existing Gateway image/SPK build, checksums, and GitHub prerelease
+publication; it does not claim the outstanding hardware/lifecycle matrix.
 
 ## Handoff
 

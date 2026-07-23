@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/storage"
+	"github.com/derekvery666/dsmctl/internal/domain/storage"
 )
 
 func cacheContractState() storage.State {

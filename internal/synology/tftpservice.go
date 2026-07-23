@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/tftpservice"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
-	tftpserviceop "github.com/ychiu1211/dsmctl/internal/synology/operations/tftpservice"
+	"github.com/derekvery666/dsmctl/internal/domain/tftpservice"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
+	tftpserviceop "github.com/derekvery666/dsmctl/internal/synology/operations/tftpservice"
 )
 
 type TFTPServiceState = tftpservice.State

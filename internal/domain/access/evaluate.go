@@ -5,8 +5,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/identity"
-	"github.com/ychiu1211/dsmctl/internal/domain/share"
+	"github.com/derekvery666/dsmctl/internal/domain/identity"
+	"github.com/derekvery666/dsmctl/internal/domain/share"
 )
 
 // ExplainShare reproduces DSM Admin Center's direct-plus-inherited permission

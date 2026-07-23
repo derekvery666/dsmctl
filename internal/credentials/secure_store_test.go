@@ -7,7 +7,7 @@ import (
 
 	"github.com/zalando/go-keyring"
 
-	"github.com/ychiu1211/dsmctl/internal/config"
+	"github.com/derekvery666/dsmctl/internal/config"
 )
 
 type memoryKeyring struct {

@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/controlpanel"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
-	"github.com/ychiu1211/dsmctl/internal/synology/operations/controlpaneltime"
-	"github.com/ychiu1211/dsmctl/internal/synology/operations/fileservices"
+	"github.com/derekvery666/dsmctl/internal/domain/controlpanel"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
+	"github.com/derekvery666/dsmctl/internal/synology/operations/controlpaneltime"
+	"github.com/derekvery666/dsmctl/internal/synology/operations/fileservices"
 )
 
 type ControlPanelTimeState = controlpanel.TimeState

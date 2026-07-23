@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/ftpservices"
-	"github.com/ychiu1211/dsmctl/internal/synology"
+	"github.com/derekvery666/dsmctl/internal/domain/ftpservices"
+	"github.com/derekvery666/dsmctl/internal/synology"
 )
 
 const ftpServicesAPIVersion = "dsmctl.io/v1alpha1"

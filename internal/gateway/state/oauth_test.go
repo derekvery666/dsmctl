@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ychiu1211/dsmctl/internal/remotepolicy"
+	"github.com/derekvery666/dsmctl/internal/remotepolicy"
 )
 
 func TestOAuthClientRegistrationValidatesPublicRedirects(t *testing.T) {

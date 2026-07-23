@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/filestation"
+	"github.com/derekvery666/dsmctl/internal/domain/filestation"
 )
 
 // flexInt64 decodes a JSON number that some DSM builds return as a quoted

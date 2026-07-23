@@ -8,16 +8,23 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ychiu1211/dsmctl/internal/application"
-	"github.com/ychiu1211/dsmctl/internal/domain/driveadmin"
-	"github.com/ychiu1211/dsmctl/internal/domain/syslog"
-	"github.com/ychiu1211/dsmctl/internal/synology"
+	"github.com/derekvery666/dsmctl/internal/application"
+	"github.com/derekvery666/dsmctl/internal/domain/driveadmin"
+	"github.com/derekvery666/dsmctl/internal/domain/syslog"
+	"github.com/derekvery666/dsmctl/internal/synology"
 )
 
 func newDriveCommand(opts *options) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "drive",
 		Short: "Manage the Synology Drive Server package",
+		Long: `Inspect and manage the installed Synology Drive Server package through two focused areas.
+
+'config' reads and changes the server database/vmtouch configuration through
+guarded plan/apply. 'admin' exposes service/package status, client connections,
+team folders, logs, database usage, top files, account privileges, Drive node
+views and versions, plus guarded disconnect, team-folder, and restore actions.
+Package presence and compatibility are rechecked by the underlying operation.`,
 	}
 	command.AddCommand(newDriveAdminCommand(opts), newDriveConfigCommand(opts))
 	return command
@@ -27,6 +34,10 @@ func newDriveConfigCommand(opts *options) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "config",
 		Short: "Inspect and manage the Drive server database configuration (vmtouch)",
+		Long: `Read the Drive Server database volume and vmtouch memory-pinning settings, or change the writable vmtouch fields through a typed, patch-only plan/apply workflow.
+
+The database volume path is read-only. Omitted request fields are preserved;
+the apply command accepts only the unchanged plan and approval hash.`,
 	}
 	command.AddCommand(
 		newDriveConfigStateCommand(opts),
@@ -130,6 +141,11 @@ func newDriveAdminCommand(opts *options) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "admin",
 		Short: "Inspect the Drive Admin Console: service status, connections, team folders, and logs",
+		Long: `Inspect the Drive Admin Console's service state, active connections, team folders, logs, database usage, top files, activation, account privileges, and Drive node/version views.
+
+Reads support structured JSON where advertised. Connection disconnect,
+team-folder changes, and node restore are separate guarded workflows under
+their respective subcommands; inspect each plan before its apply.`,
 	}
 	command.AddCommand(
 		newDriveAdminCapabilitiesCommand(opts),

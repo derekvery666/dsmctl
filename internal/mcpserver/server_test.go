@@ -8,10 +8,10 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/ychiu1211/dsmctl/internal/application"
-	"github.com/ychiu1211/dsmctl/internal/config"
-	"github.com/ychiu1211/dsmctl/internal/credentials"
-	"github.com/ychiu1211/dsmctl/internal/runtime"
+	"github.com/derekvery666/dsmctl/internal/application"
+	"github.com/derekvery666/dsmctl/internal/config"
+	"github.com/derekvery666/dsmctl/internal/credentials"
+	"github.com/derekvery666/dsmctl/internal/runtime"
 )
 
 type fakeCredentialStore struct{}
@@ -58,6 +58,25 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		t.Fatalf("client Connect() error = %v", err)
 	}
 	defer clientSession.Close()
+
+	initializeResult := clientSession.InitializeResult()
+	if initializeResult == nil {
+		t.Fatal("InitializeResult() returned nil")
+	}
+	for _, required := range []string{
+		"Call list_nas first",
+		"Always pass that exact name in the nas field",
+		"Call get_auth_status",
+		"MCP tools never accept passwords or OTPs",
+		"call the matching plan_* tool first",
+		"Call apply_* only after explicit approval",
+		"exact unmodified plan object and its exact approval_hash",
+		"read-only server intentionally omits plan/apply",
+	} {
+		if !strings.Contains(initializeResult.Instructions, required) {
+			t.Errorf("server instructions missing %q:\n%s", required, initializeResult.Instructions)
+		}
+	}
 
 	tools, err := clientSession.ListTools(ctx, nil)
 	if err != nil {

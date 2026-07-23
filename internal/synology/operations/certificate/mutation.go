@@ -20,7 +20,7 @@ package certificate
 // DSMCTL_DUMP probe before those writes are trusted against a real NAS.
 
 import (
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
 )
 
 const (

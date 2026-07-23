@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ychiu1211/dsmctl/internal/gateway/platformauth"
-	"github.com/ychiu1211/dsmctl/internal/gateway/state"
+	"github.com/derekvery666/dsmctl/internal/gateway/platformauth"
+	"github.com/derekvery666/dsmctl/internal/gateway/state"
 )
 
 func TestDSMOnlyOAuthAuthorization(t *testing.T) {

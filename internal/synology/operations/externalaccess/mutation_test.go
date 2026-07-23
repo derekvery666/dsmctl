@@ -6,8 +6,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/externalaccess"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
+	"github.com/derekvery666/dsmctl/internal/domain/externalaccess"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
 )
 
 // captureExecutor records the last request so the write encodings can be pinned.

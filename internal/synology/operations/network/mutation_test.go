@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/network"
+	"github.com/derekvery666/dsmctl/internal/domain/network"
 )
 
 // TestExecuteGeneralSetRequestShapeV2 locks the confirmed SYNO.Core.Network set

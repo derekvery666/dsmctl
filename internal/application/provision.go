@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ychiu1211/dsmctl/internal/config"
-	"github.com/ychiu1211/dsmctl/internal/credentials"
-	"github.com/ychiu1211/dsmctl/internal/provision"
-	"github.com/ychiu1211/dsmctl/internal/runtime"
-	"github.com/ychiu1211/dsmctl/internal/tlstrust"
+	"github.com/derekvery666/dsmctl/internal/config"
+	"github.com/derekvery666/dsmctl/internal/credentials"
+	"github.com/derekvery666/dsmctl/internal/provision"
+	"github.com/derekvery666/dsmctl/internal/runtime"
+	"github.com/derekvery666/dsmctl/internal/tlstrust"
 )
 
 // Provisioner is the DSM setup-window protocol used to bring up a fresh NAS. It

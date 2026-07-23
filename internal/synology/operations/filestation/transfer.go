@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
 )
 
 // Upload and Download are binary transports (streaming multipart POST and a

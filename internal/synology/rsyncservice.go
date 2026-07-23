@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/rsyncservice"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
-	rsyncserviceop "github.com/ychiu1211/dsmctl/internal/synology/operations/rsyncservice"
+	"github.com/derekvery666/dsmctl/internal/domain/rsyncservice"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
+	rsyncserviceop "github.com/derekvery666/dsmctl/internal/synology/operations/rsyncservice"
 )
 
 type RsyncServiceState = rsyncservice.State

@@ -13,11 +13,11 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/ychiu1211/dsmctl/internal/config"
-	"github.com/ychiu1211/dsmctl/internal/credentials"
-	"github.com/ychiu1211/dsmctl/internal/runtime"
-	"github.com/ychiu1211/dsmctl/internal/synology"
-	"github.com/ychiu1211/dsmctl/internal/tlstrust"
+	"github.com/derekvery666/dsmctl/internal/config"
+	"github.com/derekvery666/dsmctl/internal/credentials"
+	"github.com/derekvery666/dsmctl/internal/runtime"
+	"github.com/derekvery666/dsmctl/internal/synology"
+	"github.com/derekvery666/dsmctl/internal/tlstrust"
 )
 
 // The terminal probes and the hidden reader are indirected so tests can

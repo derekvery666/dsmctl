@@ -15,8 +15,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ychiu1211/dsmctl/internal/gateway/platformauth"
-	"github.com/ychiu1211/dsmctl/internal/synologyauth"
+	"github.com/derekvery666/dsmctl/internal/gateway/platformauth"
+	"github.com/derekvery666/dsmctl/internal/synologyauth"
 )
 
 func main() {

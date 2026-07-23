@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/externaldevice"
+	"github.com/derekvery666/dsmctl/internal/domain/externaldevice"
 )
 
 func newExternalDeviceCommand(opts *options) *cobra.Command {

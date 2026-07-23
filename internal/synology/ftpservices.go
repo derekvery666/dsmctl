@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/ftpservices"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
-	ftpservicesop "github.com/ychiu1211/dsmctl/internal/synology/operations/ftpservices"
+	"github.com/derekvery666/dsmctl/internal/domain/ftpservices"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
+	ftpservicesop "github.com/derekvery666/dsmctl/internal/synology/operations/ftpservices"
 )
 
 type FTPServicesState = ftpservices.State

@@ -13,8 +13,8 @@ package certificate
 import (
 	"context"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/certificate"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
+	"github.com/derekvery666/dsmctl/internal/domain/certificate"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
 )
 
 const (

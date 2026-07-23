@@ -3,7 +3,7 @@ package application
 import (
 	"context"
 
-	"github.com/ychiu1211/dsmctl/internal/synology"
+	"github.com/derekvery666/dsmctl/internal/synology"
 )
 
 type DiskSMARTCapabilitiesResult struct {

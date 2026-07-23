@@ -6,13 +6,13 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/identity"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
-	"github.com/ychiu1211/dsmctl/internal/synology/operations/identityappprivilege"
-	"github.com/ychiu1211/dsmctl/internal/synology/operations/identityinventory"
-	"github.com/ychiu1211/dsmctl/internal/synology/operations/identitymembership"
-	"github.com/ychiu1211/dsmctl/internal/synology/operations/identitymutation"
-	"github.com/ychiu1211/dsmctl/internal/synology/operations/identityquota"
+	"github.com/derekvery666/dsmctl/internal/domain/identity"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
+	"github.com/derekvery666/dsmctl/internal/synology/operations/identityappprivilege"
+	"github.com/derekvery666/dsmctl/internal/synology/operations/identityinventory"
+	"github.com/derekvery666/dsmctl/internal/synology/operations/identitymembership"
+	"github.com/derekvery666/dsmctl/internal/synology/operations/identitymutation"
+	"github.com/derekvery666/dsmctl/internal/synology/operations/identityquota"
 )
 
 type IdentityState = identity.State

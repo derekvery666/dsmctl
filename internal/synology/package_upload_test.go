@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	pkgops "github.com/ychiu1211/dsmctl/internal/synology/operations/packagecenter"
+	pkgops "github.com/derekvery666/dsmctl/internal/synology/operations/packagecenter"
 )
 
 // TestPackageUploadMultipartContract drives the shared streaming multipart

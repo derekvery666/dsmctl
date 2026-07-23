@@ -10,9 +10,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/identity"
-	"github.com/ychiu1211/dsmctl/internal/domain/share"
-	"github.com/ychiu1211/dsmctl/internal/synology"
+	"github.com/derekvery666/dsmctl/internal/domain/identity"
+	"github.com/derekvery666/dsmctl/internal/domain/share"
+	"github.com/derekvery666/dsmctl/internal/synology"
 )
 
 const managementAPIVersion = "dsmctl.io/v1alpha1"

@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/securityadvisor"
-	"github.com/ychiu1211/dsmctl/internal/synology"
+	"github.com/derekvery666/dsmctl/internal/domain/securityadvisor"
+	"github.com/derekvery666/dsmctl/internal/synology"
 )
 
 const securityAdvisorAPIVersion = "dsmctl.io/v1alpha1"

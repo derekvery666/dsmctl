@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/resmon"
+	"github.com/derekvery666/dsmctl/internal/domain/resmon"
 )
 
 // kbToBytes converts DSM's kilobyte memory counters to bytes.

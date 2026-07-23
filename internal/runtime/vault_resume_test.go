@@ -13,8 +13,8 @@ import (
 
 	"github.com/flynn/noise"
 
-	"github.com/ychiu1211/dsmctl/internal/credentials"
-	"github.com/ychiu1211/dsmctl/internal/gateway/state"
+	"github.com/derekvery666/dsmctl/internal/credentials"
+	"github.com/derekvery666/dsmctl/internal/gateway/state"
 )
 
 func TestExpiredVaultSessionResumesAndPersistsWithoutRevisionChange(t *testing.T) {

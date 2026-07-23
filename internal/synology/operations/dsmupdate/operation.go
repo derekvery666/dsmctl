@@ -33,8 +33,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/dsmupdate"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
+	"github.com/derekvery666/dsmctl/internal/domain/dsmupdate"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
 )
 
 const (

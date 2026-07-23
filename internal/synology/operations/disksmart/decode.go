@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/disksmart"
+	"github.com/derekvery666/dsmctl/internal/domain/disksmart"
 )
 
 // decodeDiskHealthList normalizes SYNO.Core.Storage.Disk.list into the per-disk

@@ -15,8 +15,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/driveadmin"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
+	"github.com/derekvery666/dsmctl/internal/domain/driveadmin"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
 )
 
 // PackageID is the stable DSM package identifier that owns every API in this

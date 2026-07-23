@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/snapshotreplication"
-	snapshotops "github.com/ychiu1211/dsmctl/internal/synology/operations/snapshotreplication"
+	"github.com/derekvery666/dsmctl/internal/domain/snapshotreplication"
+	snapshotops "github.com/derekvery666/dsmctl/internal/synology/operations/snapshotreplication"
 )
 
 // PairingEndpoint is the destination NAS management endpoint a source NAS

@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/securityadvisor"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
-	securityadvisorops "github.com/ychiu1211/dsmctl/internal/synology/operations/securityadvisor"
+	"github.com/derekvery666/dsmctl/internal/domain/securityadvisor"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
+	securityadvisorops "github.com/derekvery666/dsmctl/internal/synology/operations/securityadvisor"
 )
 
 type SecurityAdvisorStatus = securityadvisor.Status

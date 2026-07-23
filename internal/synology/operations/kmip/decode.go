@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/kmip"
+	"github.com/derekvery666/dsmctl/internal/domain/kmip"
 )
 
 // decodeStatus normalizes SYNO.Storage.CGI.KMIP.get into the combined KMIP

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ychiu1211/dsmctl/internal/config"
+	"github.com/derekvery666/dsmctl/internal/config"
 )
 
 // list_nas is the managed-NAS listing; a destination-only ("target") profile is

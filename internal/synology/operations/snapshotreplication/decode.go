@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/snapshotreplication"
+	"github.com/derekvery666/dsmctl/internal/domain/snapshotreplication"
 )
 
 // DSM field names, live-verified on DSM 7.3-81168 unless noted.

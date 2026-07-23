@@ -5,7 +5,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/ychiu1211/dsmctl/internal/synology"
+	"github.com/derekvery666/dsmctl/internal/synology"
 )
 
 // callToolMethod is the JSON-RPC method the MCP SDK dispatches a tool call under.

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
 )
 
 // The write wire is live-verified on the DSM 7.3 lab (DS3018xs, throwaway raw

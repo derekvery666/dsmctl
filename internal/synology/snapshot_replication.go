@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/snapshotreplication"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
-	snapshotops "github.com/ychiu1211/dsmctl/internal/synology/operations/snapshotreplication"
+	"github.com/derekvery666/dsmctl/internal/domain/snapshotreplication"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
+	snapshotops "github.com/derekvery666/dsmctl/internal/synology/operations/snapshotreplication"
 )
 
 type SnapshotReplicationShareSnapshots = snapshotreplication.ShareSnapshots

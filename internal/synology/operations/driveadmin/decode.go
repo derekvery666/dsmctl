@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/driveadmin"
+	"github.com/derekvery666/dsmctl/internal/domain/driveadmin"
 )
 
 // Decoders are strict about the response envelope and the list container so a

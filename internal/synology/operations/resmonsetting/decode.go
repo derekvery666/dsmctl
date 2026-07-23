@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/resmon"
+	"github.com/derekvery666/dsmctl/internal/domain/resmon"
 )
 
 func decode(data json.RawMessage) (Settings, error) {

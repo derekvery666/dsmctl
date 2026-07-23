@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/network"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
-	netops "github.com/ychiu1211/dsmctl/internal/synology/operations/network"
+	"github.com/derekvery666/dsmctl/internal/domain/network"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
+	netops "github.com/derekvery666/dsmctl/internal/synology/operations/network"
 )
 
 type NetworkGeneral = network.General

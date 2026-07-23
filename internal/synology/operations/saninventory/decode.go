@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/san"
+	"github.com/derekvery666/dsmctl/internal/domain/san"
 )
 
 func decodeTargets(data json.RawMessage) (targetInventory, error) {

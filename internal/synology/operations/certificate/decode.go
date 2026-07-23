@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/certificate"
+	"github.com/derekvery666/dsmctl/internal/domain/certificate"
 )
 
 // The decoder is strict about the response envelope and lenient about

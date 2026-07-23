@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/hardware"
+	"github.com/derekvery666/dsmctl/internal/domain/hardware"
 )
 
 // beepEventFields maps each stable beep-event name to the DSM enable-flag key

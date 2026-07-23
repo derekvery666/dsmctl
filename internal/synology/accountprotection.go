@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/accountprotection"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
-	apops "github.com/ychiu1211/dsmctl/internal/synology/operations/accountprotection"
+	"github.com/derekvery666/dsmctl/internal/domain/accountprotection"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
+	apops "github.com/derekvery666/dsmctl/internal/synology/operations/accountprotection"
 )
 
 type AutoBlockSettings = accountprotection.AutoBlockSettings

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/directory"
+	"github.com/derekvery666/dsmctl/internal/domain/directory"
 )
 
 func TestDecodeDomainUnjoined(t *testing.T) {

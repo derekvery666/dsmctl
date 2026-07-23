@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/syslog"
+	"github.com/derekvery666/dsmctl/internal/domain/syslog"
 )
 
 func decode(data json.RawMessage) (syslog.State, error) {

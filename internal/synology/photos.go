@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/photos"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
-	photosops "github.com/ychiu1211/dsmctl/internal/synology/operations/photos"
+	"github.com/derekvery666/dsmctl/internal/domain/photos"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
+	photosops "github.com/derekvery666/dsmctl/internal/synology/operations/photos"
 )
 
 type PhotosAdminSettings = photos.AdminSettings

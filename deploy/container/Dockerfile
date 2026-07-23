@@ -14,7 +14,7 @@ COPY internal ./internal
 RUN test "${TARGETOS}/${TARGETARCH}" = "linux/amd64" && \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -buildvcs=false \
-      -ldflags="-s -w -buildid= -X github.com/ychiu1211/dsmctl/internal/buildinfo.Version=${VERSION} -X github.com/ychiu1211/dsmctl/internal/buildinfo.Revision=${REVISION}" \
+      -ldflags="-s -w -buildid= -X github.com/derekvery666/dsmctl/internal/buildinfo.Version=${VERSION} -X github.com/derekvery666/dsmctl/internal/buildinfo.Revision=${REVISION}" \
       -o /out/dsmctl-gateway ./cmd/dsmctl-gateway
 
 FROM scratch
@@ -28,7 +28,7 @@ LABEL org.opencontainers.image.title="dsmctl gateway" \
       org.opencontainers.image.revision=$REVISION \
       org.opencontainers.image.created=$CREATED \
       org.opencontainers.image.licenses="Apache-2.0" \
-      org.opencontainers.image.source="https://github.com/ychiu1211/dsmctl"
+      org.opencontainers.image.source="https://github.com/derekvery666/dsmctl"
 
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build --chown=10001:10001 /out/dsmctl-gateway /dsmctl-gateway

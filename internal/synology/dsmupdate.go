@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/dsmupdate"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
-	dsmupdateops "github.com/ychiu1211/dsmctl/internal/synology/operations/dsmupdate"
+	"github.com/derekvery666/dsmctl/internal/domain/dsmupdate"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
+	dsmupdateops "github.com/derekvery666/dsmctl/internal/synology/operations/dsmupdate"
 )
 
 type DSMUpdateStatus = dsmupdate.UpdateStatus

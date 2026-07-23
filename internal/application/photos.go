@@ -6,8 +6,8 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/photos"
-	"github.com/ychiu1211/dsmctl/internal/synology"
+	"github.com/derekvery666/dsmctl/internal/domain/photos"
+	"github.com/derekvery666/dsmctl/internal/synology"
 )
 
 const photosAPIVersion = "dsmctl.io/v1alpha1"

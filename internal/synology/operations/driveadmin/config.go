@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/driveadmin"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
+	"github.com/derekvery666/dsmctl/internal/domain/driveadmin"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
 )
 
 // ConfigAPIName is the Drive server database configuration API.

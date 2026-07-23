@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	netops "github.com/ychiu1211/dsmctl/internal/synology/operations/network"
+	netops "github.com/derekvery666/dsmctl/internal/synology/operations/network"
 )
 
 // TestIsRouteNotConfigured proves the facade recognizes the DSM "advanced routing

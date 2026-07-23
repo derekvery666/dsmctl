@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/loginportal"
-	lpops "github.com/ychiu1211/dsmctl/internal/synology/operations/loginportal"
+	"github.com/derekvery666/dsmctl/internal/domain/loginportal"
+	lpops "github.com/derekvery666/dsmctl/internal/synology/operations/loginportal"
 )
 
 type DSMWebService = loginportal.DSMWebService

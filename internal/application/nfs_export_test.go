@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/nfsexport"
-	"github.com/ychiu1211/dsmctl/internal/synology"
+	"github.com/derekvery666/dsmctl/internal/domain/nfsexport"
+	"github.com/derekvery666/dsmctl/internal/synology"
 )
 
 type fakeNFSExportClient struct {

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/notification"
+	"github.com/derekvery666/dsmctl/internal/domain/notification"
 )
 
 // unmarshalObject rejects an empty or non-object payload before decoding, so a

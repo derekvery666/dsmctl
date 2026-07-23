@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ychiu1211/dsmctl/internal/application"
-	"github.com/ychiu1211/dsmctl/internal/domain/controlpanel"
+	"github.com/derekvery666/dsmctl/internal/application"
+	"github.com/derekvery666/dsmctl/internal/domain/controlpanel"
 )
 
 func newFileServicesCommand(opts *options) *cobra.Command {
@@ -17,6 +17,13 @@ func newFileServicesCommand(opts *options) *cobra.Command {
 		Use:     "file-services",
 		Aliases: []string{"fileservices"},
 		Short:   "Inspect and manage global SMB and NFS services",
+		Long: `Inspect global SMB and NFS configuration and the related discovery, FTP/FTPS/SFTP, rsync, TFTP, and per-share NFS export modules.
+
+'smb state' and 'nfs state' are read-only normalized views. The top-level
+'plan' accepts a typed patch for global SMB or NFS settings and preserves
+omitted fields; the matching apply requires the unchanged state-bound plan and
+approval hash. Nested service modules expose their own capabilities, state,
+request schema, and guarded plan/apply commands.`,
 	}
 	command.AddCommand(
 		newFileServicesCapabilitiesCommand(opts),

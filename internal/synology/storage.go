@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/storage"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
-	"github.com/ychiu1211/dsmctl/internal/synology/operations/storageflashcachemutation"
-	"github.com/ychiu1211/dsmctl/internal/synology/operations/storageinventory"
-	"github.com/ychiu1211/dsmctl/internal/synology/operations/storagemodelconstraints"
-	"github.com/ychiu1211/dsmctl/internal/synology/operations/storagepoolmutation"
-	"github.com/ychiu1211/dsmctl/internal/synology/operations/volumemutation"
+	"github.com/derekvery666/dsmctl/internal/domain/storage"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
+	"github.com/derekvery666/dsmctl/internal/synology/operations/storageflashcachemutation"
+	"github.com/derekvery666/dsmctl/internal/synology/operations/storageinventory"
+	"github.com/derekvery666/dsmctl/internal/synology/operations/storagemodelconstraints"
+	"github.com/derekvery666/dsmctl/internal/synology/operations/storagepoolmutation"
+	"github.com/derekvery666/dsmctl/internal/synology/operations/volumemutation"
 )
 
 type StorageState = storage.State

@@ -17,16 +17,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ychiu1211/dsmctl/internal/application"
-	"github.com/ychiu1211/dsmctl/internal/buildinfo"
-	"github.com/ychiu1211/dsmctl/internal/config"
-	"github.com/ychiu1211/dsmctl/internal/gateway"
-	"github.com/ychiu1211/dsmctl/internal/gateway/admin"
-	gatewayoauth "github.com/ychiu1211/dsmctl/internal/gateway/oauth"
-	"github.com/ychiu1211/dsmctl/internal/gateway/platformauth"
-	gatewaystate "github.com/ychiu1211/dsmctl/internal/gateway/state"
-	"github.com/ychiu1211/dsmctl/internal/mcpserver"
-	"github.com/ychiu1211/dsmctl/internal/runtime"
+	"github.com/derekvery666/dsmctl/internal/application"
+	"github.com/derekvery666/dsmctl/internal/buildinfo"
+	"github.com/derekvery666/dsmctl/internal/config"
+	"github.com/derekvery666/dsmctl/internal/gateway"
+	"github.com/derekvery666/dsmctl/internal/gateway/admin"
+	gatewayoauth "github.com/derekvery666/dsmctl/internal/gateway/oauth"
+	"github.com/derekvery666/dsmctl/internal/gateway/platformauth"
+	gatewaystate "github.com/derekvery666/dsmctl/internal/gateway/state"
+	"github.com/derekvery666/dsmctl/internal/mcpserver"
+	"github.com/derekvery666/dsmctl/internal/runtime"
 )
 
 func main() {

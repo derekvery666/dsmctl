@@ -18,17 +18,17 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ychiu1211/dsmctl/internal/application"
-	"github.com/ychiu1211/dsmctl/internal/credentials"
-	"github.com/ychiu1211/dsmctl/internal/domain/discovery"
-	"github.com/ychiu1211/dsmctl/internal/gateway/platformauth"
-	"github.com/ychiu1211/dsmctl/internal/gateway/state"
-	"github.com/ychiu1211/dsmctl/internal/remotepolicy"
-	"github.com/ychiu1211/dsmctl/internal/runtime"
-	"github.com/ychiu1211/dsmctl/internal/synology"
-	"github.com/ychiu1211/dsmctl/internal/tlstrust"
-	"github.com/ychiu1211/dsmctl/internal/webassets"
-	"github.com/ychiu1211/dsmctl/internal/weblogin"
+	"github.com/derekvery666/dsmctl/internal/application"
+	"github.com/derekvery666/dsmctl/internal/credentials"
+	"github.com/derekvery666/dsmctl/internal/domain/discovery"
+	"github.com/derekvery666/dsmctl/internal/gateway/platformauth"
+	"github.com/derekvery666/dsmctl/internal/gateway/state"
+	"github.com/derekvery666/dsmctl/internal/remotepolicy"
+	"github.com/derekvery666/dsmctl/internal/runtime"
+	"github.com/derekvery666/dsmctl/internal/synology"
+	"github.com/derekvery666/dsmctl/internal/tlstrust"
+	"github.com/derekvery666/dsmctl/internal/webassets"
+	"github.com/derekvery666/dsmctl/internal/weblogin"
 )
 
 const (

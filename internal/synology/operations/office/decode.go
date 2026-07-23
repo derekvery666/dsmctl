@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/office"
+	"github.com/derekvery666/dsmctl/internal/domain/office"
 )
 
 // DSM field names for the Synology Office settings surface, confirmed live on

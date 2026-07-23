@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ychiu1211/dsmctl/internal/webassets"
+	"github.com/derekvery666/dsmctl/internal/webassets"
 )
 
 const (

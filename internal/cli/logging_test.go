@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ychiu1211/dsmctl/internal/remotepolicy"
+	"github.com/derekvery666/dsmctl/internal/remotepolicy"
 )
 
 func TestBuildLoggerFlagWinsOverEnv(t *testing.T) {

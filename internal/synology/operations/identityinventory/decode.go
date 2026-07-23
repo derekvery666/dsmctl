@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/identity"
+	"github.com/derekvery666/dsmctl/internal/domain/identity"
 )
 
 func decodeUsers(data json.RawMessage) ([]identity.User, error) {

@@ -7,7 +7,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/discovery"
+	"github.com/derekvery666/dsmctl/internal/domain/discovery"
 )
 
 // initialBursts is when, relative to the start of a sweep, the query is first

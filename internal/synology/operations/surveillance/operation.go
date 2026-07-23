@@ -10,8 +10,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/surveillance"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
+	"github.com/derekvery666/dsmctl/internal/domain/surveillance"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
 )
 
 // PackageID is the DSM package that owns the Surveillance Station APIs.

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/servicediscovery"
-	"github.com/ychiu1211/dsmctl/internal/synology"
+	"github.com/derekvery666/dsmctl/internal/domain/servicediscovery"
+	"github.com/derekvery666/dsmctl/internal/synology"
 )
 
 type fakeServiceDiscoveryClient struct {

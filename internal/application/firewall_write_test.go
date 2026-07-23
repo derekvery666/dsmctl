@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/firewall"
-	"github.com/ychiu1211/dsmctl/internal/synology"
+	"github.com/derekvery666/dsmctl/internal/domain/firewall"
+	"github.com/derekvery666/dsmctl/internal/synology"
 )
 
 // fakeFirewallClient implements firewallClient for the plan/apply and guard tests.

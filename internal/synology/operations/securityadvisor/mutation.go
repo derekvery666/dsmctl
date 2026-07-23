@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/securityadvisor"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
+	"github.com/derekvery666/dsmctl/internal/domain/securityadvisor"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
 )
 
 // The write wire is live-verified on the DSM 7.x lab and cross-checked against

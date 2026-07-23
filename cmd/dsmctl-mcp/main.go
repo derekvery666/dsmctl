@@ -10,16 +10,21 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/ychiu1211/dsmctl/internal/application"
-	"github.com/ychiu1211/dsmctl/internal/buildinfo"
-	"github.com/ychiu1211/dsmctl/internal/config"
-	"github.com/ychiu1211/dsmctl/internal/credentials"
-	"github.com/ychiu1211/dsmctl/internal/mcpserver"
-	"github.com/ychiu1211/dsmctl/internal/observability"
-	"github.com/ychiu1211/dsmctl/internal/runtime"
+	"github.com/derekvery666/dsmctl/internal/application"
+	"github.com/derekvery666/dsmctl/internal/buildinfo"
+	"github.com/derekvery666/dsmctl/internal/config"
+	"github.com/derekvery666/dsmctl/internal/credentials"
+	"github.com/derekvery666/dsmctl/internal/mcpserver"
+	"github.com/derekvery666/dsmctl/internal/observability"
+	"github.com/derekvery666/dsmctl/internal/runtime"
 )
 
 func main() {
+	flag.Usage = func() {
+		output := flag.CommandLine.Output()
+		fmt.Fprint(output, mcpUsagePreamble(os.Args[0]))
+		flag.PrintDefaults()
+	}
 	configPath := flag.String("config", config.DefaultPath(), "configuration file path")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
@@ -64,6 +69,23 @@ func main() {
 	if closeErr != nil {
 		fmt.Fprintln(os.Stderr, "dsmctl-mcp: close sessions:", closeErr)
 	}
+}
+
+func mcpUsagePreamble(executable string) string {
+	return fmt.Sprintf(`Run dsmctl's MCP server over stdio for an MCP client.
+
+This process is not an interactive shell: stdout is reserved for JSON-RPC.
+Configure NAS profiles with "dsmctl nas add", authenticate them with
+"dsmctl auth login --nas <name>", and launch this binary from the MCP client.
+Agents should begin with list_nas and get_auth_status, pass nas explicitly,
+use get_* tools for reads, and use only matching plan_* then approved apply_*
+tools for mutations.
+
+Usage:
+  %s [flags]
+
+Flags:
+`, executable)
 }
 
 func fatal(err error) {

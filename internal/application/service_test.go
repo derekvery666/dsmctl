@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ychiu1211/dsmctl/internal/synology"
+	"github.com/derekvery666/dsmctl/internal/synology"
 )
 
 func TestAuthenticationErrorDirectsNonInteractiveCallerToCLI(t *testing.T) {

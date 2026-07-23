@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/packagecenter"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
+	"github.com/derekvery666/dsmctl/internal/domain/packagecenter"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
 )
 
 // ServerAPIName is the online package-catalog API (Synology's repository).

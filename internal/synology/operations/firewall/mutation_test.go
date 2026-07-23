@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/firewall"
+	"github.com/derekvery666/dsmctl/internal/domain/firewall"
 )
 
 // TestExecuteProfileSetRequestShape asserts the full-profile Profile.set body: a

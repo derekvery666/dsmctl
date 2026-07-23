@@ -3,7 +3,7 @@ package weblogin
 import (
 	"net/url"
 
-	"github.com/ychiu1211/dsmctl/internal/webassets"
+	"github.com/derekvery666/dsmctl/internal/webassets"
 )
 
 // buildPage renders the loopback helper page that hosts the DSM sign-in

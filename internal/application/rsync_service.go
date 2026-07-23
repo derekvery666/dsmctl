@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/rsyncservice"
-	"github.com/ychiu1211/dsmctl/internal/synology"
+	"github.com/derekvery666/dsmctl/internal/domain/rsyncservice"
+	"github.com/derekvery666/dsmctl/internal/synology"
 )
 
 const rsyncServiceAPIVersion = "dsmctl.io/v1alpha1"

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ychiu1211/dsmctl/internal/provision"
+	"github.com/derekvery666/dsmctl/internal/provision"
 )
 
 // InstallRequest asks to detect a discovered device's install state and,

@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/hardware"
+	"github.com/derekvery666/dsmctl/internal/domain/hardware"
 )
 
 func newHardwareCommand(opts *options) *cobra.Command {

@@ -12,8 +12,8 @@ import (
 	// hosts without a system zoneinfo directory, such as Windows.
 	_ "time/tzdata"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/controlpanel"
-	"github.com/ychiu1211/dsmctl/internal/synology"
+	"github.com/derekvery666/dsmctl/internal/domain/controlpanel"
+	"github.com/derekvery666/dsmctl/internal/synology"
 )
 
 const controlPanelTimeAPIVersion = "dsmctl.io/v1alpha1"

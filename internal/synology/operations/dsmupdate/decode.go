@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/dsmupdate"
+	"github.com/derekvery666/dsmctl/internal/domain/dsmupdate"
 )
 
 // unmarshalObject rejects an empty or non-object payload before decoding, so a

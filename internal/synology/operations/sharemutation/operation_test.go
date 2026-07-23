@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/share"
+	"github.com/derekvery666/dsmctl/internal/domain/share"
 )
 
 func TestShareCreateAndUpdateEncodeNestedShareInfo(t *testing.T) {

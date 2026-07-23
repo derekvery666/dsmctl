@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ychiu1211/dsmctl/internal/gateway/platformauth"
-	"github.com/ychiu1211/dsmctl/internal/gateway/state"
+	"github.com/derekvery666/dsmctl/internal/gateway/platformauth"
+	"github.com/derekvery666/dsmctl/internal/gateway/state"
 )
 
 type attemptWindow struct {

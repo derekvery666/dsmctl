@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/office"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
-	officeops "github.com/ychiu1211/dsmctl/internal/synology/operations/office"
+	"github.com/derekvery666/dsmctl/internal/domain/office"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
+	officeops "github.com/derekvery666/dsmctl/internal/synology/operations/office"
 )
 
 type OfficeInfo = office.Info

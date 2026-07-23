@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/firewall"
+	"github.com/derekvery666/dsmctl/internal/domain/firewall"
 )
 
 // The decoders are strict about the response envelope (a malformed shape is an

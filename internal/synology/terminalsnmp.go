@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/terminalsnmp"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
-	terminalsnmpops "github.com/ychiu1211/dsmctl/internal/synology/operations/terminalsnmp"
+	"github.com/derekvery666/dsmctl/internal/domain/terminalsnmp"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
+	terminalsnmpops "github.com/derekvery666/dsmctl/internal/synology/operations/terminalsnmp"
 )
 
 type TerminalState = terminalsnmp.TerminalState

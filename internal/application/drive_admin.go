@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/driveadmin"
-	"github.com/ychiu1211/dsmctl/internal/synology"
+	"github.com/derekvery666/dsmctl/internal/domain/driveadmin"
+	"github.com/derekvery666/dsmctl/internal/synology"
 )
 
 // Drive Admin log paging bounds mirror the DSM system log module.

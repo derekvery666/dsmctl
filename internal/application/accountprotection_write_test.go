@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/accountprotection"
-	"github.com/ychiu1211/dsmctl/internal/synology"
+	"github.com/derekvery666/dsmctl/internal/domain/accountprotection"
+	"github.com/derekvery666/dsmctl/internal/synology"
 )
 
 type fakeAccountProtectionClient struct {

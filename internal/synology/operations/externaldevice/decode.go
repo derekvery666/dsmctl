@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/externaldevice"
+	"github.com/derekvery666/dsmctl/internal/domain/externaldevice"
 )
 
 // decodeStorageArea normalizes a SYNO.Core.ExternalDevice.Storage.{USB,eSATA}

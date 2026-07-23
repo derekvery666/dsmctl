@@ -6,8 +6,8 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/ychiu1211/dsmctl/internal/buildinfo"
-	"github.com/ychiu1211/dsmctl/internal/cli"
+	"github.com/derekvery666/dsmctl/internal/buildinfo"
+	"github.com/derekvery666/dsmctl/internal/cli"
 )
 
 func main() {

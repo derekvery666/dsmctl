@@ -13,7 +13,7 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
-	"github.com/ychiu1211/dsmctl/internal/remotepolicy"
+	"github.com/derekvery666/dsmctl/internal/remotepolicy"
 )
 
 const (

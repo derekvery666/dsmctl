@@ -1,6 +1,6 @@
 package packagecenter
 
-import "github.com/ychiu1211/dsmctl/internal/domain/packagecenter"
+import "github.com/derekvery666/dsmctl/internal/domain/packagecenter"
 
 // encodeSettings serializes the writable settings to DSM `set` parameters. Only
 // the automatic-update policy is written; the three DSM fields are kept

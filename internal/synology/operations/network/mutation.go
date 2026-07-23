@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/network"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
+	"github.com/derekvery666/dsmctl/internal/domain/network"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
 )
 
 // WI-069 Slice B write wire, live-probed on the DSM 7.3 lab (build 81168) with

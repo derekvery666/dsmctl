@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"net/url"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/nfsexport"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
+	"github.com/derekvery666/dsmctl/internal/domain/nfsexport"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
 )
 
 const (

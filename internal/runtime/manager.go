@@ -18,14 +18,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ychiu1211/dsmctl/internal/config"
-	"github.com/ychiu1211/dsmctl/internal/credentials"
-	"github.com/ychiu1211/dsmctl/internal/domain/identity"
-	"github.com/ychiu1211/dsmctl/internal/domain/resmon"
-	"github.com/ychiu1211/dsmctl/internal/domain/share"
-	"github.com/ychiu1211/dsmctl/internal/domain/syslog"
-	"github.com/ychiu1211/dsmctl/internal/synology"
-	"github.com/ychiu1211/dsmctl/internal/weblogin"
+	"github.com/derekvery666/dsmctl/internal/config"
+	"github.com/derekvery666/dsmctl/internal/credentials"
+	"github.com/derekvery666/dsmctl/internal/domain/identity"
+	"github.com/derekvery666/dsmctl/internal/domain/resmon"
+	"github.com/derekvery666/dsmctl/internal/domain/share"
+	"github.com/derekvery666/dsmctl/internal/domain/syslog"
+	"github.com/derekvery666/dsmctl/internal/synology"
+	"github.com/derekvery666/dsmctl/internal/weblogin"
 )
 
 type Client interface {

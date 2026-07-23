@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/share"
+	"github.com/derekvery666/dsmctl/internal/domain/share"
 )
 
 func decodeShares(data json.RawMessage) ([]share.SharedFolder, error) {

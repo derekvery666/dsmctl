@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/config"
-	"github.com/ychiu1211/dsmctl/internal/credentials"
-	"github.com/ychiu1211/dsmctl/internal/domain/identity"
-	"github.com/ychiu1211/dsmctl/internal/domain/resmon"
-	"github.com/ychiu1211/dsmctl/internal/domain/syslog"
-	"github.com/ychiu1211/dsmctl/internal/remotepolicy"
-	"github.com/ychiu1211/dsmctl/internal/runtime"
-	"github.com/ychiu1211/dsmctl/internal/synology"
+	"github.com/derekvery666/dsmctl/internal/config"
+	"github.com/derekvery666/dsmctl/internal/credentials"
+	"github.com/derekvery666/dsmctl/internal/domain/identity"
+	"github.com/derekvery666/dsmctl/internal/domain/resmon"
+	"github.com/derekvery666/dsmctl/internal/domain/syslog"
+	"github.com/derekvery666/dsmctl/internal/remotepolicy"
+	"github.com/derekvery666/dsmctl/internal/runtime"
+	"github.com/derekvery666/dsmctl/internal/synology"
 )
 
 type Service struct {

@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/universalsearch"
+	"github.com/derekvery666/dsmctl/internal/domain/universalsearch"
 )
 
 // finishedState is the DSM index sub-state string reported when the index is

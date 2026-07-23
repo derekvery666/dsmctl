@@ -12,9 +12,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/ychiu1211/dsmctl/internal/application"
-	gatewaystate "github.com/ychiu1211/dsmctl/internal/gateway/state"
-	"github.com/ychiu1211/dsmctl/internal/remotepolicy"
+	"github.com/derekvery666/dsmctl/internal/application"
+	gatewaystate "github.com/derekvery666/dsmctl/internal/gateway/state"
+	"github.com/derekvery666/dsmctl/internal/remotepolicy"
 )
 
 type approvalRecordingAuditor struct {

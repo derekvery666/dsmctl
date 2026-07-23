@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/discovery"
+	"github.com/derekvery666/dsmctl/internal/domain/discovery"
 )
 
 // --- TLV/packet builders shared by the findhost tests -----------------------

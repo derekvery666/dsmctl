@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/hyperbackup"
-	"github.com/ychiu1211/dsmctl/internal/synology"
+	"github.com/derekvery666/dsmctl/internal/domain/hyperbackup"
+	"github.com/derekvery666/dsmctl/internal/synology"
 )
 
 const hyperBackupAPIVersion = "dsmctl.io/v1alpha1"

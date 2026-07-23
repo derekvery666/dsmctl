@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/universalsearch"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
-	universalsearchops "github.com/ychiu1211/dsmctl/internal/synology/operations/universalsearch"
+	"github.com/derekvery666/dsmctl/internal/domain/universalsearch"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
+	universalsearchops "github.com/derekvery666/dsmctl/internal/synology/operations/universalsearch"
 )
 
 type UniversalSearchIndexedFolders = universalsearch.IndexedFolders

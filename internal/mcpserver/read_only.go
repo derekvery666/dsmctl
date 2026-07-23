@@ -3,7 +3,7 @@ package mcpserver
 import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/ychiu1211/dsmctl/internal/application"
+	"github.com/derekvery666/dsmctl/internal/application"
 )
 
 // NewReadOnly returns the MCP surface permitted by the developer HTTP

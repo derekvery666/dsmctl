@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/kmip"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
-	kmipops "github.com/ychiu1211/dsmctl/internal/synology/operations/kmip"
+	"github.com/derekvery666/dsmctl/internal/domain/kmip"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
+	kmipops "github.com/derekvery666/dsmctl/internal/synology/operations/kmip"
 )
 
 type KMIPStatus = kmip.Status

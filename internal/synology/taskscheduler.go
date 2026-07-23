@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/taskscheduler"
-	tsops "github.com/ychiu1211/dsmctl/internal/synology/operations/taskscheduler"
+	"github.com/derekvery666/dsmctl/internal/domain/taskscheduler"
+	tsops "github.com/derekvery666/dsmctl/internal/synology/operations/taskscheduler"
 )
 
 type TaskSchedulerScheduledTasks = taskscheduler.ScheduledTasks

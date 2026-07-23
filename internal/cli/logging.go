@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/ychiu1211/dsmctl/internal/observability"
-	"github.com/ychiu1211/dsmctl/internal/remotepolicy"
+	"github.com/derekvery666/dsmctl/internal/observability"
+	"github.com/derekvery666/dsmctl/internal/remotepolicy"
 )
 
 // buildLogger returns the diagnostic logger for the process, or nil when logging

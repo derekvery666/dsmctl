@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ychiu1211/dsmctl/internal/observability"
-	"github.com/ychiu1211/dsmctl/internal/remotepolicy"
+	"github.com/derekvery666/dsmctl/internal/observability"
+	"github.com/derekvery666/dsmctl/internal/remotepolicy"
 )
 
 func loggingTestClient(t *testing.T, server *httptest.Server, logger *slog.Logger) *Client {

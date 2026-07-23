@@ -6,8 +6,8 @@ import (
 	"net/url"
 	"sort"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/identity"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
+	"github.com/derekvery666/dsmctl/internal/domain/identity"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
 )
 
 const (

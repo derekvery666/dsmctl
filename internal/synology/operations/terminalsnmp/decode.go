@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/terminalsnmp"
+	"github.com/derekvery666/dsmctl/internal/domain/terminalsnmp"
 )
 
 // The decoders are strict about the response envelope and the presence of the

@@ -6,8 +6,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/syslog"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
+	"github.com/derekvery666/dsmctl/internal/domain/syslog"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
 )
 
 const (

@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/network"
+	"github.com/derekvery666/dsmctl/internal/domain/network"
 )
 
 // The decoders are strict about the response envelope (a malformed shape is an

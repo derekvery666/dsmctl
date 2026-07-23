@@ -17,8 +17,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ychiu1211/dsmctl/internal/gateway/platformauth"
-	"github.com/ychiu1211/dsmctl/internal/weblogin"
+	"github.com/derekvery666/dsmctl/internal/gateway/platformauth"
+	"github.com/derekvery666/dsmctl/internal/weblogin"
 )
 
 var ErrUnauthorized = errors.New("DSM administrator authentication failed")

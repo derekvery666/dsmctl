@@ -29,7 +29,7 @@ import (
 	"net"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/discovery"
+	"github.com/derekvery666/dsmctl/internal/domain/discovery"
 )
 
 // BroadcastPort is the UDP port findhostd binds and answers on. A discovery

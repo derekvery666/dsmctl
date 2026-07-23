@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/snapshotreplication"
-	"github.com/ychiu1211/dsmctl/internal/synology"
+	"github.com/derekvery666/dsmctl/internal/domain/snapshotreplication"
+	"github.com/derekvery666/dsmctl/internal/synology"
 )
 
 // sleepContext is a context-cancellable pause used by the async task poller.

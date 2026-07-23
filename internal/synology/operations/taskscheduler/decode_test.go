@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/taskscheduler"
+	"github.com/derekvery666/dsmctl/internal/domain/taskscheduler"
 )
 
 // TestDecodeScheduledEmptyLiveShape covers the live-verified empty envelope

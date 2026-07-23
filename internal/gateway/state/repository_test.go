@@ -15,7 +15,7 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
-	"github.com/ychiu1211/dsmctl/internal/credentials"
+	"github.com/derekvery666/dsmctl/internal/credentials"
 )
 
 func TestRepositoryProfileCRUDLimitAndCAS(t *testing.T) {

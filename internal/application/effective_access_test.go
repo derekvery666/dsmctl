@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/access"
-	"github.com/ychiu1211/dsmctl/internal/domain/identity"
+	"github.com/derekvery666/dsmctl/internal/domain/access"
+	"github.com/derekvery666/dsmctl/internal/domain/identity"
 )
 
 func TestValidateAccessQuery(t *testing.T) {

@@ -3,7 +3,7 @@ package cli
 import (
 	"fmt"
 
-	"github.com/ychiu1211/dsmctl/internal/synology"
+	"github.com/derekvery666/dsmctl/internal/synology"
 )
 
 // Stable process exit codes keyed by DSM error category. These are part of the

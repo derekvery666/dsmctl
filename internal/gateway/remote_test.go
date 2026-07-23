@@ -17,14 +17,14 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
 
-	"github.com/ychiu1211/dsmctl/internal/application"
-	"github.com/ychiu1211/dsmctl/internal/config"
-	"github.com/ychiu1211/dsmctl/internal/credentials"
-	gatewayoauth "github.com/ychiu1211/dsmctl/internal/gateway/oauth"
-	"github.com/ychiu1211/dsmctl/internal/gateway/state"
-	"github.com/ychiu1211/dsmctl/internal/mcpserver"
-	"github.com/ychiu1211/dsmctl/internal/remotepolicy"
-	"github.com/ychiu1211/dsmctl/internal/runtime"
+	"github.com/derekvery666/dsmctl/internal/application"
+	"github.com/derekvery666/dsmctl/internal/config"
+	"github.com/derekvery666/dsmctl/internal/credentials"
+	gatewayoauth "github.com/derekvery666/dsmctl/internal/gateway/oauth"
+	"github.com/derekvery666/dsmctl/internal/gateway/state"
+	"github.com/derekvery666/dsmctl/internal/mcpserver"
+	"github.com/derekvery666/dsmctl/internal/remotepolicy"
+	"github.com/derekvery666/dsmctl/internal/runtime"
 )
 
 type memoryAuthenticator struct {

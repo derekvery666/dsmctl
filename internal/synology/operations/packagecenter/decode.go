@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/packagecenter"
+	"github.com/derekvery666/dsmctl/internal/domain/packagecenter"
 )
 
 // decodePackages reads the installed-package list. The response envelope and its

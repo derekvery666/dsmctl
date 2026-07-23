@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/surveillance"
-	"github.com/ychiu1211/dsmctl/internal/synology"
+	"github.com/derekvery666/dsmctl/internal/domain/surveillance"
+	"github.com/derekvery666/dsmctl/internal/synology"
 )
 
 const surveillanceAPIVersion = "dsmctl.io/v1alpha1"

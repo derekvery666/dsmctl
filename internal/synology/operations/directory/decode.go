@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/directory"
+	"github.com/derekvery666/dsmctl/internal/domain/directory"
 )
 
 // decodeDomain normalizes SYNO.Core.Directory.Domain.get into the AD

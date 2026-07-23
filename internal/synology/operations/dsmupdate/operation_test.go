@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
 )
 
 type executorFunc func(context.Context, compatibility.Request) (json.RawMessage, error)

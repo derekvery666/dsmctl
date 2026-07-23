@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/network"
-	"github.com/ychiu1211/dsmctl/internal/synology"
+	"github.com/derekvery666/dsmctl/internal/domain/network"
+	"github.com/derekvery666/dsmctl/internal/synology"
 )
 
 // fakeNetworkClient implements networkClient for the plan/apply and guard tests.

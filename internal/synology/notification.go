@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/notification"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
-	notificationops "github.com/ychiu1211/dsmctl/internal/synology/operations/notification"
+	"github.com/derekvery666/dsmctl/internal/domain/notification"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
+	notificationops "github.com/derekvery666/dsmctl/internal/synology/operations/notification"
 )
 
 type NotificationMailState = notification.MailState

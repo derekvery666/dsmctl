@@ -10,12 +10,21 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ychiu1211/dsmctl/internal/application"
-	"github.com/ychiu1211/dsmctl/internal/domain/identity"
+	"github.com/derekvery666/dsmctl/internal/application"
+	"github.com/derekvery666/dsmctl/internal/domain/identity"
 )
 
 func newAccountCommand(opts *options) *cobra.Command {
-	command := &cobra.Command{Use: "account", Short: "Inspect and manage DSM users, groups, quotas, and application access"}
+	command := &cobra.Command{
+		Use:   "account",
+		Short: "Inspect and manage DSM users, groups, quotas, and application access",
+		Long: `Inspect local DSM users and groups, optionally expand direct memberships, quota assignments, and explicit application privileges, and manage each area through one typed plan/apply contract.
+
+'inventory' is read-only and supports focused principal expansion. 'plan'
+accepts user/group create, update, or delete plus complete membership sets,
+quota assignments, and application-privilege changes. Password values never
+enter request JSON; user changes use an apply-time credential_ref.`,
+	}
 	command.AddCommand(
 		newAccountCapabilitiesCommand(opts),
 		newAccountInventoryCommand(opts),

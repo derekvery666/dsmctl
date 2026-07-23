@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/downloadstation"
+	"github.com/derekvery666/dsmctl/internal/domain/downloadstation"
 )
 
 // flexInt64 / flexInt decode a JSON number that some Download Station releases

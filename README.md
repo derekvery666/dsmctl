@@ -1,12 +1,77 @@
 # dsmctl
 
-`dsmctl` is a Go client for managing one or more Synology DSM systems. One repository produces three front ends backed by the same typed DSM WebAPI client:
+> Safe, typed Synology DSM administration for humans and AI agents.
 
-- `dsmctl`: a command-line interface for administrators.
-- `dsmctl-mcp`: a stdio MCP server for AI clients.
-- `dsmctl-gateway`: a portable amd64 Streamable HTTP MCP gateway; generic managed deployments require first-run local administrator setup, while the Synology SPK delegates fresh-install access to DSM administrators and can optionally enable a local fallback login. It then supports dynamic multi-NAS administration, scoped tokens, out-of-band high-risk approval, and redacted audit, while static developer mode stays read-only.
+[Apache-2.0 licensed](LICENSE)
 
-The first milestone implements one complete connection slice: configure multiple NAS profiles, authenticate with password and DSM two-factor authentication, maintain independent sessions, and read basic system information. Management modules now cover storage and SAN inventory, guarded storage-pool, volume, and SAN lifecycles, local user/group/share management, effective-access explanation, a focused read-only Control Panel time module, guarded global SMB/NFS File Services, and Package Center inventory, settings, and guarded package lifecycle through the same CLI/MCP/application stack. Functionality provided by installed packages is managed through package-scoped operations that re-check the installed package version before every command; the read-only Synology Drive Admin module is the first consumer.
+`dsmctl` gives operators and AI agents one DSM-aware control plane for one or
+many Synology NAS systems. Reads are explicit, supported changes use a guarded
+plan/review/apply workflow, and every surface shares the same typed application
+and compatibility layer.
+
+| Surface | Best for | Transport |
+| --- | --- | --- |
+| `dsmctl` | Administrators, scripts, and CI jobs | Command line with human or JSON output |
+| `dsmctl-mcp` | A local AI client using the operator's configured profiles | MCP over stdio |
+| `dsmctl-gateway` | A team or operator managing several NAS systems from one service | Streamable HTTP MCP plus a browser Admin console |
+
+![dsmctl MCP Server overview](docs/assets/gateway-admin/02-overview.png)
+
+## Why dsmctl
+
+- **One model across CLI and MCP.** Both front ends call the same application
+  operations; MCP never shells out to the CLI and neither surface constructs
+  raw DSM requests.
+- **Safe changes by default.** A mutation first produces a state-bound plan for
+  review. Apply re-reads DSM state, rejects stale or modified plans, performs a
+  typed operation, and verifies the result.
+- **Independent multi-NAS trust.** Each profile has its own DSM URL, TLS trust,
+  session, stored credentials, revision, and remote-client allowlist.
+- **DSM-aware compatibility.** Backend selection happens per operation from the
+  APIs and versions advertised by the target NAS; unsupported or unverified
+  operations fail closed.
+- **Secrets stay out of agent inputs.** Passwords, OTPs, DSM sessions, and
+  bearer tokens are stored or entered through dedicated human-gated surfaces,
+  not request JSON, plans, logs, or MCP tool arguments.
+
+## Gateway Admin as a central management console
+
+The Gateway Admin UI is a central management console/control plane, not a
+replacement for DSM and not a content-management system. It manages the
+relationships around DSM administration:
+
+1. **NAS profiles** isolate connection, TLS, DSM session, and credential state
+   for each managed NAS.
+2. **MCP access** gives every client an explicit NAS allowlist and a preset or
+   custom combination of `nas.read`, `nas.plan`, `nas.apply`, and
+   `lan.discover`.
+3. **High-risk approvals** add a short-lived, single-use, out-of-band approval
+   before a remote high-risk Apply can run.
+4. **Audit** records administrator, token, approval, and remote-execution events
+   without retaining passwords, sessions, or bearer-token values.
+
+| Fleet and client permissions | Human control over high-risk changes |
+| --- | --- |
+| ![NAS profiles](docs/assets/gateway-admin/03-nas.png) | ![MCP client permissions](docs/assets/gateway-admin/04-mcp-access.png) |
+| Every NAS is an independent profile. | Every client gets an explicit NAS allowlist and scope. |
+| ![High-risk approval](docs/assets/gateway-admin/05-approvals.png) | ![Redacted audit trail](docs/assets/gateway-admin/06-audit.png) |
+| Remote high-risk Apply needs a separate one-time approval. | Administrative and remote events remain inspectable and exportable. |
+
+See the [Gateway Admin guide](docs/gateway-admin-guide.md) for the complete
+setup, OAuth/manual-token, approval, audit, and recovery workflows.
+
+## Project and download status
+
+The CLI, stdio MCP server, Gateway, container assets, and x86_64 Synology SPK
+builder are in the repository today. Public GitHub Releases have **not** been
+published yet, so the honest installation path is currently a source build.
+The SPK remains a preview until the hardware/lifecycle matrix in
+[`deploy/synology/SUPPORTED.md`](deploy/synology/SUPPORTED.md) is complete.
+
+The [public release and distribution plan](docs/public-release-plan.md) defines
+the exact CLI archives, install scripts, OCI image, `.spk`, checksums, release
+gates, and GitHub Release layout needed to make this page a direct-download
+entry point without overstating current certification.
 
 ## Architecture
 
@@ -25,11 +90,13 @@ Planned work and multi-agent coordination live in [the specification index](spec
 
 Focused Control Panel module conventions are documented in [the Control Panel guide](docs/control-panel.md).
 
-## Build
+## Install from source
 
 Go 1.25 or newer is required.
 
 ```console
+git clone https://github.com/derekvery666/dsmctl.git
+cd dsmctl
 go test ./...
 go build -o bin/dsmctl ./cmd/dsmctl
 go build -o bin/dsmctl-mcp ./cmd/dsmctl-mcp
@@ -40,9 +107,9 @@ On Windows, use `bin/dsmctl.exe` and `bin/dsmctl-mcp.exe`.
 
 ## Release version
 
-The current release is `7.3.2-18`. dsmctl versions use
+The current source version is `7.3.2-18`. dsmctl versions use
 `DSM_MAJOR.DSM_MINOR.DSM_PATCH-DSMCTL_BUILD`: `7.3.2` names the latest DSM
-feature train certified by the release, while `13` is the monotonically
+feature train certified by the release, while `18` is the monotonically
 increasing dsmctl build within that train. CLI, stdio MCP, gateway container,
 and Synology SPK artifacts built from one revision carry the same full version.
 
@@ -59,6 +126,58 @@ dsmctl-gateway --version
 ```
 
 ## Quick start
+
+AI agents and first-time operators should begin with the
+[AI agent quick start](docs/agent-quickstart.md). It defines explicit target
+selection, authentication handoff, capability discovery, and the guarded
+plan/review/apply sequence shared by CLI and MCP.
+
+The CLI has three recurring patterns:
+
+1. **Connect** — create a named profile with `dsmctl nas add`, then complete
+   human authentication with `dsmctl auth login`.
+2. **Read** — select a profile with `--nas`, check the relevant
+   `capabilities` command, and add `--json` when another program or agent will
+   consume the result.
+3. **Change** — run the module's `plan` command, review the returned target,
+   risk, summary, warnings, precondition, and hash, then pass that exact
+   unmodified plan and hash to the matching `apply` command.
+
+Run `dsmctl --help` for the safe starting workflow and
+`dsmctl <module> --help` for module-specific commands. A binary-only agent can
+inspect the complete CLI surface with `dsmctl commands list --json`, filter to
+one module or runnable operations, and retrieve one command's exact usage,
+flags, defaults, required inputs, workflow role, and request-schema link with
+`dsmctl commands show <command path...> --json`.
+
+```console
+dsmctl commands list --runnable-only --json
+dsmctl commands list --prefix account
+dsmctl commands list --prefix "control-panel file-services"
+dsmctl commands list --prefix drive
+dsmctl commands show account inventory --json
+dsmctl commands show control-panel file-services plan --json
+dsmctl commands show drive config plan --json
+```
+
+The complete catalog currently contains 357 visible project commands, of which
+298 are directly runnable. Separately, 44 plan commands accept an external
+typed request JSON file. Discover those request bodies and emit their exact
+JSON Schema offline with:
+
+```console
+dsmctl schema list
+dsmctl schema list --json
+dsmctl schema show account plan
+dsmctl schema show storage plan > storage-request.schema.json
+dsmctl account plan --nas office --file request.json --output plan.json
+```
+
+Each command's normal `--help` also links back to its exact catalog entry, and
+each applicable plan help page prints its schema command and invocation
+example. The schema describes JSON structure and rejects unknown properties. The plan
+command remains the authority for semantic, DSM capability, current-state, and
+safety validation; do not guess fields or treat schema validation as approval.
 
 Add a NAS profile:
 
@@ -276,6 +395,10 @@ test NAS and bypasses this protection entirely.
 
 ## MCP server
 
+For the recommended tool-call order and mutation approval contract, see the
+[AI agent quick start](docs/agent-quickstart.md). MCP clients also receive the
+same guidance in the server's initialize instructions.
+
 Run the stdio server:
 
 ```console
@@ -411,3 +534,7 @@ A management feature normally adds:
 4. Thin CLI and MCP adapters.
 
 Raw generic DSM calls are not exposed as MCP tools. Mutating operations use guarded plan/apply semantics as the project expands into Control Panel and SAN management.
+
+## License
+
+dsmctl is available under the [Apache License 2.0](LICENSE).

@@ -6,9 +6,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/firewall"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
-	fwops "github.com/ychiu1211/dsmctl/internal/synology/operations/firewall"
+	"github.com/derekvery666/dsmctl/internal/domain/firewall"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
+	fwops "github.com/derekvery666/dsmctl/internal/synology/operations/firewall"
 )
 
 type FirewallStatus = firewall.Status

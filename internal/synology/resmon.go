@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/resmon"
-	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
-	"github.com/ychiu1211/dsmctl/internal/synology/operations/resmonsetting"
-	"github.com/ychiu1211/dsmctl/internal/synology/operations/resmonsettingmutation"
-	"github.com/ychiu1211/dsmctl/internal/synology/operations/utilizationread"
+	"github.com/derekvery666/dsmctl/internal/domain/resmon"
+	"github.com/derekvery666/dsmctl/internal/synology/compatibility"
+	"github.com/derekvery666/dsmctl/internal/synology/operations/resmonsetting"
+	"github.com/derekvery666/dsmctl/internal/synology/operations/resmonsettingmutation"
+	"github.com/derekvery666/dsmctl/internal/synology/operations/utilizationread"
 )
 
 type ResourceUtilization = resmon.Utilization

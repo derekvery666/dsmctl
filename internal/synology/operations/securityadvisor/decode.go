@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/securityadvisor"
+	"github.com/derekvery666/dsmctl/internal/domain/securityadvisor"
 )
 
 // The decoder is strict about the response envelope and about severity values

@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/controlpanel"
+	"github.com/derekvery666/dsmctl/internal/domain/controlpanel"
 )
 
 func decodeSMB(data json.RawMessage, modern bool) (controlpanel.SMBState, error) {

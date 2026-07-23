@@ -4,7 +4,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/discovery"
+	"github.com/derekvery666/dsmctl/internal/domain/discovery"
 )
 
 func TestFoldResponseIntoDedupsBySerial(t *testing.T) {

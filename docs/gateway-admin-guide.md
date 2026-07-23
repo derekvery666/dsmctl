@@ -178,37 +178,67 @@ Session，但不會更改任何 DSM 帳號。
 
 ## 介面設計圖
 
-以下畫面由實際 `linux/amd64` 隔離測試 container 擷取；其中 NAS、Token
-與核准資料皆為虛構示範資料，沒有連線任何真實 DSM。
+以下畫面由目前版本的 Gateway Admin UI 搭配隔離的本機 demo state 擷取；
+`office`、`backup`、`readme-agent`、網址、Token ID 與核准 hash 都是虛構
+示範資料，沒有連線任何真實 DSM，也沒有執行 DSM mutation。
 
 ### 第一次設定
+
+Generic Linux 部署先建立只管理 Gateway 的本機帳號。這個帳號不是 DSM
+帳號，也不會自動取得 Host NAS 權限；每台 NAS 仍須另外建立 Profile 並登入。
 
 ![第一次設定](assets/gateway-admin/01-setup.png)
 
 ### 登入
 
+Generic Linux 使用 Gateway 本機管理員登入；Synology SPK 預設改由 DSM Web
+Login 驗證有效的 `administrators` 成員，可再另外啟用本機備援。
+
 ![登入](assets/gateway-admin/08-login.png)
 
 ### 總覽
+
+總覽集中顯示 MCP endpoint、NAS Profile、有效 Client 憑證與可用核准數量。
+「Host NAS 不會自動加入」提醒部署位置不等於授權目標，避免把 container
+`localhost` 誤當成 NAS。
 
 ![總覽](assets/gateway-admin/02-overview.png)
 
 ### NAS 管理
 
+每一列都是獨立信任邊界：DSM URL、TLS 驗證、帳號、Session、密碼與 revision
+不會與其他 Profile 共用。示範 Profile 刻意保留「無 session」，避免把文件截圖
+誤認為可用的真實連線。
+
 ![NAS 管理](assets/gateway-admin/03-nas.png)
 
 ### MCP 存取
+
+支援 OAuth 的 Client 只需貼 MCP URL；手動 Token 留給無頭 Agent 或舊版
+Client。手動流程要求明確勾選 NAS allowlist，並以完整權限、NAS 操作者、
+規劃者、唯讀觀察者或自訂 Scope 建立憑證。畫面中的完整權限只為展示全部
+Scope；正式環境應依 Client 工作選最小權限。
 
 ![MCP 存取](assets/gateway-admin/04-mcp-access.png)
 
 ### 高風險核准
 
+一般流程會先顯示由已驗證 Token 送出的待核准摘要；手動備援只在 Agent 無法
+自動送出請求時使用。核准綁定 Plan hash、NAS Profile revision 與 requesting
+Token，最長十分鐘且只能使用一次。
+
 ![高風險核准](assets/gateway-admin/05-approvals.png)
 
 ### Audit
 
+Audit 把 Gateway 管理、Profile、Client 憑證、核准與 Remote Apply 事件集中
+成一條可篩選、可匯出的時間線；密碼、Session 與 Bearer Token 值不會寫入。
+
 ![Audit](assets/gateway-admin/06-audit.png)
 
 ### MCP Server 管理員
+
+管理員頁強調三種身分互不共用：UI 管理員、MCP Client 與下游 DSM 帳號。
+本機管理員可變更密碼、撤銷其他瀏覽器 Session，或登出目前 Session。
 
 ![MCP Server 管理員](assets/gateway-admin/07-administrator.png)

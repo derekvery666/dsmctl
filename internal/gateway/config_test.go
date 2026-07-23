@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ychiu1211/dsmctl/internal/config"
+	"github.com/derekvery666/dsmctl/internal/config"
 )
 
 func TestValidateConfigBoundsFleetAndTimeout(t *testing.T) {

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ychiu1211/dsmctl/internal/config"
-	"github.com/ychiu1211/dsmctl/internal/domain/discovery"
+	"github.com/derekvery666/dsmctl/internal/config"
+	"github.com/derekvery666/dsmctl/internal/domain/discovery"
 )
 
 // SavedDevice is one device in the cross-run saved discovery set: the discovery

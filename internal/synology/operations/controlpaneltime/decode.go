@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ychiu1211/dsmctl/internal/domain/controlpanel"
+	"github.com/derekvery666/dsmctl/internal/domain/controlpanel"
 )
 
 type timeResponse struct {
