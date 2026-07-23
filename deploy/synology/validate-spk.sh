@@ -23,6 +23,9 @@ for required in INFO package.tgz conf/resource conf/privilege conf/PKG_DEPS scri
 done
 grep -qx 'arch="x86_64"' "$work/INFO"
 grep -qx 'os_min_ver="7.2.1-69057"' "$work/INFO"
+grep -qx 'adminprotocol="https"' "$work/INFO"
+grep -qx 'adminport="443"' "$work/INFO"
+grep -qx 'adminurl="dsmctl/"' "$work/INFO"
 grep -q '^\[ContainerManager\]$' "$work/conf/PKG_DEPS"
 grep -q '^pkg_min_ver=1432$' "$work/conf/PKG_DEPS"
 grep -q '^\[WebStation\]$' "$work/conf/PKG_DEPS"

@@ -110,6 +110,13 @@ use the same four-tile dsmctl brand mark as the browser favicon. DSM installs
 main-menu entries from package metadata, so pin or drag the entry to the DSM
 desktop after installation if a persistent desktop tile is desired.
 
+The package declares HTTPS port 443 for Package Center's **Open** action. Some
+DSM/Web Station releases still generate an HTTP URL for an alias-portal desktop
+shortcut; the package bridge permanently redirects that request to the same
+host on HTTPS before it reaches the Gateway. Direct package-private loopback
+health checks do not carry Web Station's forwarded scheme header and are not
+redirected.
+
 Web Station owns the package portal shortcut and opens the NAS-local
 `/dsmctl/` alias without hard-coding a NAS address. The Gateway root handler
 preserves the validated `X-Forwarded-Prefix` and redirects that request to
