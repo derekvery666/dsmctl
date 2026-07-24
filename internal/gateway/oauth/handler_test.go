@@ -149,6 +149,86 @@ func TestDynamicRegistrationAndAuthorizationCodeFlow(t *testing.T) {
 	}
 }
 
+func TestAuthorizationAndTokenSucceedWithoutResourceParameter(t *testing.T) {
+	// Some MCP clients (current Claude Code) omit RFC 8707's optional resource
+	// parameter. The gateway serves a single resource, so it must default to
+	// that resource rather than reject the request. Regression for the
+	// "requested MCP resource does not match this server" dead end.
+	handler, repository := newOAuthTestHandler(t)
+	client, err := repository.RegisterOAuthClient(context.Background(), state.OAuthClientInput{Name: "no-resource client", RedirectURIs: []string{"http://127.0.0.1:32123/callback"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier := strings.Repeat("v", 64)
+	digest := sha256.Sum256([]byte(verifier))
+	values := url.Values{
+		"response_type": {"code"}, "client_id": {client.ID},
+		"redirect_uri": {"http://127.0.0.1:32123/callback"}, "state": {"no-res-state"},
+		"scope":         {defaultScopeString},
+		"code_challenge": {base64.RawURLEncoding.EncodeToString(digest[:])}, "code_challenge_method": {"S256"},
+	}
+	// GET renders the consent page (previously this 400'd on the missing resource).
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/oauth/authorize?"+values.Encode(), nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	if response.Code != http.StatusOK {
+		t.Fatalf("consent page without resource = %d %s", response.Code, response.Body.String())
+	}
+
+	values.Set("decision", "allow")
+	values.Set("username", "owner")
+	values.Set("password", "correct horse battery staple")
+	req = httptest.NewRequest(http.MethodPost, "http://127.0.0.1/oauth/authorize", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "http://127.0.0.1")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	if response.Code != http.StatusFound {
+		t.Fatalf("authorize without resource = %d %s", response.Code, response.Body.String())
+	}
+	code := ""
+	if redirect, perr := url.Parse(response.Header().Get("Location")); perr == nil {
+		code = redirect.Query().Get("code")
+	}
+	if code == "" {
+		t.Fatalf("authorize without resource omitted code: %q", response.Header().Get("Location"))
+	}
+
+	// The token exchange also omits resource; it must default to the bound resource.
+	tokenValues := url.Values{
+		"grant_type": {"authorization_code"}, "code": {code}, "client_id": {client.ID},
+		"redirect_uri": {"http://127.0.0.1:32123/callback"}, "code_verifier": {verifier},
+	}
+	req = httptest.NewRequest(http.MethodPost, "http://127.0.0.1/oauth/token", strings.NewReader(tokenValues.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	if response.Code != http.StatusOK {
+		t.Fatalf("token without resource = %d %s", response.Code, response.Body.String())
+	}
+	var token map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &token); err != nil {
+		t.Fatal(err)
+	}
+	if access, _ := token["access_token"].(string); access == "" {
+		t.Fatalf("no access token: %#v", token)
+	}
+
+	// A NON-EMPTY but wrong resource must still be rejected: the fix only
+	// defaults an ABSENT resource, it never relaxes an explicit mismatch.
+	wrong := url.Values{
+		"response_type": {"code"}, "client_id": {client.ID},
+		"redirect_uri": {"http://127.0.0.1:32123/callback"}, "resource": {"https://attacker.example/mcp"},
+		"code_challenge": {base64.RawURLEncoding.EncodeToString(digest[:])}, "code_challenge_method": {"S256"},
+	}
+	req = httptest.NewRequest(http.MethodGet, "http://127.0.0.1/oauth/authorize?"+wrong.Encode(), nil)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("wrong resource should still be rejected, got %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestAuthorizationPostRejectsWrongOrigin(t *testing.T) {
 	handler, repository := newOAuthTestHandler(t)
 	client, err := repository.RegisterOAuthClient(context.Background(), state.OAuthClientInput{Name: "client", RedirectURIs: []string{"http://localhost:32123/callback"}})

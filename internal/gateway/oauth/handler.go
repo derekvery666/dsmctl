@@ -356,6 +356,11 @@ func (h *Handler) exchangeAuthorizationCode(w http.ResponseWriter, req *http.Req
 	clientID := strings.TrimSpace(req.PostForm.Get("client_id"))
 	redirectURI := strings.TrimSpace(req.PostForm.Get("redirect_uri"))
 	resource := strings.TrimSpace(req.PostForm.Get("resource"))
+	if resource == "" {
+		// Mirror the authorize and refresh handling: clients that omit RFC 8707's
+		// resource parameter default to the resource the grant is bound to.
+		resource = grant.Resource
+	}
 	verifier := strings.TrimSpace(req.PostForm.Get("code_verifier"))
 	if clientID != grant.ClientID || redirectURI != grant.RedirectURI || !sameCanonicalResource(resource, grant.Resource) || !verifyPKCE(verifier, grant.Challenge) {
 		verifier = ""
@@ -429,6 +434,14 @@ func (h *Handler) validateAuthorizationRequest(ctx context.Context, req *http.Re
 	}
 	if !contains(client.RedirectURIs, authorization.RedirectURI) {
 		return authorizationRequest{}, errors.New("The redirect URI is not registered for this client.")
+	}
+	if authorization.Resource == "" {
+		// RFC 8707 resource indicators are optional, and some MCP clients (for
+		// example current Claude Code) omit the parameter on the authorization
+		// request. This gateway serves a single MCP resource, so defaulting to
+		// it preserves the audience boundary without rejecting those clients.
+		// Mirrors the accommodation already made in exchangeRefreshToken.
+		authorization.Resource = h.resource(req)
 	}
 	if !sameCanonicalResource(authorization.Resource, h.resource(req)) {
 		return authorizationRequest{}, errors.New("The requested MCP resource does not match this server.")
