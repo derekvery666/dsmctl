@@ -45,8 +45,9 @@ relationships around DSM administration:
 2. **MCP access** gives every client an explicit NAS allowlist and a preset or
    custom combination of `nas.read`, `nas.plan`, `nas.apply`, and
    `lan.discover`.
-3. **High-risk approvals** add a short-lived, single-use, out-of-band approval
-   before a remote high-risk Apply can run.
+3. **High-risk approvals** default to an exact, single-use confirmation inside
+   the active MCP conversation; an optional administrator policy keeps the
+   short-lived, out-of-band Admin-console approval.
 4. **Audit** records administrator, token, approval, and remote-execution events
    without retaining passwords, sessions, or bearer-token values.
 
@@ -55,7 +56,7 @@ relationships around DSM administration:
 | ![NAS profiles](docs/assets/gateway-admin/03-nas.png) | ![MCP client permissions](docs/assets/gateway-admin/04-mcp-access.png) |
 | Every NAS is an independent profile. | Every client gets an explicit NAS allowlist and scope. |
 | ![High-risk approval](docs/assets/gateway-admin/05-approvals.png) | ![Redacted audit trail](docs/assets/gateway-admin/06-audit.png) |
-| Remote high-risk Apply needs a separate one-time approval. | Administrative and remote events remain inspectable and exportable. |
+| High-risk Apply is confirmed in conversation by default; Admin approval is optional. | Administrative and remote events remain inspectable and exportable. |
 
 See the [Gateway Admin guide](docs/gateway-admin-guide.md) for the complete
 setup, OAuth/manual-token, approval, audit, and recovery workflows.

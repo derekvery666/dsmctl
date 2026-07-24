@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -58,32 +59,40 @@ func ToolScope(name string) (string, bool) {
 
 type remotePlanResult struct {
 	Plan struct {
-		NAS             string   `json:"nas"`
-		ProfileRevision uint64   `json:"profile_revision"`
-		Hash            string   `json:"hash"`
-		Risk            string   `json:"risk"`
-		Summary         []string `json:"summary"`
-		References      struct {
+		NAS                   string   `json:"nas"`
+		ProfileRevision       uint64   `json:"profile_revision"`
+		SourceNAS             string   `json:"source_nas"`
+		SourceProfileRevision uint64   `json:"source_profile_revision"`
+		Hash                  string   `json:"hash"`
+		Risk                  string   `json:"risk"`
+		Summary               []string `json:"summary"`
+		References            struct {
 			ResourceID string `json:"resource_id"`
 		} `json:"references"`
 	} `json:"plan"`
 }
 
 type remoteToolTarget struct {
-	NAS  string `json:"nas"`
-	URL  string `json:"url"`
-	Plan struct {
-		NAS             string `json:"nas"`
-		ProfileRevision uint64 `json:"profile_revision"`
-		Hash            string `json:"hash"`
-		Risk            string `json:"risk"`
+	NAS       string `json:"nas"`
+	SourceNAS string `json:"source_nas"`
+	DestNAS   string `json:"dest_nas"`
+	URL       string `json:"url"`
+	Plan      struct {
+		NAS                   string   `json:"nas"`
+		ProfileRevision       uint64   `json:"profile_revision"`
+		SourceNAS             string   `json:"source_nas"`
+		SourceProfileRevision uint64   `json:"source_profile_revision"`
+		DestNAS               string   `json:"dest_nas"`
+		Hash                  string   `json:"hash"`
+		Risk                  string   `json:"risk"`
+		Summary               []string `json:"summary"`
 	} `json:"plan"`
 }
 
 func remotePolicyMiddleware(service *application.Service, auditor remotepolicy.Auditor) mcp.Middleware {
 	return func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, request mcp.Request) (mcp.Result, error) {
-			principal, remote := remotepolicy.PrincipalFromContext(ctx)
+			ctx, principal, remote := currentRemotePrincipal(ctx, request)
 			if !remote {
 				return nil, remotepolicy.ErrDenied
 			}
@@ -125,8 +134,15 @@ func remotePolicyMiddleware(service *application.Service, auditor remotepolicy.A
 				}
 			}
 			nas := target.NAS
+			secondaryNAS := ""
+			if params.Name == "plan_snapshot_replication_create" {
+				nas, secondaryNAS = target.SourceNAS, target.DestNAS
+			}
 			if strings.HasPrefix(params.Name, "apply_") {
 				nas = target.Plan.NAS
+				if params.Name == "apply_snapshot_replication_create" {
+					nas, secondaryNAS = target.Plan.SourceNAS, target.Plan.DestNAS
+				}
 			}
 			// provision_discovered_nas / install_discovered_nas target a
 			// not-yet-enrolled device by url, so they have no profile to resolve
@@ -157,11 +173,22 @@ func remotePolicyMiddleware(service *application.Service, auditor remotepolicy.A
 					return nil, remotepolicy.ErrDenied
 				}
 				nas = resolved
+				if strings.TrimSpace(secondaryNAS) != "" {
+					if _, err := service.AuthorizeRemoteTarget(ctx, secondaryNAS); err != nil {
+						auditRemote(ctx, auditor, principal, params.Name, nas, "denied", "denied")
+						return nil, remotepolicy.ErrDenied
+					}
+				}
 			} else if nas != "" && !principal.AllowsNAS(nas) {
 				auditRemote(ctx, auditor, principal, params.Name, "", "denied", "denied")
 				return nil, remotepolicy.ErrDenied
 			}
 			result, err := next(ctx, method, request)
+			if callResult, ok := result.(*mcp.CallToolResult); ok &&
+				callResult != nil &&
+				interactiveApprovalRequired(callResult) {
+				result, err = elicitHighRiskApproval(ctx, request, next, method, principal, target)
+			}
 			outcome := "success"
 			if err != nil {
 				outcome = "failure"
@@ -174,13 +201,153 @@ func remotePolicyMiddleware(service *application.Service, auditor remotepolicy.A
 			if callResult, ok := result.(*mcp.CallToolResult); ok && callResult != nil && callResult.IsError {
 				outcome = "failure"
 			}
-			if err == nil && outcome == "success" && strings.HasPrefix(params.Name, "plan_") {
+			if err == nil &&
+				outcome == "success" &&
+				strings.HasPrefix(params.Name, "plan_") &&
+				principal.ApprovalMode != remotepolicy.ApprovalModeInteractive {
 				recordPendingApproval(ctx, auditor, principal, params.Name, result)
 			}
 			auditRemote(ctx, auditor, principal, params.Name, nas, outcome, "")
 			return result, err
 		}
 	}
+}
+
+func currentRemotePrincipal(ctx context.Context, request mcp.Request) (context.Context, remotepolicy.Principal, bool) {
+	extra := request.GetExtra()
+	if extra != nil && extra.TokenInfo != nil {
+		value, ok := extra.TokenInfo.Extra[remotepolicy.MCPPrincipalTokenInfoKey]
+		principal, principalOK := value.(remotepolicy.Principal)
+		if !ok || !principalOK || principal.TokenID == "" || principal.TokenID != extra.TokenInfo.UserID {
+			return ctx, remotepolicy.Principal{}, false
+		}
+		ctx = remotepolicy.WithPrincipal(ctx, principal)
+		return ctx, principal, true
+	}
+	principal, ok := remotepolicy.PrincipalFromContext(ctx)
+	return ctx, principal, ok
+}
+
+func interactiveApprovalRequired(result *mcp.CallToolResult) bool {
+	if result == nil || !result.IsError {
+		return false
+	}
+	if errors.Is(result.GetError(), remotepolicy.ErrInteractiveApprovalRequired) {
+		return true
+	}
+	expected := remotepolicy.ErrInteractiveApprovalRequired.Error()
+	for _, item := range result.Content {
+		if text, ok := item.(*mcp.TextContent); ok && text.Text == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func elicitHighRiskApproval(
+	ctx context.Context,
+	request mcp.Request,
+	next mcp.MethodHandler,
+	method string,
+	principal remotepolicy.Principal,
+	target remoteToolTarget,
+) (mcp.Result, error) {
+	session, ok := request.GetSession().(*mcp.ServerSession)
+	if !ok || session == nil || strings.TrimSpace(session.ID()) == "" {
+		return interactiveApprovalFailure(
+			"This MCP client cannot provide a session-bound confirmation. Use a client that supports MCP form elicitation, or change this credential to administrator approval mode.",
+			errors.New("interactive high-risk approval requires a stateful MCP session"),
+		), nil
+	}
+	nas, revision := target.Plan.NAS, target.Plan.ProfileRevision
+	if nas == "" {
+		nas, revision = target.Plan.SourceNAS, target.Plan.SourceProfileRevision
+	}
+	if nas == "" || revision == 0 || target.Plan.Hash == "" {
+		return interactiveApprovalFailure(
+			"The high-risk plan is missing approval-binding metadata. Create a new plan and try again.",
+			errors.New("interactive high-risk approval metadata is incomplete"),
+		), nil
+	}
+	message := highRiskApprovalMessage(nas, target.Plan.Hash, target.Plan.Summary)
+	response, err := session.Elicit(ctx, &mcp.ElicitParams{
+		Mode:    "form",
+		Message: message,
+		RequestedSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"approve": map[string]any{
+					"type":        "boolean",
+					"title":       "Approve this high-risk change",
+					"description": "Approve only if the NAS, change summary, and plan identifier above are expected.",
+				},
+			},
+			"required": []string{"approve"},
+		},
+	})
+	if err != nil {
+		return interactiveApprovalFailure(
+			"This MCP client could not show the high-risk confirmation. No change was made. Use a client that supports MCP form elicitation, or change this credential to administrator approval mode.",
+			fmt.Errorf("request interactive high-risk approval: %w", err),
+		), nil
+	}
+	if response == nil {
+		return interactiveApprovalFailure(
+			"The MCP client returned an invalid high-risk confirmation. No change was made.",
+			errors.New("interactive high-risk approval returned no response"),
+		), nil
+	}
+	approved, valid := response.Content["approve"].(bool)
+	if response.Action != "accept" || !valid || !approved {
+		return interactiveApprovalFailure(
+			"High-risk change declined or cancelled. No change was made.",
+			errors.New("interactive high-risk approval was not accepted"),
+		), nil
+	}
+	grant := remotepolicy.InteractiveApprovalGrant{
+		TokenID: principal.TokenID, SessionID: session.ID(),
+		NAS: nas, ProfileRevision: revision, PlanHash: target.Plan.Hash,
+	}
+	retryContext := remotepolicy.WithMCPSessionID(ctx, session.ID())
+	retryContext = remotepolicy.WithInteractiveApproval(retryContext, grant)
+	return next(retryContext, method, request)
+}
+
+func highRiskApprovalMessage(nas, planHash string, summary []string) string {
+	items := make([]string, 0, len(summary))
+	for _, item := range summary {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			items = append(items, item)
+		}
+		if len(items) == 4 {
+			break
+		}
+	}
+	change := "No summary was provided."
+	if len(items) > 0 {
+		change = strings.Join(items, "; ")
+	}
+	if len(change) > 1200 {
+		change = change[:1200] + "…"
+	}
+	shortHash := planHash
+	if len(shortHash) > 12 {
+		shortHash = shortHash[:12]
+	}
+	return fmt.Sprintf(
+		"High-risk NAS change\n\nNAS: %s\nChange: %s\nPlan: %s\n\nConfirm only if this is the exact change you requested. Approval applies to this call only.",
+		nas, change, shortHash,
+	)
+}
+
+func interactiveApprovalFailure(message string, err error) *mcp.CallToolResult {
+	result := &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: message}},
+	}
+	result.SetError(err)
+	return result
 }
 
 func recordPendingApproval(ctx context.Context, target any, principal remotepolicy.Principal, tool string, result mcp.Result) {
@@ -202,10 +369,16 @@ func recordPendingApproval(ctx context.Context, target any, principal remotepoli
 	}
 	var value remotePlanResult
 	if json.Unmarshal(encoded, &value) != nil || !strings.EqualFold(value.Plan.Risk, "high") || value.Plan.ProfileRevision == 0 {
-		return
+		if json.Unmarshal(encoded, &value) != nil || !strings.EqualFold(value.Plan.Risk, "high") || value.Plan.SourceProfileRevision == 0 {
+			return
+		}
+	}
+	nas, revision := value.Plan.NAS, value.Plan.ProfileRevision
+	if nas == "" {
+		nas, revision = value.Plan.SourceNAS, value.Plan.SourceProfileRevision
 	}
 	_ = recorder.RecordPendingApproval(ctx, remotepolicy.PendingApprovalRequest{
-		PlanHash: value.Plan.Hash, NAS: value.Plan.NAS, ProfileRevision: value.Plan.ProfileRevision,
+		PlanHash: value.Plan.Hash, NAS: nas, ProfileRevision: revision,
 		RequestingTokenID: principal.TokenID, Tool: tool, Risk: value.Plan.Risk,
 		ResourceID: value.Plan.References.ResourceID, Summary: strings.Join(value.Plan.Summary, "; "),
 	})

@@ -263,6 +263,11 @@ func (r *Repository) initialize(existed bool, options OpenOptions) error {
 				return err
 			}
 		}
+		if version > 0 && version < 7 {
+			if err := migrateMCPApprovalMode(tx); err != nil {
+				return err
+			}
+		}
 		if version < SchemaVersion {
 			for _, key := range [][]byte{keyBootstrapDigest, keyBootstrapUsed, keyAdminDigest, keyAdminMode} {
 				if err := meta.Delete(key); err != nil {

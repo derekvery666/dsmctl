@@ -49,7 +49,8 @@ func TestPlanAndApplyHelpExplainGuardedWorkflow(t *testing.T) {
 		"exact unmodified plan",
 		"cannot be retargeted with flags",
 		"rejects a stale or modified plan",
-		"out-of-band approval",
+		"confirmation in the active MCP conversation",
+		"one-time administrator approval",
 	} {
 		if !strings.Contains(applyHelp, compactWhitespace(required)) {
 			t.Errorf("apply help missing %q:\n%s", required, applyHelp)

@@ -48,9 +48,10 @@ consent, and high-risk approval remain explicit controls.
 7. Gateway administration, MCP authorization, and the downstream DSM account
    stay independent. None of these identities is silently inherited by
    another layer.
-8. Agent confirmation is user-facing consent, not server-verifiable
-   authorization. Plan/apply validation remains authoritative, and high-risk
-   apply still requires a separate short-lived Admin UI approval.
+8. New credentials default to high-risk confirmation inside the active MCP
+   conversation through server-initiated form elicitation. The private grant
+   is exact and single-use; an explicitly selected `administrator` policy
+   retains the separate short-lived Admin UI approval.
 
 ## Default authority model
 
@@ -68,8 +69,8 @@ The wizard presents presets in user language first. Raw scope checkboxes move
 under an Advanced disclosure. The default is visibly described as:
 
 > Use every dsmctl MCP capability, including local-network discovery. Your
-> Agent asks before each apply. High-risk changes also require a separate
-> approval in this Admin UI.
+> Agent asks before each apply. High-risk changes are shown for exact
+> confirmation in this MCP conversation; no separate page opens.
 
 ### Why `nas.apply` is in the default
 
@@ -78,10 +79,12 @@ only report what could be done. `nas.apply` does not bypass the architecture's
 mutation controls: the client still needs a canonical plan and approval hash;
 the application rereads state, rejects stale plans, protects built-in
 resources, performs a typed operation, and verifies the postcondition. A
-remote high-risk apply additionally needs a short-lived, single-use approval
-created outside the MCP conversation.
+remote high-risk apply additionally needs either a private, request-local form
+confirmation bound to the active authenticated session (the default) or the
+short-lived, single-use Admin approval selected for an administrator-mode
+credential.
 
-Low- and medium-risk applies do not require that out-of-band approval. The
+Low- and medium-risk applies do not require the additional high-risk policy. The
 wizard must say this plainly before creating a Full access connection and must
 configure the selected Agent/MCP Host to ask before every `apply_*` invocation
 where that client supports such a policy. The larger default is an intentional
@@ -196,15 +199,19 @@ nonfunctional connection.
 4. **Choose authority** — preselect Full access. Show that it includes all four
    scopes, explain that discovery can observe devices outside the NAS
    allowlist, and state that the Agent asks before apply.
-5. **Choose lifetime** — default 365 days; shorter and advanced no-expiry
+5. **Choose high-risk confirmation** — default to **In conversation** and
+   explain that a compatible client displays the exact change without opening
+   another page. **Admin console** is an explicit hardened choice for
+   unattended or incompatible clients.
+6. **Choose lifetime** — default 365 days; shorter and advanced no-expiry
    options remain available.
-6. **Review** — show client, full external endpoint, selected NAS profiles,
+7. **Review** — show client, full external endpoint, selected NAS profiles,
    scopes, expiry, and the bearer-possession warning.
-7. **Issue and configure** — create the token only after review. Reveal it once
+8. **Issue and configure** — create the token only after review. Reveal it once
    in a modal with Copy token, Copy endpoint, Copy complete configuration, and
    client-specific instructions. The secret is not persisted in browser
    storage and is cleared when the modal is dismissed or the page reloads.
-8. **Verify first use** — show `Waiting for <client> to connect`. A real MCP
+9. **Verify first use** — show `Waiting for <client> to connect`. A real MCP
    authentication updates the token's `last_used_at`; the page then changes to
    `Connected` with the first/last-use time. A separate optional in-browser
    token check may validate the credential but must not be presented as proof
@@ -268,18 +275,19 @@ to use the following behavior where the client supports per-tool policy:
 | `discover_*` | Proceed after the host's normal permission notice; the connection review already discloses LAN observation. | Token validity and `lan.discover`; discovered devices gain no NAS authority. |
 | `plan_*` | Proceed and display the resulting plan; planning does not mutate DSM. | Token validity, `nas.plan`, NAS allowlist, and canonical plan construction. |
 | `apply_*` at low or medium risk | **Always ask** before sending the call. Show the target, plan summary, and material tool inputs. A denial means no apply request is sent. | Token validity, `nas.apply`, NAS allowlist, plan hash, state revalidation, typed operation, and postcondition checks. |
-| `apply_*` at high risk | **Always ask**, then direct the owner through the separate Admin UI approval. | All apply checks plus an exact, short-lived, single-use, out-of-band approval. |
+| `apply_*` at high risk | **Always ask**. The server then presents the exact NAS, plan summary, and plan ID in the same conversation. Do not open another page unless the credential explicitly uses administrator mode. | All apply checks plus an exact, single-use grant bound to token, MCP session, NAS revision, and plan hash; administrator mode instead uses its short-lived Admin approval. |
 
 The MCP server already labels read-only tools and mutation tools with
 `ToolAnnotations` in
 [`internal/mcpserver/server.go`](../internal/mcpserver/server.go), with coverage
 in [`internal/mcpserver/server_test.go`](../internal/mcpserver/server_test.go).
 Those annotations help a host choose a confirmation UX, but the MCP
-specification defines them as hints. They are not cryptographic authority, and
-the server cannot prove that a host actually displayed or received a user
-confirmation. Server policy therefore never accepts an Agent prompt, model
-statement, annotation, or client-side "approved" field in place of its own
-checks.
+specification defines them as hints. They are not approval authority. For the
+interactive credential policy, the owner explicitly chooses to trust the MCP
+host's declared form-elicitation capability and affirmative response for one
+exact call. Server policy still never accepts an Agent prompt, model statement,
+annotation, tool argument, header, or ordinary client-side "approved" field in
+place of that server-initiated exchange and its application-bound checks.
 
 The wizard provides tested client-specific instructions for setting
 `apply_*` tools to Always ask. If a supported client cannot enforce that
@@ -367,8 +375,10 @@ The power-user default must not weaken these existing contracts:
   mutation or raw WebAPI tool is introduced.
 - Apply revalidates token status, scope, NAS grant, profile revision, plan hash,
   stable identity, observed state, and postcondition as applicable.
-- High-risk remote apply still consumes an exact, short-lived, single-use,
-  out-of-band approval bound to the requesting token and NAS revision.
+- High-risk remote apply consumes one exact authority: the default private
+  conversational grant bound to token, MCP session, NAS revision, and plan
+  hash, or an administrator-mode short-lived Admin approval. Neither is a
+  model-visible or reusable token.
 - Token values, Authorization headers, Admin cookies, DSM sessions, passwords,
   OTPs, master keys, ciphertext, and request bodies remain absent from display,
   logs, audit, and persistent plaintext.
@@ -411,8 +421,9 @@ power users that prefer explicit secret configuration.
 - The default connection receives all four scopes, while `nas.*` operations
   remain limited to the reviewed NAS profiles.
 - Every advertised Agent/MCP Host intercepts `apply_*`, shows the intended
-  target and action, and asks before sending it; high-risk apply additionally
-  requires Admin UI approval.
+  target and action, and asks before sending it; high-risk apply is then
+  confirmed in the same conversation unless the credential explicitly selects
+  the Admin-console policy.
 - The owner can answer, from the connection and Audit views, which client
   credential acted, who created it, which NAS it could reach, what authority it
   had, when it was first/last used, and whether it is still valid.

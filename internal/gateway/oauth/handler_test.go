@@ -86,7 +86,12 @@ func TestDynamicRegistrationAndAuthorizationCodeFlow(t *testing.T) {
 	req = httptest.NewRequest(http.MethodGet, "http://127.0.0.1/oauth/authorize?"+authorizationValues.Encode(), nil)
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, req)
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "Codex desktop") || !strings.Contains(response.Body.String(), "office") || !strings.Contains(response.Body.String(), "nas.apply") {
+	if response.Code != http.StatusOK ||
+		!strings.Contains(response.Body.String(), "Codex desktop") ||
+		!strings.Contains(response.Body.String(), "office") ||
+		!strings.Contains(response.Body.String(), "nas.apply") ||
+		!strings.Contains(response.Body.String(), "active MCP conversation") ||
+		strings.Contains(response.Body.String(), "separate Admin UI approval") {
 		t.Fatalf("authorization page status=%d body=%s", response.Code, response.Body.String())
 	}
 	if csp := response.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "form-action 'self' http://127.0.0.1:32123") {

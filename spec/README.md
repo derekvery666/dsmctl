@@ -24,8 +24,9 @@ contracts unless a work item explicitly changes them:
   verification for existing mutations.
 - A managed remote MCP Server gateway: persistent encrypted NAS profiles, a
   local first-run administrator with browser sessions, scoped MCP bearer
-  tokens with NAS allowlists, out-of-band single-use high-risk approvals, and
-  bounded redacted audit (WI-014/015/016/032/033/035/037).
+  tokens with NAS allowlists, conversational or administrator single-use
+  high-risk approvals, and bounded redacted audit
+  (WI-014/015/016/032/033/035/037/108).
 
 ## How to navigate
 

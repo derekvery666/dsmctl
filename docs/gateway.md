@@ -1,6 +1,6 @@
 # Portable amd64 MCP gateway
 
-`dsmctl-gateway` exposes the existing application layer over stateless MCP
+`dsmctl-gateway` exposes the existing application layer over stateful MCP
 Streamable HTTP. The image is a platform-neutral `linux/amd64` image: it runs
 under Docker Engine, Podman, or Synology Container Manager without changing
 the binary. The Synology SPK is a deployment wrapper around this same image,
@@ -31,13 +31,14 @@ managed deployment adapters and is not a way to bypass generic-container setup.
 
 ## Session model
 
-MCP transport requests are stateless and return JSON. The gateway does not
-issue or rely on a durable MCP session ID and does not open a standalone SSE
-stream. DSM connectivity is intentionally different: the existing runtime
-manager lazily keeps one client and authenticated DSM session per configured
-NAS profile. Calls to different NAS profiles may run concurrently, while the
-Synology client continues to serialize authentication and retry a request once
-after an expired DSM session.
+Managed MCP transport uses SSE-capable stateful sessions so the server can ask
+for high-risk confirmation inside the active tool call. A session ID is bound
+to the bearer token that initialized it; a different valid token cannot attach
+to that session. Idle sessions expire after 30 minutes and the binding table is
+bounded. DSM connectivity remains independent: the runtime manager lazily
+keeps one client and authenticated DSM session per configured NAS profile.
+Calls to different NAS profiles may run concurrently, while the Synology
+client serializes authentication and retries once after an expired DSM session.
 
 Stopping the process drains bounded in-flight HTTP requests and then closes
 all cached DSM sessions.
@@ -215,8 +216,10 @@ never an MCP scope. Every request re-evaluates token status, scope, and target.
 The manual-token API may set no expiry or an explicit expiry. Both URL login
 and the power-user manual-token UI grant all currently configured NAS profiles
 and all four scopes by default; every NAS remains an explicit allowlist entry.
-This broad default does not bypass agent-side confirmation before apply, and
-high-risk plans still require Gateway approval. The manual UI defaults to a
+This broad default does not bypass agent-side confirmation before apply. New
+credentials confirm high-risk changes in the active MCP conversation by
+default; the manual UI can instead select the hardened Admin-console approval
+policy. The manual UI defaults to a
 365-day lifetime and also offers 30 days, 90 days, or no expiry as an advanced
 choice. The credential list distinguishes never used, used, expired, and
 revoked credentials. OAuth credentials can be expired or revoked; their
@@ -228,13 +231,22 @@ same profile name never restores old access.
 
 Low- and medium-risk remote plans require `nas.apply` and retain the existing
 plan hash, profile revision, stable-ID, precondition, protected-resource, and
-postcondition checks. High-risk plans additionally require a matching approval
-created out of band on `/admin/`. It is bound to one plan hash, NAS profile
-revision, requesting token, and local administrator, expires after at most ten
-minutes, and is atomically consumed once before application precondition reads.
-A stale or failed apply never restores a consumed approval.
+postcondition checks. For high-risk plans, a new `interactive` credential asks
+the client to show the exact NAS, plan summary, and shortened plan ID. Only an
+affirmative form response retries that same call with a private grant bound to
+the token, MCP session, NAS, profile revision, and plan hash; it is consumed
+once at application admission and never appears on the wire. Unsupported
+clients, decline, cancel, malformed responses, mismatch, and replay all fail
+before mutation.
 
-Successful remote high-risk `plan_*` calls create a bounded, 24-hour pending
+A manual credential may instead use `administrator` mode. That preserves the
+separate `/admin/` approval bound to plan hash, NAS revision, requesting token,
+and local administrator; it expires after at most ten minutes and is consumed
+once. Credentials stored before schema 7 migrate to this mode. A stale or
+failed apply never restores either kind of consumed authority.
+
+Successful remote high-risk `plan_*` calls from `administrator` credentials
+create a bounded, 24-hour pending
 request containing only the plan hash, NAS/revision, requesting token, tool,
 risk, optional stable resource ID, and canonical summary. The Approvals page
 can approve that request in one click or dismiss it. Requests deduplicate per
@@ -310,6 +322,10 @@ Schema 6 adds public OAuth client registrations and digest-only rotating
 refresh-token records. Authorization codes remain short-lived and in memory;
 access tokens continue to use the existing digest-only MCP-token record and
 authorization policy.
+
+Schema 7 adds the closed `interactive`/`administrator` credential policy.
+Existing credentials migrate to `administrator`; newly issued OAuth and manual
+credentials default to `interactive`.
 
 The admin API can create opaque `vault:<id>` apply-time references. Only the
 application's apply-time resolver can decrypt those values; MCP results and

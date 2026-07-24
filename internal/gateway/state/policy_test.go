@@ -32,7 +32,7 @@ func TestPendingApprovalLifecycleIsDeduplicatedBoundedAndAdvisory(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	issued, err := repository.CreateMCPToken(ctx, MCPTokenInput{Name: "operator", Scopes: []string{remotepolicy.ScopeApply}, NASAllowlist: []string{"office"}})
+	issued, err := repository.CreateMCPToken(ctx, MCPTokenInput{Name: "operator", Scopes: []string{remotepolicy.ScopeApply}, NASAllowlist: []string{"office"}, ApprovalMode: remotepolicy.ApprovalModeAdministrator})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +305,7 @@ func TestHighRiskApprovalIsExactAndSingleUseUnderConcurrency(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	issued, err := repository.CreateMCPToken(ctx, MCPTokenInput{Name: "operator", Scopes: []string{remotepolicy.ScopeApply}, NASAllowlist: []string{"office"}})
+	issued, err := repository.CreateMCPToken(ctx, MCPTokenInput{Name: "operator", Scopes: []string{remotepolicy.ScopeApply}, NASAllowlist: []string{"office"}, ApprovalMode: remotepolicy.ApprovalModeAdministrator})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,6 +370,120 @@ func TestHighRiskApprovalIsExactAndSingleUseUnderConcurrency(t *testing.T) {
 	}
 }
 
+func TestInteractiveHighRiskApprovalIsRequestLocalExactAndSingleUse(t *testing.T) {
+	repository, _ := openTestRepository(t)
+	ctx := context.Background()
+	profile, err := repository.CreateProfile(ctx, ProfileInput{Name: "office", URL: "https://office.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	issued, err := repository.CreateMCPToken(ctx, MCPTokenInput{
+		Name: "interactive", Scopes: []string{remotepolicy.ScopeApply}, NASAllowlist: []string{"office"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if issued.Token.ApprovalMode != remotepolicy.ApprovalModeInteractive {
+		t.Fatalf("new token approval mode = %q", issued.Token.ApprovalMode)
+	}
+	if _, err := repository.CreateMCPToken(ctx, MCPTokenInput{
+		Name: "invalid-mode", NASAllowlist: []string{"office"}, ApprovalMode: "chat-message",
+	}); err == nil {
+		t.Fatal("invalid approval mode was accepted")
+	}
+	hash := strings.Repeat("a", 64)
+	if err := repository.AdmitRemoteApply(ctx, issued.Token.ID, "office", profile.Revision, hash, "high"); !errors.Is(err, remotepolicy.ErrInteractiveApprovalRequired) {
+		t.Fatalf("missing interactive confirmation = %v", err)
+	}
+	wrong := remotepolicy.WithMCPSessionID(ctx, "session-1")
+	wrong = remotepolicy.WithInteractiveApproval(wrong, remotepolicy.InteractiveApprovalGrant{
+		TokenID: issued.Token.ID, SessionID: "session-1", NAS: "office",
+		ProfileRevision: profile.Revision, PlanHash: strings.Repeat("b", 64),
+	})
+	if err := repository.AdmitRemoteApply(wrong, issued.Token.ID, "office", profile.Revision, hash, "high"); !errors.Is(err, remotepolicy.ErrDenied) {
+		t.Fatalf("mismatched interactive confirmation = %v", err)
+	}
+	wrongSession := remotepolicy.WithMCPSessionID(ctx, "session-2")
+	wrongSession = remotepolicy.WithInteractiveApproval(wrongSession, remotepolicy.InteractiveApprovalGrant{
+		TokenID: issued.Token.ID, SessionID: "session-1", NAS: "office",
+		ProfileRevision: profile.Revision, PlanHash: hash,
+	})
+	if err := repository.AdmitRemoteApply(wrongSession, issued.Token.ID, "office", profile.Revision, hash, "high"); !errors.Is(err, remotepolicy.ErrDenied) {
+		t.Fatalf("mismatched MCP session = %v", err)
+	}
+	approved := remotepolicy.WithMCPSessionID(ctx, "session-1")
+	approved = remotepolicy.WithInteractiveApproval(approved, remotepolicy.InteractiveApprovalGrant{
+		TokenID: issued.Token.ID, SessionID: "session-1", NAS: "office",
+		ProfileRevision: profile.Revision, PlanHash: hash,
+	})
+	if err := repository.AdmitRemoteApply(approved, issued.Token.ID, "office", profile.Revision, hash, "high"); err != nil {
+		t.Fatalf("interactive admission = %v", err)
+	}
+	if err := repository.AdmitRemoteApply(approved, issued.Token.ID, "office", profile.Revision, hash, "high"); !errors.Is(err, remotepolicy.ErrDenied) {
+		t.Fatalf("interactive confirmation replay = %v", err)
+	}
+	events, err := repository.AuditEvents(ctx, AuditQuery{Limit: 10, ActorID: issued.Token.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	actions := map[string]bool{}
+	for _, event := range events {
+		actions[event.Action] = true
+	}
+	if len(events) != 2 || !actions["approval.interactive"] || !actions["apply.admit"] {
+		t.Fatalf("interactive approval audit = %#v", events)
+	}
+}
+
+func TestSchemaSixMCPTokenMigratesToAdministratorApproval(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gateway.db")
+	key := bytes.Repeat([]byte{4}, 32)
+	repository, err := Open(path, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := repository.CreateProfile(ctx, ProfileInput{Name: "office", URL: "https://office.example"}); err != nil {
+		t.Fatal(err)
+	}
+	issued, err := repository.CreateMCPToken(ctx, MCPTokenInput{Name: "legacy", NASAllowlist: []string{"office"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.db.Update(func(tx *bolt.Tx) error {
+		record, err := readMCPToken(tx, issued.Token.ID)
+		if err != nil {
+			return err
+		}
+		record.ApprovalMode = ""
+		encoded, err := json.Marshal(record)
+		if err != nil {
+			return err
+		}
+		if err := tx.Bucket(bucketMCPTokens).Put([]byte(record.ID), encoded); err != nil {
+			return err
+		}
+		return tx.Bucket(bucketMeta).Put(keySchemaVersion, encodeUint64(6))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+	repository, err = Open(path, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	token, err := repository.MCPToken(ctx, issued.Token.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token.ApprovalMode != remotepolicy.ApprovalModeAdministrator {
+		t.Fatalf("migrated approval mode = %q", token.ApprovalMode)
+	}
+}
+
 func TestApprovalMismatchExpiryAndAuditFailureFailClosed(t *testing.T) {
 	directory := t.TempDir()
 	failAudit := atomic.Bool{}
@@ -385,7 +499,7 @@ func TestApprovalMismatchExpiryAndAuditFailureFailClosed(t *testing.T) {
 	defer repository.Close()
 	ctx := context.Background()
 	profile, _ := repository.CreateProfile(ctx, ProfileInput{Name: "office", URL: "https://office.example"})
-	issued, _ := repository.CreateMCPToken(ctx, MCPTokenInput{Name: "operator", Scopes: []string{remotepolicy.ScopeApply}, NASAllowlist: []string{"office"}})
+	issued, _ := repository.CreateMCPToken(ctx, MCPTokenInput{Name: "operator", Scopes: []string{remotepolicy.ScopeApply}, NASAllowlist: []string{"office"}, ApprovalMode: remotepolicy.ApprovalModeAdministrator})
 	hash := strings.Repeat("c", 64)
 	if _, err := repository.CreateApproval(ctx, ApprovalInput{PlanHash: hash, NAS: "office", ProfileRevision: profile.Revision, RequestingTokenID: issued.Token.ID, TTL: time.Minute}, "local-admin"); err != nil {
 		t.Fatal(err)

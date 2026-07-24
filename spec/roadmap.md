@@ -40,6 +40,7 @@ flowchart LR
   WI033 --> WI035["WI-035 Multilingual MCP Server copy"]
   WI035 --> WI037["WI-037 Gateway design tokens"]
   WI037 --> WI038["WI-038 MCP Server flow refinements"]
+  WI038 --> WI108["WI-108 Conversational high-risk approval"]
   WI038 --> WI017["WI-017 amd64 Linux/Synology distribution"]
   WI038 --> WI045["WI-045 Power-user MCP connection design"]
   WI038 --> WI046["WI-046 Admin UI spacing and feedback"]
@@ -225,6 +226,7 @@ flowchart LR
 | [WI-101](work-items/WI-101-cli-request-schema-discovery.md) | P1 | `done` | E | WI-100 | Let binary-only agents list and inspect every typed CLI mutation request as descriptive JSON Schema, with direct links from command help. |
 | [WI-102](work-items/WI-102-cli-operation-catalog.md) | P1 | `done` | E | WI-101 | Expose the complete CLI command tree as an offline human/JSON operation catalog, including exact flags, workflow roles, and request-schema links. |
 | [WI-103](work-items/WI-103-public-module-license.md) | P1 | `done` | E | WI-101 | Adopt `github.com/derekvery666/dsmctl` as the permanent Go module/import identity, add Apache-2.0, and align public installation and release documentation. |
+| [WI-108](work-items/WI-108-conversational-high-risk-approval.md) | P1 | `done` | G | WI-016, WI-038, WI-048 | Confirm one high-risk remote apply inside a compatible MCP conversation; preserve explicit administrator-page approval mode for hardened or unattended clients. |
 
 Parallel groups indicate likely file overlap. Items in different groups may run
 at the same time after checking their `touches` lists. Only one agent should
@@ -278,6 +280,6 @@ strong enough for third-party integrations to depend on stable CLI/MCP schemas.
 A single-owner operator can run one hardened `linux/amd64` gateway on ordinary
 Linux or install the identical image through a Synology x86_64 SPK, administer
 multiple independently authenticated NAS profiles, expose scoped remote MCP
-access, and require out-of-band approval for high-risk apply. The full scope and
-platform decisions are in
+access, and require an exact conversational or administrator approval for
+high-risk apply. The full scope and platform decisions are in
 [`gateway-deployment.md`](gateway-deployment.md).

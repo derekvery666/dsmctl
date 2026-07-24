@@ -99,8 +99,13 @@ Synology SPK adapter ---+
   caller and target/scope policy reach an enforceable gateway application
   boundary; tool annotations and client-supplied identity are never authority.
 - Remote authorization is additive to the existing plan/apply checks. A plan
-  hash proves artifact integrity, not human approval. High-risk remote apply
-  requires a separate short-lived, single-use approval.
+  hash proves artifact integrity, not human approval. Each MCP credential has
+  one closed high-risk policy: `interactive` accepts only a server-initiated,
+  affirmative form elicitation on the authenticated, token-bound MCP session
+  for the exact plan/NAS/revision and consumes that private request grant once;
+  `administrator` requires the existing short-lived, single-use Admin-console
+  approval. Ordinary chat text, tool arguments, headers, annotations, URLs,
+  and model statements are never approval authority.
 - Persistent ciphertext and its master key use separate mounts. Missing or
   invalid key material fails closed and must not overwrite stored data.
 - Fan-out mutation is prohibited. Read-only fleet fan-out is opt-in, bounded,

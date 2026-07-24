@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -30,6 +31,140 @@ import (
 type memoryAuthenticator struct {
 	mu         sync.Mutex
 	principals map[string]remotepolicy.Principal
+}
+
+type conversationalApplyInput struct {
+	Plan struct {
+		NAS             string   `json:"nas"`
+		ProfileRevision uint64   `json:"profile_revision"`
+		Hash            string   `json:"hash"`
+		Risk            string   `json:"risk"`
+		Summary         []string `json:"summary"`
+	} `json:"plan"`
+}
+
+type conversationalApplyOutput struct {
+	Applied bool `json:"applied"`
+}
+
+func TestManagedMCPConfirmsHighRiskApplyInsideConversation(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		action    string
+		approve   bool
+		malformed bool
+		supports  bool
+		wantApply bool
+	}{
+		{name: "accept", action: "accept", approve: true, supports: true, wantApply: true},
+		{name: "decline", action: "decline", supports: true},
+		{name: "cancel", action: "cancel", supports: true},
+		{name: "unchecked", action: "accept", supports: true},
+		{name: "malformed", action: "accept", malformed: true, supports: true},
+		{name: "unsupported_client"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := config.New()
+			cfg.NAS["office"] = config.Profile{URL: "https://office.invalid", Revision: 42}
+			manager := runtime.NewManager(cfg, credentials.NewEnvironment())
+			service := application.NewService(cfg, manager)
+			t.Cleanup(func() { _ = service.Close(context.Background()) })
+			server := mcpserver.NewRemote(service, "test", nil, "")
+			var calls atomic.Int32
+			var granted atomic.Bool
+			mcp.AddTool(server, &mcp.Tool{Name: "apply_conversation_test"}, func(ctx context.Context, _ *mcp.CallToolRequest, input conversationalApplyInput) (*mcp.CallToolResult, conversationalApplyOutput, error) {
+				calls.Add(1)
+				grant, ok := remotepolicy.InteractiveApprovalFromContext(ctx)
+				if !ok {
+					result := &mcp.CallToolResult{}
+					result.SetError(remotepolicy.ErrInteractiveApprovalRequired)
+					return result, conversationalApplyOutput{}, nil
+				}
+				if grant.TokenID != "interactive-id" ||
+					grant.SessionID == "" ||
+					grant.NAS != input.Plan.NAS ||
+					grant.ProfileRevision != input.Plan.ProfileRevision ||
+					grant.PlanHash != input.Plan.Hash {
+					return nil, conversationalApplyOutput{}, errors.New("interactive grant binding mismatch")
+				}
+				granted.Store(true)
+				return nil, conversationalApplyOutput{Applied: true}, nil
+			})
+
+			principal := remotepolicy.Principal{
+				TokenID: "interactive-id", Name: "interactive",
+				ApprovalMode: remotepolicy.ApprovalModeInteractive,
+				Scopes:       map[string]struct{}{remotepolicy.ScopeApply: {}},
+				NAS:          map[string]struct{}{"office": {}},
+			}
+			authenticator := &memoryAuthenticator{principals: map[string]remotepolicy.Principal{"interactive-token": principal}}
+			gatewayServer, err := New(Options{
+				MCPServer: server, MCPAuthenticator: authenticator,
+				AllowedHosts: []string{"127.0.0.1"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			httpServer := httptest.NewServer(gatewayServer.Handler())
+			defer httpServer.Close()
+
+			var elicitation *mcp.ElicitParams
+			var clientOptions *mcp.ClientOptions
+			if test.supports {
+				clientOptions = &mcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+					elicitation = request.Params
+					content := map[string]any{"approve": test.approve}
+					if test.malformed {
+						content["approve"] = "yes"
+					}
+					return &mcp.ElicitResult{Action: test.action, Content: content}, nil
+				}}
+			}
+			client := mcp.NewClient(&mcp.Implementation{Name: "elicitation-test", Version: "test"}, clientOptions)
+			httpClient := &http.Client{Transport: authorizationTransport{token: "interactive-token", next: http.DefaultTransport}}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			session, err := client.Connect(ctx, &mcp.StreamableClientTransport{
+				Endpoint: httpServer.URL + "/mcp", HTTPClient: httpClient,
+				DisableStandaloneSSE: true, MaxRetries: -1,
+			}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer session.Close()
+			hash := strings.Repeat("a", 64)
+			result, err := session.CallTool(ctx, &mcp.CallToolParams{
+				Name: "apply_conversation_test",
+				Arguments: map[string]any{"plan": map[string]any{
+					"nas": "office", "profile_revision": 42, "hash": hash,
+					"risk": "high", "summary": []string{"delete pool 1"},
+				}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.supports {
+				if elicitation == nil || elicitation.Mode != "form" ||
+					!strings.Contains(elicitation.Message, "office") ||
+					!strings.Contains(elicitation.Message, "delete pool 1") ||
+					!strings.Contains(elicitation.Message, "High-risk") ||
+					!strings.Contains(elicitation.Message, hash[:12]) ||
+					strings.Contains(strings.ToLower(elicitation.Message), "http") {
+					encoded, _ := json.Marshal(result)
+					t.Fatalf("elicitation = %#v result=%s", elicitation, encoded)
+				}
+			} else if elicitation != nil {
+				t.Fatalf("unsupported client received elicitation = %#v", elicitation)
+			}
+			if test.wantApply {
+				if result.IsError || !granted.Load() || calls.Load() != 2 {
+					t.Fatalf("accepted result=%#v granted=%v calls=%d", result, granted.Load(), calls.Load())
+				}
+			} else if !result.IsError || granted.Load() || calls.Load() != 1 {
+				t.Fatalf("declined result=%#v granted=%v calls=%d", result, granted.Load(), calls.Load())
+			}
+		})
+	}
 }
 
 func TestManagedMCPCompletesOfficialOAuthURLLogin(t *testing.T) {
@@ -123,7 +258,11 @@ func TestManagedMCPCompletesOfficialOAuthURLLogin(t *testing.T) {
 	}
 	defer session.Close()
 	tokens, err := repository.MCPTokens(ctx)
-	if err != nil || len(tokens) != 1 || tokens[0].AuthMode != "oauth" || tokens[0].LastUsedAt == nil {
+	if err != nil ||
+		len(tokens) != 1 ||
+		tokens[0].AuthMode != "oauth" ||
+		tokens[0].ApprovalMode != remotepolicy.ApprovalModeInteractive ||
+		tokens[0].LastUsedAt == nil {
 		t.Fatalf("OAuth credential was not used by MCP initialize: tokens=%#v err=%v", tokens, err)
 	}
 }
@@ -232,6 +371,41 @@ func TestManagedMCPAuthenticatesBeforeInitializeFiltersToolsAndNAS(t *testing.T)
 	if !strings.Contains(string(encoded), "allowed") || strings.Contains(string(encoded), "hidden") || strings.Contains(string(encoded), "hidden.invalid") {
 		t.Fatalf("filtered list_nas = %s", encoded)
 	}
+
+	// Stateful MCP sessions must use the policy authenticated for the current
+	// HTTP request. Shrinking the same token's allowlist and scopes after
+	// initialization must take effect immediately instead of retaining the
+	// session's original principal snapshot.
+	authenticator.mu.Lock()
+	authenticator.principals["reader-token"] = remotepolicy.Principal{
+		TokenID: "reader-id", Name: "reader",
+		Scopes: map[string]struct{}{remotepolicy.ScopeRead: {}},
+		NAS:    map[string]struct{}{},
+	}
+	authenticator.mu.Unlock()
+	result, err = readerSession.CallTool(ctx, &mcp.CallToolParams{Name: "list_nas", Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ = json.Marshal(result)
+	if strings.Contains(string(encoded), "allowed") || strings.Contains(string(encoded), "hidden") {
+		t.Fatalf("stateful session retained stale NAS allowlist: %s", encoded)
+	}
+	authenticator.mu.Lock()
+	authenticator.principals["reader-token"] = remotepolicy.Principal{
+		TokenID: "reader-id", Name: "reader",
+		Scopes: map[string]struct{}{},
+		NAS:    map[string]struct{}{},
+	}
+	authenticator.mu.Unlock()
+	tools, err = readerSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tools.Tools) != 0 {
+		t.Fatalf("stateful session retained stale scopes: %#v", tools.Tools)
+	}
+
 	result, err = readerSession.CallTool(ctx, &mcp.CallToolParams{Name: "plan_storage_change", Arguments: map[string]any{"nas": "allowed"}})
 	if err == nil && !result.IsError {
 		t.Fatal("read-only token called plan tool")

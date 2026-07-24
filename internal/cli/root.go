@@ -149,8 +149,9 @@ warnings, and precondition. A plan already binds its NAS and cannot be
 retargeted with flags.
 
 Apply re-reads current state, rejects a stale or modified plan, performs the
-typed operation, and verifies the postcondition. High-risk remote applies may
-also require a separate out-of-band approval.`
+typed operation, and verifies the postcondition. A high-risk remote apply uses
+the credential's configured policy: confirmation in the active MCP conversation
+or a separate one-time administrator approval.`
 
 // decorateWorkflowHelp gives every plan/apply leaf a consistent safety and
 // discovery contract without duplicating the application workflow in each

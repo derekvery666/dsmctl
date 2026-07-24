@@ -33,6 +33,7 @@ type MCPToken struct {
 	ID            string     `json:"id"`
 	Name          string     `json:"name"`
 	AuthMode      string     `json:"auth_mode,omitempty"`
+	ApprovalMode  string     `json:"approval_mode"`
 	OAuthClientID string     `json:"oauth_client_id,omitempty"`
 	Scopes        []string   `json:"scopes"`
 	NASAllowlist  []string   `json:"nas_allowlist"`
@@ -48,6 +49,7 @@ type MCPTokenInput struct {
 	Scopes       []string   `json:"scopes,omitempty"`
 	NASAllowlist []string   `json:"nas_allowlist"`
 	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
+	ApprovalMode string     `json:"approval_mode,omitempty"`
 }
 
 type IssuedMCPToken struct {
@@ -260,7 +262,7 @@ func newMCPTokenRecord(input MCPTokenInput, now time.Time) (string, mcpTokenReco
 		return "", mcpTokenRecord{}, err
 	}
 	record := mcpTokenRecord{MCPToken: MCPToken{
-		ID: id, Name: input.Name, Scopes: input.Scopes, NASAllowlist: input.NASAllowlist,
+		ID: id, Name: input.Name, Scopes: input.Scopes, NASAllowlist: input.NASAllowlist, ApprovalMode: input.ApprovalMode,
 		CreatedAt: now, UpdatedAt: now, ExpiresAt: input.ExpiresAt,
 	}, Digest: append([]byte(nil), digest[:]...)}
 	return raw, record, nil
@@ -591,7 +593,7 @@ func (r *Repository) AdmitRemoteApply(ctx context.Context, tokenID, nas string, 
 			return fmt.Errorf("persist mandatory apply audit: %w", err)
 		}
 	}
-	now := time.Now().UTC()
+	now := r.now().UTC()
 	return r.db.Update(func(tx *bolt.Tx) error {
 		token, err := readMCPToken(tx, tokenID)
 		if err != nil {
@@ -608,17 +610,38 @@ func (r *Repository) AdmitRemoteApply(ctx context.Context, tokenID, nas string, 
 			return errors.New("NAS profile revision changed; create a new plan and approval")
 		}
 		if strings.EqualFold(risk, "high") {
-			approval, err := findApproval(tx, tokenID, nas, revision, planHash, now)
+			approval, approved, err := findApproval(tx, tokenID, nas, revision, planHash, now)
 			if err != nil {
 				return err
 			}
-			approval.ConsumedAt = &now
-			encoded, err := json.Marshal(approval)
-			if err != nil {
-				return err
-			}
-			if err := tx.Bucket(bucketApprovals).Put([]byte(approval.ID), encoded); err != nil {
-				return err
+			if approved {
+				approval.ConsumedAt = &now
+				encoded, err := json.Marshal(approval)
+				if err != nil {
+					return err
+				}
+				if err := tx.Bucket(bucketApprovals).Put([]byte(approval.ID), encoded); err != nil {
+					return err
+				}
+			} else {
+				if token.ApprovalMode != remotepolicy.ApprovalModeInteractive {
+					return ErrApprovalRequired
+				}
+				grant, ok := remotepolicy.InteractiveApprovalFromContext(ctx)
+				if !ok {
+					return remotepolicy.ErrInteractiveApprovalRequired
+				}
+				sessionID, ok := remotepolicy.MCPSessionID(ctx)
+				if !ok || !grant.ConsumeMatches(tokenID, sessionID, nas, revision, planHash) {
+					return remotepolicy.ErrDenied
+				}
+				if err := r.appendAuditTx(tx, AuditEvent{
+					Time: now, CorrelationID: remotepolicy.CorrelationID(ctx),
+					ActorType: "mcp_token", ActorID: tokenID,
+					Action: "approval.interactive", NAS: nas, Outcome: "approved",
+				}); err != nil {
+					return err
+				}
 			}
 		}
 		return r.appendAuditTx(tx, AuditEvent{Time: now, CorrelationID: remotepolicy.CorrelationID(ctx), ActorType: "mcp_token", ActorID: tokenID, Action: "apply.admit", NAS: nas, Outcome: "admitted"})
@@ -746,6 +769,15 @@ func normalizeMCPTokenInput(input MCPTokenInput, now time.Time) (MCPTokenInput, 
 	}
 	input.Scopes = uniqueSorted(input.Scopes)
 	input.NASAllowlist = uniqueSorted(input.NASAllowlist)
+	input.ApprovalMode = strings.TrimSpace(input.ApprovalMode)
+	if input.ApprovalMode == "" {
+		input.ApprovalMode = remotepolicy.ApprovalModeInteractive
+	}
+	switch input.ApprovalMode {
+	case remotepolicy.ApprovalModeInteractive, remotepolicy.ApprovalModeAdministrator:
+	default:
+		return MCPTokenInput{}, fmt.Errorf("approval_mode must be %q or %q", remotepolicy.ApprovalModeInteractive, remotepolicy.ApprovalModeAdministrator)
+	}
 	for _, scope := range input.Scopes {
 		if _, ok := validScopes[scope]; !ok {
 			return MCPTokenInput{}, fmt.Errorf("unsupported scope %q", scope)
@@ -779,6 +811,25 @@ func migrateLANDiscoveryScope(tx *bolt.Tx) error {
 			return nil
 		}
 		record.Scopes = uniqueSorted(record.Scopes)
+		encoded, err := json.Marshal(record)
+		if err != nil {
+			return err
+		}
+		return bucket.Put(key, encoded)
+	})
+}
+
+func migrateMCPApprovalMode(tx *bolt.Tx) error {
+	bucket := tx.Bucket(bucketMCPTokens)
+	return bucket.ForEach(func(key, value []byte) error {
+		var record mcpTokenRecord
+		if err := json.Unmarshal(value, &record); err != nil {
+			return err
+		}
+		if strings.TrimSpace(record.ApprovalMode) != "" {
+			return nil
+		}
+		record.ApprovalMode = remotepolicy.ApprovalModeAdministrator
 		encoded, err := json.Marshal(record)
 		if err != nil {
 			return err
@@ -950,6 +1001,9 @@ func decodeMCPToken(value []byte) (mcpTokenRecord, error) {
 	if err := json.Unmarshal(value, &record); err != nil {
 		return mcpTokenRecord{}, err
 	}
+	if strings.TrimSpace(record.ApprovalMode) == "" {
+		record.ApprovalMode = remotepolicy.ApprovalModeAdministrator
+	}
 	return record, nil
 }
 func readMCPToken(tx *bolt.Tx, id string) (mcpTokenRecord, error) {
@@ -966,7 +1020,10 @@ func validateActiveToken(record mcpTokenRecord, now time.Time) error {
 	return nil
 }
 func principalFor(token MCPToken) remotepolicy.Principal {
-	principal := remotepolicy.Principal{TokenID: token.ID, Name: token.Name, Scopes: map[string]struct{}{}, NAS: map[string]struct{}{}}
+	principal := remotepolicy.Principal{
+		TokenID: token.ID, Name: token.Name, ApprovalMode: token.ApprovalMode,
+		Scopes: map[string]struct{}{}, NAS: map[string]struct{}{},
+	}
 	for _, scope := range token.Scopes {
 		principal.Scopes[scope] = struct{}{}
 	}
@@ -983,7 +1040,7 @@ func sliceContains(values []string, target string) bool {
 	}
 	return false
 }
-func findApproval(tx *bolt.Tx, tokenID, nas string, revision uint64, hash string, now time.Time) (Approval, error) {
+func findApproval(tx *bolt.Tx, tokenID, nas string, revision uint64, hash string, now time.Time) (Approval, bool, error) {
 	var match Approval
 	err := tx.Bucket(bucketApprovals).ForEach(func(_, value []byte) error {
 		var candidate Approval
@@ -997,12 +1054,12 @@ func findApproval(tx *bolt.Tx, tokenID, nas string, revision uint64, hash string
 		return nil
 	})
 	if err != nil && !errors.Is(err, errApprovalMatch) {
-		return Approval{}, err
+		return Approval{}, false, err
 	}
 	if match.ID == "" {
-		return Approval{}, ErrApprovalRequired
+		return Approval{}, false, nil
 	}
-	return match, nil
+	return match, true, nil
 }
 func safeAuditReason(reason string) string {
 	switch reason {

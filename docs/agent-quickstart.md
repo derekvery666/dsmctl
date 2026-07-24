@@ -115,7 +115,10 @@ the tool schemas as the source of truth for arguments and follow this order:
 Local stdio MCP can resolve a configured default profile, but agents should
 still pass `nas` explicitly so the same call is safe and portable to a remote
 gateway. Remote tokens also need that NAS in their allowlist. High-risk remote
-apply may require a separate, short-lived out-of-band approval.
+apply follows the credential policy: the default interactive mode prompts the
+user inside the active MCP conversation; administrator mode requires a
+separate, short-lived Admin-console approval. Do not open another page unless
+the credential is explicitly configured for administrator mode.
 
 If authentication is missing, stop and ask the user to authenticate through
 the CLI or gateway console. MCP intentionally has no password or OTP argument.

@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/derekvery666/dsmctl/internal/remotepolicy"
@@ -34,6 +35,8 @@ const (
 	defaultMaxBodyBytes    = int64(1 << 20)
 	defaultMaxConcurrent   = 8
 	defaultShutdownTimeout = 10 * time.Second
+	defaultMCPSessionTTL   = 30 * time.Minute
+	maxBoundMCPSessions    = 4096
 )
 
 // Options configures the gateway HTTP boundary. BearerToken is required only
@@ -83,7 +86,9 @@ type Server struct {
 	shutdownTimeout time.Duration
 }
 
-// New builds a hardened stateless Streamable HTTP gateway.
+// New builds a hardened stateful Streamable HTTP gateway. Stateful sessions
+// are required for server-initiated form elicitation used by conversational
+// high-risk approval.
 func New(options Options) (*Server, error) {
 	if options.MCPServer == nil {
 		return nil, errors.New("MCP server is required")
@@ -125,14 +130,22 @@ func New(options Options) (*Server, error) {
 	mcpHandler := mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return options.MCPServer },
 		&mcp.StreamableHTTPOptions{
-			Stateless:    true,
-			JSONResponse: true,
+			Stateless:      false,
+			JSONResponse:   false,
+			SessionTimeout: defaultMCPSessionTTL,
 		},
 	)
 	semaphore := make(chan struct{}, maxConcurrent)
 	protectedMCP := limitConcurrent(semaphore, requireMCPRequest(maxBodyBytes, mcpHandler))
 	if options.MCPAuthenticator != nil {
-		protectedMCP = authenticateMCP(options.MCPAuthenticator, options.MCPAuditor, options.OAuthProvider, newIdentityLimiter(), protectedMCP)
+		protectedMCP = authenticateMCP(
+			options.MCPAuthenticator,
+			options.MCPAuditor,
+			options.OAuthProvider,
+			newIdentityLimiter(),
+			newMCPSessionTokenBinder(),
+			protectedMCP,
+		)
 	} else {
 		tokenDigest := sha256.Sum256([]byte(options.BearerToken))
 		protectedMCP = requireBearer(tokenDigest, protectedMCP)
@@ -341,7 +354,69 @@ func (l *identityLimiter) Allow(id string, now time.Time) bool {
 	return true
 }
 
-func authenticateMCP(authenticator MCPAuthenticator, auditor remotepolicy.Auditor, oauthProvider OAuthProvider, limiter *identityLimiter, next http.Handler) http.Handler {
+func authenticateMCP(
+	authenticator MCPAuthenticator,
+	auditor remotepolicy.Auditor,
+	oauthProvider OAuthProvider,
+	limiter *identityLimiter,
+	sessions *mcpSessionTokenBinder,
+	next http.Handler,
+) http.Handler {
+	// The SDK owns the request metadata that reaches a stateful MCP session.
+	// Re-inject the principal authenticated by the outer boundary as TokenInfo
+	// so every method call receives the current token policy, not the session's
+	// initialization-time context snapshot. The verifier does not trust or
+	// retain its token argument: the outer handler has already validated it.
+	withSDKTokenInfo := auth.RequireBearerToken(
+		func(ctx context.Context, _ string, _ *http.Request) (*auth.TokenInfo, error) {
+			principal, ok := remotepolicy.PrincipalFromContext(ctx)
+			if !ok {
+				return nil, fmt.Errorf("%w: missing authenticated principal", auth.ErrInvalidToken)
+			}
+			scopes := make([]string, 0, len(principal.Scopes))
+			for scope := range principal.Scopes {
+				scopes = append(scopes, scope)
+			}
+			return &auth.TokenInfo{
+				Scopes:     scopes,
+				Expiration: time.Now().Add(defaultMCPSessionTTL),
+				UserID:     principal.TokenID,
+				Extra: map[string]any{
+					remotepolicy.MCPPrincipalTokenInfoKey: principal,
+				},
+			}, nil
+		},
+		nil,
+	)(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		principal, ok := remotepolicy.PrincipalFromContext(req.Context())
+		if !ok {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_token"})
+			return
+		}
+		sessionID := strings.TrimSpace(req.Header.Get("Mcp-Session-Id"))
+		if sessionID != "" && !sessions.Authorize(sessionID, principal.TokenID, time.Now()) {
+			auditMCPHTTP(req.Context(), auditor, principal.TokenID, "denied", "session_token_mismatch")
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "session_token_mismatch"})
+			return
+		}
+		if sessionID == "" && !sessions.CanCreate(time.Now()) {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "too_many_mcp_sessions"})
+			return
+		}
+		ctx := req.Context()
+		if sessionID != "" {
+			ctx = remotepolicy.WithMCPSessionID(ctx, sessionID)
+		}
+		bindingWriter := &mcpSessionBindingWriter{
+			ResponseWriter: w, sessions: sessions, tokenID: principal.TokenID,
+		}
+		next.ServeHTTP(bindingWriter, req.WithContext(ctx))
+		bindingWriter.bind()
+		if req.Method == http.MethodDelete && sessionID != "" {
+			sessions.Delete(sessionID)
+		}
+	}))
+
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		parts := strings.Fields(req.Header.Get("Authorization"))
 		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
@@ -364,8 +439,109 @@ func authenticateMCP(authenticator MCPAuthenticator, auditor remotepolicy.Audito
 			return
 		}
 		ctx := remotepolicy.WithPrincipal(req.Context(), principal)
-		next.ServeHTTP(w, req.WithContext(ctx))
+		withSDKTokenInfo.ServeHTTP(w, req.WithContext(ctx))
 	})
+}
+
+type mcpSessionBindingWriter struct {
+	http.ResponseWriter
+	sessions *mcpSessionTokenBinder
+	tokenID  string
+	bound    bool
+}
+
+func (w *mcpSessionBindingWriter) WriteHeader(status int) {
+	w.bind()
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *mcpSessionBindingWriter) Write(data []byte) (int, error) {
+	w.bind()
+	return w.ResponseWriter.Write(data)
+}
+
+func (w *mcpSessionBindingWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
+func (w *mcpSessionBindingWriter) bind() {
+	if w.bound {
+		return
+	}
+	sessionID := strings.TrimSpace(w.Header().Get("Mcp-Session-Id"))
+	if sessionID == "" {
+		return
+	}
+	w.sessions.Bind(sessionID, w.tokenID, time.Now())
+	w.bound = true
+}
+
+type mcpSessionTokenBinding struct {
+	TokenID  string
+	LastSeen time.Time
+}
+
+// mcpSessionTokenBinder prevents a valid bearer token from attaching to an MCP
+// session initialized by a different token. The SDK can do this automatically
+// when it owns OAuth authentication; dsmctl authenticates before the SDK, so
+// the gateway maintains the equivalent bounded binding here.
+type mcpSessionTokenBinder struct {
+	mu       sync.Mutex
+	bindings map[string]mcpSessionTokenBinding
+}
+
+func newMCPSessionTokenBinder() *mcpSessionTokenBinder {
+	return &mcpSessionTokenBinder{bindings: make(map[string]mcpSessionTokenBinding)}
+}
+
+func (b *mcpSessionTokenBinder) Authorize(sessionID, tokenID string, now time.Time) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.prune(now)
+	binding, ok := b.bindings[sessionID]
+	if !ok || binding.TokenID != tokenID {
+		return false
+	}
+	binding.LastSeen = now
+	b.bindings[sessionID] = binding
+	return true
+}
+
+func (b *mcpSessionTokenBinder) CanCreate(now time.Time) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.prune(now)
+	return len(b.bindings) < maxBoundMCPSessions
+}
+
+func (b *mcpSessionTokenBinder) Bind(sessionID, tokenID string, now time.Time) {
+	if sessionID == "" || tokenID == "" {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.prune(now)
+	if existing, ok := b.bindings[sessionID]; ok && existing.TokenID != tokenID {
+		return
+	}
+	if len(b.bindings) >= maxBoundMCPSessions {
+		return
+	}
+	b.bindings[sessionID] = mcpSessionTokenBinding{TokenID: tokenID, LastSeen: now}
+}
+
+func (b *mcpSessionTokenBinder) Delete(sessionID string) {
+	b.mu.Lock()
+	delete(b.bindings, sessionID)
+	b.mu.Unlock()
+}
+
+func (b *mcpSessionTokenBinder) prune(now time.Time) {
+	for sessionID, binding := range b.bindings {
+		if now.Sub(binding.LastSeen) >= defaultMCPSessionTTL {
+			delete(b.bindings, sessionID)
+		}
+	}
 }
 
 func auditMCPHTTP(ctx context.Context, auditor remotepolicy.Auditor, actorID, outcome, reason string) {
@@ -377,9 +553,13 @@ func auditMCPHTTP(ctx context.Context, auditor remotepolicy.Auditor, actorID, ou
 
 func requireMCPRequest(maxBodyBytes int64, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if req.Method != http.MethodPost {
-			w.Header().Set("Allow", "POST")
+		if req.Method != http.MethodPost && req.Method != http.MethodGet && req.Method != http.MethodDelete {
+			w.Header().Set("Allow", "GET, POST, DELETE")
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if req.Method != http.MethodPost {
+			next.ServeHTTP(w, req)
 			return
 		}
 		mediaType, _, err := mime.ParseMediaType(req.Header.Get("Content-Type"))

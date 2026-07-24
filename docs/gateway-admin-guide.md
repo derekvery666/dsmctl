@@ -118,8 +118,10 @@ NAS Profile。OAuth access token 有效一小時，用戶端使用旋轉式 refr
 - 「完整權限」，也就是下列四個 Scope 全開；
 - 365 天有效期限。
 
-預設權限不等於略過安全確認：Agent 應在真正套用變更前向使用者確認，
-高風險 Plan 還必須回到「核准」頁由管理員同意。
+預設權限不等於略過安全確認：Agent 應在真正套用變更前向使用者確認。新建立的
+OAuth 與手動憑證預設使用「在對話中確認」：高風險 Apply 會在目前 MCP 對話
+顯示 NAS、Plan 摘要與縮短的 Plan ID，只有明確勾選同意後才繼續，不會另開
+Admin 頁。手動 Token 精靈也可改選「管理頁面核准」，保留原本的強化流程。
 
 - `nas.read`：讀取 allowlist 內 NAS 的狀態與資料。
 - `nas.plan`：建立變更計畫，但不執行。
@@ -147,12 +149,18 @@ Authorization: Bearer <token>
 遠端 NAS 工具每次都必須明確提供 `nas`。只有 `list_nas`、
 `discover_lan_devices` 與不指定目標的 `get_auth_status` 可省略。
 
-## 5. 核准高風險操作
+## 5. 確認高風險操作
 
-高風險 Apply 需要管理員另外建立一次性核准。已驗證 Token 成功建立高風險
-Plan 後，「核准」頁會顯示待核准摘要、NAS、Token 與剩餘時間；按一次即可建立
-標準核准，或忽略該請求。待核准請求最多 50 筆、24 小時到期，且不會改變真正
-的 Apply admission 檢查。
+新憑證預設直接在目前 MCP 對話確認高風險 Apply。這不是接受一般聊天文字：
+Gateway 會在已驗證且綁定 Token 的 stateful MCP Session 上主動送出表單，
+確認內容精確綁定 requesting Token、Session、Plan hash、NAS 與 Profile
+revision，只能由暫停中的那一次 Apply 使用。拒絕、取消、不支援表單、
+內容錯誤或重播都會在 DSM mutation 前 fail closed。
+
+「核准」頁保留給手動 Token 明確選擇的「管理頁面核准」模式，以及升級前已
+存在的憑證。這類 Token 成功建立高風險 Plan 後，頁面會顯示待核准摘要、NAS、
+Token 與剩餘時間；按一次即可建立標準核准，或忽略該請求。待核准請求最多
+50 筆、24 小時到期，且不會改變真正的 Apply admission 檢查。
 
 「手動備援」平常不佔頁面，只有按下頁面右上角的次要操作才會開啟。此流程只需
 輸入 64 位十六進位 Plan hash，並從現有 NAS Profile 與有效 Token 下拉選單
@@ -176,7 +184,8 @@ Session，但不會更改任何 DSM 帳號。
 2. 逐台新增 NAS，完成 DSM 登入並測試連線。
 3. 為每個 MCP 用戶端建立獨立連線，確認明確 NAS 清單與預設完整權限是否符合
    該使用者的信任範圍。
-4. 在 Agent 端保留 Apply 前確認；高風險操作再使用管理介面的核准流程。
+4. 在 Agent 端保留 Apply 前確認；高風險操作預設在同一段 MCP 對話確認。只有
+   明確採用管理頁面模式的憑證才使用管理介面的核准流程。
 5. 定期檢查 Audit，撤銷不再使用的 Token 與管理員 Session。
 
 ## 介面設計圖
@@ -224,11 +233,12 @@ Scope；正式環境應依 Client 工作選最小權限。
 
 ![MCP 存取](assets/gateway-admin/04-mcp-access.png)
 
-### 高風險核准
+### 高風險核准（選用強化模式）
 
-一般流程會先顯示由已驗證 Token 送出的待核准摘要；手動備援只在 Agent 無法
-自動送出請求時使用。核准綁定 Plan hash、NAS Profile revision 與 requesting
-Token，最長十分鐘且只能使用一次。
+一般新憑證不需要進入這一頁，而是在目前 MCP 對話完成精確確認。只有選擇
+「管理頁面核准」或從舊版升級保留安全政策的憑證，才會在這裡顯示由已驗證
+Token 送出的待核准摘要。核准綁定 Plan hash、NAS Profile revision 與
+requesting Token，最長十分鐘且只能使用一次。
 
 ![高風險核准](assets/gateway-admin/05-approvals.png)
 

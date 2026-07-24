@@ -13,6 +13,7 @@ import (
 	"github.com/derekvery666/dsmctl/internal/application"
 	"github.com/derekvery666/dsmctl/internal/config"
 	"github.com/derekvery666/dsmctl/internal/domain/access"
+	"github.com/derekvery666/dsmctl/internal/domain/accountprotection"
 	"github.com/derekvery666/dsmctl/internal/domain/certificate"
 	"github.com/derekvery666/dsmctl/internal/domain/controlpanel"
 	"github.com/derekvery666/dsmctl/internal/domain/discovery"
@@ -20,8 +21,11 @@ import (
 	"github.com/derekvery666/dsmctl/internal/domain/driveadmin"
 	"github.com/derekvery666/dsmctl/internal/domain/externalaccess"
 	"github.com/derekvery666/dsmctl/internal/domain/filestation"
+	firewalldomain "github.com/derekvery666/dsmctl/internal/domain/firewall"
 	"github.com/derekvery666/dsmctl/internal/domain/ftpservices"
 	"github.com/derekvery666/dsmctl/internal/domain/identity"
+	"github.com/derekvery666/dsmctl/internal/domain/loginportal"
+	networkdomain "github.com/derekvery666/dsmctl/internal/domain/network"
 	"github.com/derekvery666/dsmctl/internal/domain/nfsexport"
 	"github.com/derekvery666/dsmctl/internal/domain/notification"
 	"github.com/derekvery666/dsmctl/internal/domain/office"
@@ -30,10 +34,6 @@ import (
 	"github.com/derekvery666/dsmctl/internal/domain/resmon"
 	"github.com/derekvery666/dsmctl/internal/domain/rsyncservice"
 	"github.com/derekvery666/dsmctl/internal/domain/san"
-	"github.com/derekvery666/dsmctl/internal/domain/accountprotection"
-	firewalldomain "github.com/derekvery666/dsmctl/internal/domain/firewall"
-	networkdomain "github.com/derekvery666/dsmctl/internal/domain/network"
-	"github.com/derekvery666/dsmctl/internal/domain/loginportal"
 	"github.com/derekvery666/dsmctl/internal/domain/securityadvisor"
 	"github.com/derekvery666/dsmctl/internal/domain/servicediscovery"
 	"github.com/derekvery666/dsmctl/internal/domain/share"
@@ -55,7 +55,7 @@ const serverInstructions = `Operate dsmctl in this order:
 2. Call get_auth_status before contacting a target when authentication is uncertain. MCP tools never accept passwords or OTPs. If authentication is missing, ask the user to run dsmctl auth login --nas <name> or use the gateway console, then retry.
 3. For reads, use the narrowest get_* tool. Call the matching get_*_capabilities tool first when DSM or installed-package support may vary. Do not treat an unavailable operation as permission to issue raw DSM requests.
 4. For mutations, call the matching plan_* tool first. Planning reads current state and never mutates DSM. Present the returned target, intent, risk, summary, warnings, precondition, and approval hash to the user.
-5. Call apply_* only after explicit approval. Send the exact unmodified plan object and its exact approval_hash; never synthesize, edit, retarget, or reuse a stale plan. Apply revalidates current state and verifies the postcondition. High-risk remote applies may also require a separate out-of-band approval.
+5. Call apply_* only after explicit approval. Send the exact unmodified plan object and its exact approval_hash; never synthesize, edit, retarget, or reuse a stale plan. Apply revalidates current state and verifies the postcondition. For high-risk remote applies, an interactive credential prompts the user in the active MCP conversation; an administrator-mode credential instead requires a separate Admin-console approval. Never treat ordinary chat text as approval authority.
 
 Tool availability is authoritative for this endpoint. A read-only server intentionally omits plan/apply and other write-capable tools. Secrets, sessions, and raw WebAPI mutation escape hatches are never exposed.`
 
@@ -510,7 +510,7 @@ type getHyperBackupApplicationsOutput struct {
 }
 
 type getHyperBackupLunsOutput struct {
-	NAS  string                 `json:"nas" jsonschema:"NAS profile used for the request"`
+	NAS  string                   `json:"nas" jsonschema:"NAS profile used for the request"`
 	Luns synology.HyperBackupLuns `json:"luns" jsonschema:"LUNs legacy Hyper Backup LUN backup can protect (file/regular LUNs)"`
 }
 
@@ -520,7 +520,7 @@ type getHyperBackupLunBackupsOutput struct {
 }
 
 type planHyperBackupLunBackupCreateInput struct {
-	NAS     string                             `json:"nas,omitempty" jsonschema:"NAS profile name; omit for the default"`
+	NAS     string                              `json:"nas,omitempty" jsonschema:"NAS profile name; omit for the default"`
 	Request synology.HyperBackupLunBackupChange `json:"request" jsonschema:"LUN backup create intent: action create + the LUN, destination share, and optional backup_now"`
 }
 
@@ -530,7 +530,7 @@ type planHyperBackupLunBackupCreateOutput struct {
 
 type applyHyperBackupLunBackupPlanInput struct {
 	Plan         application.HyperBackupLunBackupPlan `json:"plan" jsonschema:"Approved LUN backup plan from plan_hyper_backup_lun_backup_create"`
-	ApprovalHash string                              `json:"approval_hash" jsonschema:"Exact SHA-256 approval hash from the plan"`
+	ApprovalHash string                               `json:"approval_hash" jsonschema:"Exact SHA-256 approval hash from the plan"`
 }
 
 type applyHyperBackupLunBackupPlanOutput struct {
@@ -543,7 +543,7 @@ type getHyperBackupVaultOutput struct {
 }
 
 type planHyperBackupTaskChangeInput struct {
-	NAS     string                        `json:"nas,omitempty" jsonschema:"NAS profile name; omit for the default"`
+	NAS     string                         `json:"nas,omitempty" jsonschema:"NAS profile name; omit for the default"`
 	Request synology.HyperBackupTaskChange `json:"request" jsonschema:"Task action intent: backup (run now) or cancel, plus the task_id"`
 }
 
@@ -986,7 +986,7 @@ type planSnapshotRelationOutput struct {
 
 type applySnapshotRelationInput struct {
 	Plan         application.SnapshotReplicationRelationPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_snapshot_replication_create"`
-	ApprovalHash string                                     `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved replication plan"`
+	ApprovalHash string                                      `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved replication plan"`
 }
 
 type applySnapshotRelationOutput struct {
@@ -1180,7 +1180,7 @@ type getDSMUpdatePolicyOutput struct {
 }
 
 type getDSMUpdateConfigBackupOutput struct {
-	NAS          string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	NAS          string                         `json:"nas" jsonschema:"NAS profile used for the request"`
 	ConfigBackup synology.DSMUpdateConfigBackup `json:"config_backup" jsonschema:"Configuration-backup status and history without any destination password"`
 }
 
@@ -1245,9 +1245,9 @@ type getDiskSMARTInput struct {
 }
 
 type getDiskSMARTCapabilitiesOutput struct {
-	NAS          string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	NAS          string                         `json:"nas" jsonschema:"NAS profile used for the request"`
 	Capabilities synology.DiskSMARTCapabilities `json:"capabilities" jsonschema:"Disk-SMART read areas currently exposed by dsmctl"`
-	Report       synology.CompatibilityReport  `json:"report" jsonschema:"Discovered APIs and selected disk-SMART compatibility backends"`
+	Report       synology.CompatibilityReport   `json:"report" jsonschema:"Discovered APIs and selected disk-SMART compatibility backends"`
 }
 
 type getDiskHealthOutput struct {
@@ -1723,7 +1723,7 @@ type planAutoBlockChangeOutput struct {
 
 type applyAutoBlockPlanInput struct {
 	Plan         application.AutoBlockSettingsPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_account_protection_autoblock_change"`
-	ApprovalHash string                           `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
+	ApprovalHash string                            `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
 }
 
 type accountProtectionApplyOutput struct {
@@ -1755,7 +1755,7 @@ type planEnforceTwoFactorChangeOutput struct {
 
 type applyEnforceTwoFactorPlanInput struct {
 	Plan         application.EnforceTwoFactorPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_account_protection_enforce_2fa_change"`
-	ApprovalHash string                          `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
+	ApprovalHash string                           `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
 }
 
 type planAutoBlockListChangeInput struct {
@@ -1769,7 +1769,7 @@ type planAutoBlockListChangeOutput struct {
 
 type applyAutoBlockListPlanInput struct {
 	Plan         application.AutoBlockListPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_account_protection_list_change"`
-	ApprovalHash string                       `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
+	ApprovalHash string                        `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
 }
 
 type firewallInput struct {
@@ -1803,7 +1803,7 @@ type getFirewallCapabilitiesOutput struct {
 }
 
 type planFirewallProfileChangeInput struct {
-	NAS     string                 `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	NAS     string                       `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 	Request firewalldomain.ProfileChange `json:"request" jsonschema:"Full-desired-state firewall profile change: the target profile, the desired adapter sections (default policy plus complete ordered rule list), whether to activate it, and the never-lockout override/keep_reachable"`
 }
 
@@ -1817,7 +1817,7 @@ type applyFirewallProfilePlanInput struct {
 }
 
 type planFirewallEnableChangeInput struct {
-	NAS     string                `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	NAS     string                      `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 	Request firewalldomain.EnableChange `json:"request" jsonschema:"Firewall enable/disable intent: the desired enabled state, the profile to make active when enabling, and the never-lockout override/keep_reachable"`
 }
 
@@ -1932,7 +1932,7 @@ type planDSMWebServiceChangeOutput struct {
 
 type applyDSMWebServicePlanInput struct {
 	Plan         application.DSMWebServicePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_login_portal_dsm_change"`
-	ApprovalHash string                       `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
+	ApprovalHash string                        `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
 }
 
 type loginPortalApplyOutput struct {
@@ -1950,7 +1950,7 @@ type planApplicationPortalChangeOutput struct {
 
 type applyApplicationPortalPlanInput struct {
 	Plan         application.ApplicationPortalPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_login_portal_application_change"`
-	ApprovalHash string                           `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
+	ApprovalHash string                            `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
 }
 
 type planReverseProxyCreateInput struct {

@@ -20,15 +20,20 @@ deployment layer it defines; the two names refer to the same artifact.
 - The Synology SPK preloads a pinned amd64 image and uses the official
   `docker-project` resource worker. Installation does not require a registry.
 - Generic Linux uses the same image with a separate Compose file.
-- MCP uses Streamable HTTP. Version 1 is stateless at the MCP transport layer
-  and prefers JSON responses; per-NAS DSM clients and sessions remain stateful.
+- MCP uses stateful Streamable HTTP with SSE responses so the server can issue
+  form elicitation during a high-risk tool call. MCP sessions expire after 30
+  idle minutes and are bound to the bearer token that initialized them;
+  per-NAS DSM clients and sessions remain independently stateful.
 - The gateway is LAN/VPN oriented. Automatic Internet exposure, QuickConnect,
   port forwarding, and public multi-tenant hosting are out of scope.
 - New remote credentials receive read-only access by default. Planning,
   applying, and LAN discovery are separate scopes; gateway administration is
   never an MCP scope.
-- High-risk applies require a short-lived, single-use approval recorded
-  outside the MCP conversation. Echoing a plan hash is not operator approval.
+- New credentials confirm high-risk applies inside the active MCP conversation
+  by default. The exact private grant is single-use and bound to token, MCP
+  session, plan hash, NAS, and profile revision. An explicit `administrator`
+  policy retains the separate Admin-console approval. Echoing a plan hash or
+  saying “approved” in ordinary chat is not operator approval.
 
 ## Goals
 
@@ -121,8 +126,11 @@ container itself.
 - Add a dedicated long-running gateway entry point; keep the current stdio MCP
   entry point supported for local clients.
 - Serve one Streamable HTTP endpoint at `/mcp`.
-- Version 1 uses stateless MCP sessions and JSON responses because current
-  tools do not require server-to-client requests or durable SSE streams.
+- Managed mode uses stateful sessions and SSE responses because conversational
+  high-risk approval sends `elicitation/create` from the server to the client.
+  Session IDs are bound to the authenticated token before MCP dispatch, idle
+  sessions expire after 30 minutes, and the binding table is bounded. Static
+  development mode uses the same transport behavior but remains read-only.
 - DSM clients remain lazily created and cached per profile. Calls to one NAS
   retain the existing session serialization; calls to different profiles may
   run concurrently.
@@ -282,18 +290,36 @@ administrator session and is never grantable to an MCP token.
 - Rate-limit identity is the token ID, not a client-supplied name or IP alone.
 - Token values, authorization headers, and cookies are always redacted.
 
-High-risk remote applies require an approval record containing the plan hash,
-NAS profile and revision, approving local administrator identity, requesting token ID, expiry,
-and a single-use marker. Default approval lifetime is 10 minutes. Consumption
-and apply admission are atomic. Failed stale-state or postcondition checks do
-not make an old approval reusable. Local CLI/stdio behavior remains governed
-by the existing plan/apply contract and is not silently changed by HTTP policy.
+Each MCP credential stores one high-risk approval policy:
 
-To remove manual transcription, the administration page also lists redacted
+- `interactive` is the default for newly issued OAuth and manual credentials.
+  A high-risk `apply_*` that reaches admission without an existing exact Admin
+  approval suspends before mutation. The server asks the authenticated MCP
+  client to display the NAS, canonical plan summary, and shortened plan ID in
+  a form elicitation. Only `accept` plus `approve: true` creates a private
+  request-context grant. The retried application admission consumes it once
+  after exact token, session, NAS, profile-revision, and plan-hash comparison.
+  The grant never appears in a tool argument, header, result, or persistent
+  record. Decline, cancel, malformed response, missing client capability, or
+  any binding mismatch fails closed.
+- `administrator` retains the hardened out-of-band workflow. Its approval
+  record contains the plan hash, NAS profile and revision, approving local
+  administrator identity, requesting token ID, expiry, and a single-use marker.
+  Default lifetime is 10 minutes. Consumption and apply admission are atomic.
+
+Existing credentials migrate to `administrator`, so an upgrade never silently
+weakens their trust boundary. An existing exact Admin approval can still admit
+an `interactive` credential and is consumed normally; an `administrator`
+credential never accepts a conversational grant. Failed stale-state or
+postcondition checks do not make either authority reusable. Local CLI/stdio
+behavior remains governed by the existing plan/apply contract.
+
+For `administrator` credentials, the administration page lists redacted
 pending high-risk plan requests containing the plan summary, risk, and binding
 fields (WI-038). These records are advisory: they never approve anything, MCP
-clients cannot see or create approvals through them, and the approval record
-above remains the only admission authority.
+clients cannot see or create approvals through them, and the Admin approval
+record above remains that policy's only admission authority. Interactive
+credentials do not create this queue because they confirm in their MCP client.
 
 ### Remote provisioning (WI-086)
 
@@ -450,6 +476,9 @@ approved under the repository safety policy.
    administration shell and design tokens; WI-038 streamlines the approval,
    token-lifecycle, enrollment, and audit-review flows on top of the shipped
    WI-016 policy model before WI-017 certifies the final UI.
+7. WI-108 changes the default high-risk policy for new credentials to
+   session-bound conversational elicitation while preserving the WI-016 Admin
+   approval as an explicit hardened mode and migration default.
 
 The production Synology package depends on all of the items above. Intermediate
 developer builds may expose read-only tools on generic Linux, but must be

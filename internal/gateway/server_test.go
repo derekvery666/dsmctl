@@ -107,6 +107,25 @@ func TestStreamableHTTPListsNASInReadOnlyMode(t *testing.T) {
 	}
 }
 
+func TestMCPSessionTokenBinderRejectsCrossTokenReuse(t *testing.T) {
+	binder := newMCPSessionTokenBinder()
+	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	binder.Bind("session-1", "token-a", now)
+	if !binder.Authorize("session-1", "token-a", now.Add(time.Second)) {
+		t.Fatal("session owner was rejected")
+	}
+	if binder.Authorize("session-1", "token-b", now.Add(2*time.Second)) {
+		t.Fatal("different token reused an existing MCP session")
+	}
+	if binder.Authorize("unknown", "token-a", now.Add(3*time.Second)) {
+		t.Fatal("unbound session was accepted")
+	}
+	binder.Delete("session-1")
+	if binder.Authorize("session-1", "token-a", now.Add(4*time.Second)) {
+		t.Fatal("deleted session binding was accepted")
+	}
+}
+
 func TestHTTPBoundaryRejectsInvalidRequests(t *testing.T) {
 	server := newBoundaryTestServer(t, Options{
 		AllowedOrigins: []string{"https://console.example.test"},

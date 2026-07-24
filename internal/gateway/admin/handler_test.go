@@ -323,7 +323,9 @@ func TestMCPTokenApprovalAndAuditAdministration(t *testing.T) {
 	if err := json.Unmarshal(created.Body.Bytes(), &issued); err != nil {
 		t.Fatal(err)
 	}
-	if issued.BearerToken == "" || issued.Token.ID == "" {
+	if issued.BearerToken == "" ||
+		issued.Token.ID == "" ||
+		issued.Token.ApprovalMode != remotepolicy.ApprovalModeInteractive {
 		t.Fatalf("issued = %#v", issued)
 	}
 	listed := performJSON(handler, http.MethodGet, "/admin/api/mcp-tokens", "", adminSession)

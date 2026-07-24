@@ -85,9 +85,9 @@ and the approval path uses the same injectable clock as its siblings.
 
 - Reuse existing machinery: the `TrustedProxies`/`clientIP` helper (item 2), the
   approval-TTL cap pattern, and `deleteOAuthRefreshTokensForMCPToken` (item 3).
-- Digest-only credential storage, the stateless MCP transport, and the
-  bbolt-transactional state model are unchanged; item 1/3 add fields and methods,
-  not a new store.
+- Digest-only credential storage, the token-bound stateful MCP transport from
+  WI-108, and the bbolt-transactional state model are unchanged; item 1/3 add
+  fields and methods, not a new store.
 - Bounded and GC'd: any lineage tombstone or last-used stamp must be pruned on
   revocation/expiry so it cannot grow unbounded.
 

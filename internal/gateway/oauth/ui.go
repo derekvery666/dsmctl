@@ -48,7 +48,7 @@ var authorizationTemplate = template.Must(template.New("oauth-authorization").Pa
         <dt>{{if .TraditionalChinese}}允許的 NAS{{else}}NAS access{{end}}</dt><dd>{{if .NAS}}<ul class="nas">{{range .NAS}}<li>{{.}}</li>{{end}}</ul>{{else}}{{if .TraditionalChinese}}無（僅 LAN discovery）{{else}}None (LAN discovery only){{end}}{{end}}</dd>
         <dt>{{if .TraditionalChinese}}權限{{else}}Permissions{{end}}</dt><dd><div class="chips">{{range .Scopes}}<span class="chip">{{.}}</span>{{end}}</div></dd>
       </dl>
-      <div class="notice"><strong>{{if .TraditionalChinese}}這是高權限 Client{{else}}This is a powerful client{{end}}</strong><span>{{if .TraditionalChinese}}Agent 應在套用變更前詢問你；高風險計畫仍需在 Admin UI 額外核准。任何取得 Client token 的人都擁有以上權限。{{else}}The agent should ask before applying changes; high-risk plans still require separate Admin UI approval. Anyone holding the client token receives the permissions above.{{end}}</span></div>
+      <div class="notice"><strong>{{if .TraditionalChinese}}這是高權限 Client{{else}}This is a powerful client{{end}}</strong><span>{{if .TraditionalChinese}}Agent 應在套用變更前詢問你；高風險變更會在目前 MCP 對話顯示精確內容並請你確認，不會另開管理頁。任何取得 Client token 的人都擁有以上權限。{{else}}The agent should ask before applying changes. High-risk changes are shown for confirmation in the active MCP conversation; no separate Admin page opens. Anyone holding the client token receives the permissions above.{{end}}</span></div>
       <p class="signin-head">{{if .TraditionalChinese}}以 Gateway 管理員身分核准{{else}}Approve as the Gateway administrator{{end}}</p>
       {{if and .DSMWebLogin (not .SessionUser)}}<p id="dsmStatus" class="dsm-status" hidden></p>{{end}}
       <form method="post">

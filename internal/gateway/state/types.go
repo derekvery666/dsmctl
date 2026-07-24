@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	SchemaVersion        = 6
+	SchemaVersion        = 7
 	MaxProfiles          = 32
 	MaxMCPTokenNameBytes = 64
 	DefaultApprovalTTL   = 10 * time.Minute
